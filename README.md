@@ -1,16 +1,84 @@
-# React + Vite
+# NexGTools
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React/Vite frontend with a FastAPI backend and MySQL storage.
 
-Currently, two official plugins are available:
+## Run locally in VS Code
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+### Requirements
 
-## React Compiler
+- [Git](https://git-scm.com/downloads)
+- [VS Code](https://code.visualstudio.com/)
+- [Node.js 20+](https://nodejs.org/)
+- [Python 3.12+](https://www.python.org/downloads/)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### First-time setup
 
-## Expanding the Oxlint configuration
+Clone and open the project:
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+```bash
+git clone https://github.com/sdnath14/NexGTools.git
+cd NexGTools
+code .
+```
+
+Install the frontend:
+
+```bash
+npm install
+```
+
+Create the Python environment and install the backend:
+
+macOS/Linux:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r backend/requirements.txt
+```
+
+Windows PowerShell:
+
+```powershell
+py -m venv .venv
+.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+```
+
+Copy `.env.example` to `.env`, then replace the API-key placeholders. The included
+database defaults match `compose.yaml`.
+
+macOS/Linux:
+
+```bash
+cp .env.example .env
+```
+
+Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+### Start everything
+
+In VS Code, open **Terminal → Run Task → NexGTools: Start all**. This starts:
+
+- Persistent MySQL on port `3306`
+- FastAPI on <http://localhost:8000>
+- Vite on <http://localhost:5173>
+
+MySQL data is stored in the Docker volume `nexgtools_mysql_data`, so normal
+container and computer restarts do not erase accounts or history.
+
+To stop the database, run the **MySQL: Stop** VS Code task. To remove the database
+and all stored data, manually run `docker compose down --volumes`.
+
+### Health check
+
+Open <http://localhost:8000/health>. A working database reports:
+
+```json
+{"database":{"ok":true,"database":"nextgtools"}}
+```
+
+Never commit `.env`; it contains private API keys and passwords.
