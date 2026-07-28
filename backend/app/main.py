@@ -2,13 +2,14 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote_plus, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import math
 import re
 import time
 
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query
 from pymysql.err import IntegrityError
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -153,6 +154,7 @@ class BusinessSearchRequest(BaseModel):
     query: str
     location: str = ""
     source: str = "all"
+    sources: list[str] = Field(default_factory=list)
     radius_km: int = Field(default=25, ge=1, le=50)
     max_results: int = Field(default=24, ge=3, le=60)
 
@@ -1173,9 +1175,12 @@ def create_csv_export(payload: CsvExportRequest, authorization: str | None = Hea
 
 
 @app.get("/api/csv-exports")
-def csv_exports(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+def csv_exports(
+    source: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     user = _require_user(authorization)
-    return {"exports": list_csv_exports(user["id"])}
+    return {"exports": list_csv_exports(user["id"], source)}
 
 
 @app.get("/api/csv-exports/{export_id}")
@@ -1287,27 +1292,58 @@ def business_search(payload: BusinessSearchRequest, authorization: str | None = 
     if not query:
         raise HTTPException(status_code=400, detail="Enter a business, product, or service to search.")
 
-    if payload.source != "all" and payload.source not in BUSINESS_SOURCES and payload.source != "google_maps":
-        raise HTTPException(status_code=400, detail="Unknown business search source.")
+    available_source_ids = ["google_maps", *BUSINESS_SOURCES.keys()]
+    available_sources = set(available_source_ids)
+    requested_sources = list(dict.fromkeys(payload.sources))
+    if not requested_sources:
+        requested_sources = available_source_ids if payload.source == "all" else [payload.source]
+    unknown_sources = set(requested_sources) - available_sources
+    if unknown_sources:
+        raise HTTPException(status_code=400, detail=f"Unknown business search source: {sorted(unknown_sources)[0]}.")
+    if not requested_sources:
+        raise HTTPException(status_code=400, detail="Select at least one business search source.")
 
-    source_ids = ["google_maps", *BUSINESS_SOURCES.keys()] if payload.source == "all" else [payload.source]
-    per_source_limit = payload.max_results if payload.source != "all" else max(3, math.ceil(payload.max_results / len(source_ids)))
+    source_ids = requested_sources
+    per_source_limit = max(3, math.ceil(payload.max_results / len(source_ids)))
     source_reports: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
 
-    for source_id in source_ids:
+    def search_source(source_id: str) -> dict[str, Any]:
         if source_id == "google_maps":
-            report = _business_places_results(query, location, per_source_limit, payload.radius_km)
-        else:
-            report = _custom_search_business_source(source_id, query, location, per_source_limit)
-            if not report.get("results"):
-                fallback_report = _scrape_business_source(source_id, query, location, per_source_limit)
-                if fallback_report.get("results"):
-                    fallback_report["error"] = report.get("error", "")
-                    report = fallback_report
-            if not report.get("results"):
-                report["results"] = [_source_lookup_result(source_id, query, location, report.get("error", ""))]
+            return _business_places_results(query, location, per_source_limit, payload.radius_km)
+        report = _custom_search_business_source(source_id, query, location, per_source_limit)
+        if not report.get("results"):
+            fallback_report = _scrape_business_source(source_id, query, location, per_source_limit)
+            if fallback_report.get("results"):
+                fallback_report["error"] = report.get("error", "")
+                report = fallback_report
+        if not report.get("results"):
+            report["results"] = [_source_lookup_result(source_id, query, location, report.get("error", ""))]
+        return report
 
+    reports_by_source: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=min(8, len(source_ids))) as executor:
+        future_sources = {executor.submit(search_source, source_id): source_id for source_id in source_ids}
+        for future in as_completed(future_sources):
+            source_id = future_sources[future]
+            try:
+                reports_by_source[source_id] = future.result()
+            except Exception as exc:
+                if source_id == "google_maps":
+                    reports_by_source[source_id] = {
+                        "source": source_id, "label": "Google Maps", "search_url": "",
+                        "results": [], "error": str(exc),
+                    }
+                else:
+                    reports_by_source[source_id] = {
+                        "source": source_id, "label": BUSINESS_SOURCES[source_id]["label"],
+                        "search_url": _business_source_url(source_id, query, location),
+                        "results": [_source_lookup_result(source_id, query, location, str(exc))],
+                        "error": str(exc),
+                    }
+
+    for source_id in source_ids:
+        report = reports_by_source[source_id]
         source_reports.append(
             {
                 "source": report["source"],
@@ -1334,7 +1370,8 @@ def business_search(payload: BusinessSearchRequest, authorization: str | None = 
     response = {
         "query": query,
         "location": location,
-        "source": payload.source,
+        "source": ",".join(source_ids),
+        "selected_sources": source_ids,
         "radius_km": payload.radius_km,
         "count": len(unique_results),
         "results": unique_results,

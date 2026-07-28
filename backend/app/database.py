@@ -698,7 +698,7 @@ def save_csv_export(
         return None
 
 
-def list_csv_exports(user_id: int | None = None) -> list[dict[str, Any]]:
+def list_csv_exports(user_id: int | None = None, source: str | None = None) -> list[dict[str, Any]]:
     query = """
         SELECT csv_exports.id, csv_exports.export_name, csv_exports.row_count,
                csv_exports.source, csv_exports.created_at, users.name AS user_name,
@@ -706,15 +706,21 @@ def list_csv_exports(user_id: int | None = None) -> list[dict[str, Any]]:
         FROM csv_exports
         LEFT JOIN users ON users.id = csv_exports.user_id
     """
-    params: tuple[Any, ...] = ()
+    conditions: list[str] = []
+    params_list: list[Any] = []
     if user_id:
-        query += " WHERE csv_exports.user_id = %s"
-        params = (user_id,)
+        conditions.append("csv_exports.user_id = %s")
+        params_list.append(user_id)
+    if source:
+        conditions.append("csv_exports.source = %s")
+        params_list.append(source)
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
     query += " ORDER BY csv_exports.created_at DESC, csv_exports.id DESC LIMIT 100"
 
     with db_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute(query, params)
+            cursor.execute(query, tuple(params_list))
             rows = cursor.fetchall()
 
     for row in rows:

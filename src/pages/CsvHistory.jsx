@@ -18,22 +18,38 @@ const LEAD_COLUMNS = [
   { key: 'id', label: 'Place ID' },
 ];
 
-const formatCell = (lead, key) => {
+const BUSINESS_COLUMNS = [
+  { key: 'name', label: 'Name' },
+  { key: 'phone', label: 'Phone' },
+  { key: 'email', label: 'Email' },
+  { key: 'address', label: 'Address' },
+  { key: 'business_type', label: 'Business Type' },
+  { key: 'website', label: 'Website' },
+  { key: 'source_label', fallbackKey: 'source', label: 'Source' },
+  { key: 'url', label: 'Source URL' },
+  { key: 'snippet', fallbackKey: 'detail_description', label: 'Snippet' },
+];
+
+const formatCell = (lead, key, fallbackKey) => {
   const value = lead[key];
-  if (value === null || value === undefined || value === '') return '';
+  if (value === null || value === undefined || value === '') {
+    return fallbackKey ? lead[fallbackKey] || '' : '';
+  }
   return value;
 };
 
-const csvFromLeads = (leads) => {
-  const headers = LEAD_COLUMNS.map((column) => column.label);
-  const rows = leads.map((lead) => LEAD_COLUMNS.map((column) => formatCell(lead, column.key)));
+const csvFromLeads = (leads, columns) => {
+  const headers = columns.map((column) => column.label);
+  const rows = leads.map((lead) => columns.map(
+    (column) => formatCell(lead, column.key, column.fallbackKey),
+  ));
   return [headers, ...rows]
     .map((row) => row.map((value) => `"${String(value || '').replaceAll('"', '""')}"`).join(','))
     .join('\n');
 };
 
-const downloadCsv = (name, leads) => {
-  const blob = new Blob([csvFromLeads(leads)], { type: 'text/csv;charset=utf-8;' });
+const downloadCsv = (name, leads, columns) => {
+  const blob = new Blob([csvFromLeads(leads, columns)], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -42,7 +58,10 @@ const downloadCsv = (name, leads) => {
   URL.revokeObjectURL(url);
 };
 
-const CsvHistory = () => {
+const CsvHistory = ({ type = 'lead_search' }) => {
+  const isBusiness = type === 'business_search';
+  const columns = isBusiness ? BUSINESS_COLUMNS : LEAD_COLUMNS;
+  const recordLabel = isBusiness ? 'results' : 'leads';
   const [exportsList, setExportsList] = useState([]);
   const [selectedExport, setSelectedExport] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -53,7 +72,7 @@ const CsvHistory = () => {
       setIsLoading(true);
       setError('');
       try {
-        const response = await fetch(`${API_BASE_URL}/api/csv-exports`, {
+        const response = await fetch(`${API_BASE_URL}/api/csv-exports?source=${encodeURIComponent(type)}`, {
           headers: authHeaders(),
         });
         const data = await response.json();
@@ -66,7 +85,7 @@ const CsvHistory = () => {
       }
     };
     loadExports();
-  }, []);
+  }, [type]);
 
   const openExport = async (exportId) => {
     setError('');
@@ -86,8 +105,8 @@ const CsvHistory = () => {
     <div className="csv-page">
       <div className="csv-header">
         <div>
-          <h1>CSV Export History</h1>
-          <p>Every CSV export from Lead Search is saved here.</p>
+          <h1>{isBusiness ? 'Business CSV History' : 'Lead CSV History'}</h1>
+          <p>CSV exports from {isBusiness ? 'Business Search' : 'Lead Search'} are stored separately here.</p>
         </div>
       </div>
       {error && <div className="csv-error">{error}</div>}
@@ -108,7 +127,7 @@ const CsvHistory = () => {
                   onClick={() => openExport(item.id)}
                 >
                   <span>{item.export_name}</span>
-                  <small>{item.row_count} leads • {new Date(item.created_at).toLocaleString()}</small>
+                  <small>{item.row_count} {recordLabel} • {new Date(item.created_at).toLocaleString()}</small>
                 </button>
               ))}
             </div>
@@ -122,9 +141,9 @@ const CsvHistory = () => {
               <div className="csv-detail-head">
                 <div>
                   <h2>{selectedExport.export_name}</h2>
-                  <p>{selectedExport.row_count} saved leads</p>
+                  <p>{selectedExport.row_count} saved {recordLabel}</p>
                 </div>
-                <button onClick={() => downloadCsv(selectedExport.export_name, selectedExport.leads || [])}>
+                <button onClick={() => downloadCsv(selectedExport.export_name, selectedExport.leads || [], columns)}>
                   <Download size={16} />
                   Download
                 </button>
@@ -133,25 +152,14 @@ const CsvHistory = () => {
                 <table>
                   <thead>
                     <tr>
-                      <th>Name</th>
-                      <th>Phone</th>
-                      <th>Address</th>
-                      <th>Business Type</th>
-                      <th>Website</th>
-                      <th>Google Maps URL</th>
-                      <th>Rating</th>
-                      <th>Distance KM</th>
-                      <th>Status</th>
-                      <th>Latitude</th>
-                      <th>Longitude</th>
-                      <th>Place ID</th>
+                      {columns.map((column) => <th key={column.key}>{column.label}</th>)}
                     </tr>
                   </thead>
                   <tbody>
                     {(selectedExport.leads || []).map((lead, index) => (
                       <tr key={`${lead.id || lead.name}-${index}`}>
-                        {LEAD_COLUMNS.map((column) => (
-                          <td key={column.key}>{formatCell(lead, column.key)}</td>
+                        {columns.map((column) => (
+                          <td key={column.key}>{formatCell(lead, column.key, column.fallbackKey)}</td>
                         ))}
                       </tr>
                     ))}

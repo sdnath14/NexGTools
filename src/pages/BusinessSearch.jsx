@@ -3,6 +3,7 @@ import {
   AlertCircle,
   Bot,
   Building2,
+  ChevronDown,
   Download,
   ExternalLink,
   Loader2,
@@ -17,7 +18,6 @@ import '../BusinessSearch.css';
 import { API_BASE_URL, authHeaders } from '../auth';
 
 const SEARCH_SOURCES = [
-  { id: 'all',         label: 'All Sources',    icon: '🌐', color: '#3b82f6', desc: 'Search across all platforms' },
   { id: 'zomato',      label: 'Zomato',         icon: '🍽️', color: '#ef4444', desc: 'Restaurant listings and pages' },
   { id: 'swiggy',      label: 'Swiggy',         icon: '🍴', color: '#f97316', desc: 'Food and restaurant listings' },
   { id: 'exportersindia', label: 'ExportersIndia', icon: '🚢', color: '#0891b2', desc: 'Exporter and supplier listings' },
@@ -56,7 +56,8 @@ const BUSINESS_AI_WELCOME = {
 
 const BusinessSearch = () => {
   const [query, setQuery] = useState('');
-  const selectedSource = SEARCH_SOURCES[0];
+  const [lastSearchQuery, setLastSearchQuery] = useState('');
+  const [selectedSourceIds, setSelectedSourceIds] = useState(new Set(['google_maps']));
   const [isSearching, setIsSearching] = useState(false);
   const [results, setResults] = useState([]);
   const [sources, setSources] = useState([]);
@@ -71,6 +72,7 @@ const BusinessSearch = () => {
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [aiError, setAiError] = useState('');
   const inputRef = useRef(null);
+  const sourcePickerRef = useRef(null);
   const aiChatEndRef = useRef(null);
   const checkedResults = useMemo(
     () => results.filter((result) => selectedResultIds.has(result.id)),
@@ -78,14 +80,46 @@ const BusinessSearch = () => {
   );
   const allResultsChecked = results.length > 0 && checkedResults.length === results.length;
   const exportCount = checkedResults.length || results.length;
+  const selectedSources = SEARCH_SOURCES.filter((source) => selectedSourceIds.has(source.id));
+  const sourceSummary = selectedSources.length === SEARCH_SOURCES.length
+    ? 'All sources'
+    : selectedSources.length === 1
+      ? selectedSources[0].label
+      : `${selectedSources.length} sources`;
 
   useEffect(() => {
     aiChatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [aiMessages, isAiThinking]);
 
+  useEffect(() => {
+    const closeSourcePicker = (event) => {
+      const picker = sourcePickerRef.current;
+      if (!picker?.open) return;
+      if (event.type === 'keydown' && event.key === 'Escape') {
+        picker.open = false;
+        return;
+      }
+      if (event.type === 'pointerdown' && !picker.contains(event.target)) {
+        picker.open = false;
+      }
+    };
+
+    document.addEventListener('pointerdown', closeSourcePicker);
+    document.addEventListener('keydown', closeSourcePicker);
+    return () => {
+      document.removeEventListener('pointerdown', closeSourcePicker);
+      document.removeEventListener('keydown', closeSourcePicker);
+    };
+  }, []);
+
   const handleSearch = async (e) => {
     e.preventDefault();
     if (!query.trim()) return;
+    if (!selectedSourceIds.size) {
+      setError('Select at least one source to search.');
+      return;
+    }
+    if (sourcePickerRef.current) sourcePickerRef.current.open = false;
     setIsSearching(true);
     setError('');
     setResults([]);
@@ -104,8 +138,8 @@ const BusinessSearch = () => {
         },
         body: JSON.stringify({
           query: query.trim(),
-          source: selectedSource.id,
-          max_results: selectedSource.id === 'all' ? 60 : 24,
+          sources: [...selectedSourceIds],
+          max_results: selectedSourceIds.size > 1 ? 60 : 24,
         }),
       });
 
@@ -116,6 +150,7 @@ const BusinessSearch = () => {
 
       setResults(data.results || []);
       setSources(data.sources || []);
+      setLastSearchQuery(query.trim());
       setSelectedResult((data.results || [])[0] || null);
       setAiMessages([BUSINESS_AI_WELCOME]);
       setAiError('');
@@ -197,7 +232,7 @@ const BusinessSearch = () => {
     if (!results.length) return;
 
     const resultsToExport = checkedResults.length ? checkedResults : results;
-    const exportName = checkedResults.length ? 'Selected business search export' : 'All visible business search export';
+    const exportName = lastSearchQuery || query.trim() || 'Business search export';
     setCsvError('');
 
     try {
@@ -249,9 +284,27 @@ const BusinessSearch = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = checkedResults.length ? 'nexgtools-selected-business-results.csv' : 'nexgtools-all-business-results.csv';
+    const safeExportName = exportName.replace(/[\\/:*?"<>|]+/g, '-');
+    link.download = `${safeExportName}.csv`;
     link.click();
     URL.revokeObjectURL(url);
+  };
+
+  const toggleSearchSource = (sourceId) => {
+    setSelectedSourceIds((current) => {
+      const next = new Set(current);
+      if (next.has(sourceId)) next.delete(sourceId);
+      else next.add(sourceId);
+      return next;
+    });
+  };
+
+  const toggleAllSources = () => {
+    setSelectedSourceIds((current) => (
+      current.size === SEARCH_SOURCES.length
+        ? new Set()
+        : new Set(SEARCH_SOURCES.map((source) => source.id))
+    ));
   };
 
   const askBusinessAi = async (questionText = aiQuestion) => {
@@ -278,7 +331,7 @@ const BusinessSearch = () => {
           business: selectedResult,
           search_context: {
             query,
-            selected_source: selectedSource,
+            selected_sources: selectedSources,
             sources,
             result_count: results.length,
           },
@@ -354,11 +407,49 @@ const BusinessSearch = () => {
               )}
             </div>
 
+            <details className="bs-source-picker" ref={sourcePickerRef}>
+              <summary>
+                <span>{sourceSummary}</span>
+                <ChevronDown size={15} />
+              </summary>
+              <div className="bs-source-menu">
+                <label className="bs-source-option bs-source-option-all">
+                  <input
+                    type="checkbox"
+                    checked={selectedSourceIds.size === SEARCH_SOURCES.length}
+                    onChange={toggleAllSources}
+                  />
+                  <span>All sources</span>
+                </label>
+                {SEARCH_SOURCES.map((source) => (
+                  <label className="bs-source-option" key={source.id}>
+                    <input
+                      type="checkbox"
+                      checked={selectedSourceIds.has(source.id)}
+                      onChange={() => toggleSearchSource(source.id)}
+                    />
+                    <span className="bs-source-option-icon">{source.icon}</span>
+                    <span>
+                      <strong>{source.label}</strong>
+                      <small>{source.desc}</small>
+                    </span>
+                  </label>
+                ))}
+                <button
+                  type="button"
+                  className="bs-source-done"
+                  onClick={() => { sourcePickerRef.current.open = false; }}
+                >
+                  Done
+                </button>
+              </div>
+            </details>
+
             {/* Search Button */}
             <button
               type="submit"
               className={`bs-search-btn ${isSearching ? 'bs-searching' : ''}`}
-              disabled={isSearching}
+              disabled={isSearching || !selectedSourceIds.size}
               id="business-search-submit"
             >
               {isSearching ? (

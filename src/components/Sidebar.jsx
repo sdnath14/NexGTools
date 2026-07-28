@@ -1,12 +1,13 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, Building2, BrainCircuit, BookOpen, Settings, ChevronLeft, ChevronRight, History, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, Users, Building2, BrainCircuit, BookOpen, Settings, ChevronLeft, ChevronRight, ShieldCheck, FileSpreadsheet } from 'lucide-react';
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/lead-search', label: 'Lead Search', icon: Users },
-  { path: '/search-history', label: 'Search History', icon: History },
+  { path: '/lead-search/csv', label: 'Lead CSV History', icon: FileSpreadsheet },
   { path: '/business-search', label: 'Business Search', icon: Building2 },
+  { path: '/business-search/csv', label: 'Business CSV History', icon: FileSpreadsheet },
   { path: '/tender-ai', label: 'TenderAI', icon: BrainCircuit },
   { path: '/knowledge-base', label: 'Knowledge Base', icon: BookOpen },
 ];
@@ -29,7 +30,7 @@ const Sidebar = ({ collapsed, onToggle, isAdmin }) => {
           <NavLink
             key={item.path}
             to={item.path}
-            end={item.path === '/'}
+            end
             className={({ isActive }) => `sidebar-link ${isActive ? 'sidebar-link-active' : ''}`}
             title={item.label}
           >
