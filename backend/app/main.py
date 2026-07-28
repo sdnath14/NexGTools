@@ -1,0 +1,1584 @@
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, quote_plus, urlencode, urljoin, urlparse
+from urllib.request import Request, urlopen
+import json
+import math
+import re
+import time
+
+from bs4 import BeautifulSoup
+from fastapi import FastAPI, Header, HTTPException
+from pymysql.err import IntegrityError
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+import requests
+
+from .auth import create_token, hash_password, verify_password
+from .config import settings
+from .database import (
+    admin_overview,
+    admin_table_records,
+    create_session,
+    create_admin_session,
+    create_user,
+    database_status,
+    delete_session,
+    get_admin_session,
+    get_csv_export,
+    get_business_search_history,
+    get_lead_search_history,
+    get_user_by_email,
+    get_user_by_token,
+    initialize_database,
+    list_csv_exports,
+    list_business_search_history,
+    list_lead_search_history,
+    save_csv_export,
+    save_business_search,
+    save_lead_ai_message,
+    save_lead_search,
+    save_website_scrape,
+    update_admin_record,
+    verify_admin_password,
+)
+from .scraper import CrawlOptions, EMAIL_RE, PHONE_RE, scrape_website
+
+
+app = FastAPI(title="NextGTools API", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+def startup() -> None:
+    try:
+        initialize_database()
+    except Exception:
+        pass
+
+
+@app.get("/health")
+def health() -> dict[str, object]:
+    missing = settings.missing_keys()
+    db_status = database_status()
+    return {
+        "ok": not missing,
+        "model": settings.openai_model,
+        "missing": missing,
+        "database": db_status,
+    }
+
+
+@app.get("/config/status")
+def config_status() -> dict[str, object]:
+    return {
+        "openai_api_key": bool(settings.openai_api_key),
+        "openai_model": settings.openai_model,
+        "google_places_api_key": bool(settings.google_places_api_key),
+        "google_search_api_key": bool(settings.google_search_api_key),
+        "google_search_engine_id": bool(settings.google_search_engine_id),
+        "mysql_host": settings.mysql_host,
+        "mysql_port": settings.mysql_port,
+        "mysql_user": bool(settings.mysql_user),
+        "mysql_database": settings.mysql_database,
+        "mysql": database_status(),
+    }
+
+
+class LeadSearchRequest(BaseModel):
+    company_name: str = ""
+    pincode: str = ""
+    city_area: str = ""
+    radius_km: int = Field(default=10, ge=1, le=50)
+    business_type: str = ""
+    max_pages: int = Field(default=5, ge=1, le=10)
+
+
+class WebsiteScrapeRequest(BaseModel):
+    url: str
+    max_pages: int = Field(default=10, ge=1, le=25)
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class LeadAiChatRequest(BaseModel):
+    question: str
+    lead: dict[str, Any] | None = None
+    scrape: dict[str, Any] | None = None
+    history: list[ChatMessage] = Field(default_factory=list)
+
+
+class BusinessAiChatRequest(BaseModel):
+    question: str
+    business: dict[str, Any] | None = None
+    search_context: dict[str, Any] | None = None
+    history: list[ChatMessage] = Field(default_factory=list)
+
+
+class AuthRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RegisterRequest(AuthRequest):
+    name: str
+
+
+class CsvExportRequest(BaseModel):
+    export_name: str = "Lead export"
+    leads: list[dict[str, Any]]
+    source: str = "lead_search"
+
+
+class SocialProfileRequest(BaseModel):
+    name: str
+    address: str = ""
+    website: str = ""
+
+
+class BusinessSearchRequest(BaseModel):
+    query: str
+    location: str = ""
+    source: str = "all"
+    radius_km: int = Field(default=25, ge=1, le=50)
+    max_results: int = Field(default=24, ge=3, le=60)
+
+
+class AdminLoginRequest(BaseModel):
+    password: str
+
+
+class AdminUpdateRecordRequest(BaseModel):
+    values: dict[str, Any]
+
+
+BUSINESS_SOURCES: dict[str, dict[str, str]] = {
+    "zomato": {
+        "label": "Zomato",
+        "domain": "zomato.com",
+        "url": "https://www.google.com/search?q={query}+{location}+site%3Azomato.com",
+    },
+    "swiggy": {
+        "label": "Swiggy",
+        "domain": "swiggy.com",
+        "url": "https://www.google.com/search?q={query}+{location}+site%3Aswiggy.com",
+    },
+    "exportersindia": {
+        "label": "ExportersIndia",
+        "domain": "exportersindia.com",
+        "url": "https://www.exportersindia.com/search.php?srch_catg_ty=prod&term={query}&cont=IN",
+    },
+    "mouthshut": {
+        "label": "MouthShut",
+        "domain": "mouthshut.com",
+        "url": "https://www.google.com/search?q={query}+{location}+site%3Amouthshut.com",
+    },
+    "indiacom": {
+        "label": "Indiacom",
+        "domain": "indiacom.com",
+        "url": "https://www.indiacom.com/yellow-pages/{query}/{location}",
+    },
+    "clickindia": {
+        "label": "ClickIndia",
+        "domain": "clickindia.com",
+        "url": "https://www.clickindia.com/search.php?q={query}&city={location}",
+    },
+    "linkedin": {
+        "label": "LinkedIn",
+        "domain": "linkedin.com",
+        "url": "https://www.linkedin.com/search/results/companies/?keywords={query}%20{location}",
+    },
+    "tofler": {
+        "label": "Tofler",
+        "domain": "tofler.in",
+        "url": "https://www.tofler.in/companylist?q={query}",
+    },
+    "zaubacorp": {
+        "label": "Zauba Corp",
+        "domain": "zaubacorp.com",
+        "url": "https://www.zaubacorp.com/companysearchresults/{query}",
+    },
+    "instagram": {
+        "label": "Instagram",
+        "domain": "instagram.com",
+        "url": "https://www.google.com/search?q={query}+{location}+site%3Ainstagram.com",
+    },
+    "facebook": {
+        "label": "Facebook",
+        "domain": "facebook.com",
+        "url": "https://www.google.com/search?q={query}+{location}+site%3Afacebook.com",
+    },
+    "justdial": {
+        "label": "JustDial",
+        "domain": "justdial.com",
+        "url": "https://www.justdial.com/{location}/{query}",
+    },
+    "indiamart": {
+        "label": "IndiaMart",
+        "domain": "dir.indiamart.com",
+        "url": "https://dir.indiamart.com/search.mp?ss={query}&cq={location}",
+    },
+    "tradeindia": {
+        "label": "TradeIndia",
+        "domain": "tradeindia.com",
+        "url": "https://www.tradeindia.com/search.html?keyword={query}",
+    },
+    "sulekha": {
+        "label": "Sulekha",
+        "domain": "sulekha.com",
+        "url": "https://www.sulekha.com/search?keyword={query}&location={location}",
+    },
+    "google_business": {
+        "label": "Google Business",
+        "domain": "google.com/business",
+        "url": "https://www.google.com/search?q={query}+{location}+site%3Agoogle.com%2Fbusiness",
+    },
+    "startupindia": {
+        "label": "Startup India",
+        "domain": "startupindia.gov.in",
+        "url": "https://www.startupindia.gov.in/content/sih/en/search.html?query={query}",
+    },
+    "mca": {
+        "label": "MCA",
+        "domain": "mca.gov.in",
+        "url": "https://www.google.com/search?q={query}+{location}+site%3Amca.gov.in",
+    },
+}
+
+
+def _bearer_token(authorization: str | None) -> str:
+    if not authorization:
+        return ""
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return ""
+    return token.strip()
+
+
+def _current_user(authorization: str | None) -> dict[str, Any] | None:
+    return get_user_by_token(_bearer_token(authorization))
+
+
+def _require_user(authorization: str | None) -> dict[str, Any]:
+    user = _current_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Login required.")
+    return user
+
+
+def _require_admin(authorization: str | None, admin_token: str | None) -> dict[str, Any]:
+    user = _require_user(authorization)
+    session = get_admin_session(admin_token or "", user["id"])
+    if not session:
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    return user
+
+
+def _build_places_query(payload: LeadSearchRequest) -> str:
+    parts = [
+        payload.company_name.strip(),
+        payload.business_type.strip(),
+    ]
+
+    return " ".join(part for part in parts if part).strip() or "businesses"
+
+
+def _build_geocode_address(payload: LeadSearchRequest) -> str:
+    parts = [
+        payload.city_area.strip(),
+        payload.pincode.strip(),
+        "India",
+    ]
+    return " ".join(part for part in parts if part).strip()
+
+
+def _geocode_address(address: str) -> dict[str, Any] | None:
+    if not address or address == "India":
+        return None
+
+    query = urlencode({"address": address, "region": "in", "key": settings.google_places_api_key})
+    request = Request(f"https://maps.googleapis.com/maps/api/geocode/json?{query}")
+
+    try:
+        with urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError):
+        return None
+
+    results = data.get("results") or []
+    if data.get("status") != "OK" or not results:
+        return None
+
+    first = results[0]
+    location = first.get("geometry", {}).get("location", {})
+    if "lat" not in location or "lng" not in location:
+        return None
+
+    return {
+        "latitude": location["lat"],
+        "longitude": location["lng"],
+        "formatted_address": first.get("formatted_address", address),
+    }
+
+
+def _display_name(place: dict[str, Any]) -> str:
+    display_name = place.get("displayName") or {}
+    return display_name.get("text") or "Unnamed business"
+
+
+def _primary_type(place: dict[str, Any]) -> str:
+    primary_type = place.get("primaryTypeDisplayName") or {}
+    if primary_type.get("text"):
+        return primary_type["text"]
+
+    if place.get("primaryType"):
+        return str(place["primaryType"]).replace("_", " ").title()
+
+    types = place.get("types") or []
+    if types:
+        return str(types[0]).replace("_", " ").title()
+
+    return "Business"
+
+
+def _normalize_place(place: dict[str, Any]) -> dict[str, Any]:
+    location = place.get("location") or {}
+    return {
+        "id": place.get("id") or place.get("name") or _display_name(place),
+        "name": _display_name(place),
+        "phone": place.get("nationalPhoneNumber") or place.get("internationalPhoneNumber") or "",
+        "address": place.get("formattedAddress") or place.get("shortFormattedAddress") or "",
+        "business_type": _primary_type(place),
+        "website": place.get("websiteUri") or "",
+        "google_maps_url": place.get("googleMapsUri") or "",
+        "rating": place.get("rating"),
+        "status": place.get("businessStatus") or "",
+        "latitude": location.get("latitude"),
+        "longitude": location.get("longitude"),
+    }
+
+
+def _distance_km(
+    first_latitude: float | None,
+    first_longitude: float | None,
+    second_latitude: float | None,
+    second_longitude: float | None,
+) -> float | None:
+    if None in (first_latitude, first_longitude, second_latitude, second_longitude):
+        return None
+
+    earth_radius_km = 6371
+    lat_1 = math.radians(float(first_latitude))
+    lat_2 = math.radians(float(second_latitude))
+    delta_lat = math.radians(float(second_latitude) - float(first_latitude))
+    delta_lng = math.radians(float(second_longitude) - float(first_longitude))
+    calculation = (
+        math.sin(delta_lat / 2) ** 2
+        + math.cos(lat_1) * math.cos(lat_2) * math.sin(delta_lng / 2) ** 2
+    )
+    return earth_radius_km * 2 * math.atan2(math.sqrt(calculation), math.sqrt(1 - calculation))
+
+
+def _trim_json(data: Any, limit: int = 24000) -> str:
+    if not data:
+        return "{}"
+    serialized = json.dumps(data, ensure_ascii=False, indent=2)
+    if len(serialized) <= limit:
+        return serialized
+    return f"{serialized[:limit]}\n... [truncated]"
+
+
+def _business_source_url(source_id: str, query: str, location: str) -> str:
+    source = BUSINESS_SOURCES[source_id]
+    formatted_location = quote_plus(location.strip() or "India")
+    formatted_query = quote_plus(query.strip())
+    return source["url"].format(query=formatted_query, location=formatted_location)
+
+
+def _business_source_domain(source_id: str) -> str:
+    return BUSINESS_SOURCES[source_id].get("domain", "")
+
+
+def _clean_business_text(text: str, limit: int = 700) -> str:
+    cleaned = re.sub(r"\s+", " ", text or "").strip()
+    return cleaned[:limit].strip()
+
+
+def _is_business_result_link(href: str) -> bool:
+    if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+        return False
+    lowered = href.lower()
+    blocked_extensions = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".css", ".js", ".pdf", ".zip")
+    return not lowered.endswith(blocked_extensions)
+
+
+def _domain_matches(url: str, source_domain: str) -> bool:
+    if not source_domain:
+        return True
+    parsed = urlparse(url)
+    source_domain = source_domain.lower().removeprefix("www.")
+    host = parsed.netloc.lower().removeprefix("www.")
+    path = parsed.path.lower()
+    if "/" in source_domain:
+        domain_host, domain_path = source_domain.split("/", 1)
+        return host.endswith(domain_host) and path.startswith(f"/{domain_path}")
+    return host.endswith(source_domain)
+
+
+def _extract_google_target_url(href: str) -> str:
+    parsed = urlparse(href)
+    query = parse_qs(parsed.query)
+    for key in ("q", "url"):
+        values = query.get(key) or []
+        for value in values:
+            if value.startswith(("http://", "https://")):
+                return value
+    return href
+
+
+def _source_lookup_result(source_id: str, query: str, location: str, error: str = "") -> dict[str, Any]:
+    source = BUSINESS_SOURCES[source_id]
+    search_url = _business_source_url(source_id, query, location)
+    return {
+        "id": f"{source_id}-lookup",
+        "name": f"{source['label']} lookup for {query}",
+        "source": source_id,
+        "source_label": source["label"],
+        "url": search_url,
+        "search_url": search_url,
+        "snippet": error or f"Open this {source['label']} search link to inspect matching profiles or listings.",
+        "address": "",
+        "phone": "",
+        "email": "",
+        "website": search_url,
+        "business_type": query,
+        "lookup_only": True,
+    }
+
+
+def _business_link_score(
+    source_id: str,
+    absolute_url: str,
+    title: str,
+    parent_text: str,
+    query: str,
+    location: str,
+) -> int:
+    parsed = urlparse(absolute_url)
+    path = parsed.path.lower()
+    combined_text = f"{title} {parent_text} {path}".lower()
+    generic_titles = {
+        "home",
+        "login",
+        "sign in",
+        "register",
+        "about us",
+        "contact us",
+        "privacy policy",
+        "terms",
+        "advertise",
+        "help",
+        "next",
+        "previous",
+    }
+    if title.strip().lower() in generic_titles:
+        return -20
+
+    score = 0
+    if len(title.strip()) >= 4:
+        score += 10
+    if len(parent_text) > len(title) + 20:
+        score += 8
+    if any(marker in path for marker in ("company", "business", "dealer", "supplier", "manufacturer", "service")):
+        score += 10
+    if source_id == "justdial" and any(part in path for part in ("-", "ct-", "pid-")):
+        score += 8
+    if source_id == "indiamart" and any(part in path for part in ("proddetail", "company", "impcat")):
+        score += 8
+    if source_id == "tradeindia" and any(part in path for part in ("supplier", "manufacturer", "company")):
+        score += 8
+    if source_id == "zaubacorp" and "/company/" in path:
+        score += 14
+
+    query_terms = [part.lower() for part in re.findall(r"[a-zA-Z0-9]+", query) if len(part) > 2]
+    location_terms = [part.lower() for part in re.findall(r"[a-zA-Z0-9]+", location) if len(part) > 2]
+    score += sum(4 for term in query_terms[:5] if term in combined_text)
+    score += sum(3 for term in location_terms[:3] if term in combined_text)
+
+    if any(skip in combined_text for skip in ("cookie", "javascript", "download app", "forgot password")):
+        score -= 8
+    return score
+
+
+def _json_ld_values(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, list):
+        values: list[dict[str, Any]] = []
+        for item in data:
+            values.extend(_json_ld_values(item))
+        return values
+    if not isinstance(data, dict):
+        return []
+    graph = data.get("@graph")
+    values = _json_ld_values(graph) if graph else []
+    entity_type = data.get("@type", "")
+    entity_types = entity_type if isinstance(entity_type, list) else [entity_type]
+    business_markers = {
+        "LocalBusiness",
+        "Organization",
+        "Corporation",
+        "Store",
+        "Restaurant",
+        "ProfessionalService",
+        "Product",
+    }
+    if any(str(marker) in business_markers for marker in entity_types) or data.get("telephone") or data.get("address"):
+        values.append(data)
+    return values
+
+
+def _flatten_address(address: Any) -> str:
+    if isinstance(address, str):
+        return _clean_business_text(address, 320)
+    if isinstance(address, dict):
+        parts = [
+            address.get("streetAddress"),
+            address.get("addressLocality"),
+            address.get("addressRegion"),
+            address.get("postalCode"),
+            address.get("addressCountry"),
+        ]
+        return _clean_business_text(", ".join(str(part) for part in parts if part), 320)
+    return ""
+
+
+def _extract_structured_business_data(soup: BeautifulSoup) -> dict[str, str]:
+    extracted: dict[str, str] = {}
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw_json = script.string or script.get_text(strip=True)
+        if not raw_json:
+            continue
+        try:
+            parsed = json.loads(raw_json)
+        except json.JSONDecodeError:
+            continue
+        for entity in _json_ld_values(parsed):
+            if entity.get("name") and not extracted.get("name"):
+                extracted["name"] = _clean_business_text(str(entity["name"]), 160)
+            if entity.get("telephone") and not extracted.get("phone"):
+                extracted["phone"] = _clean_business_text(str(entity["telephone"]), 80)
+            if entity.get("email") and not extracted.get("email"):
+                extracted["email"] = _clean_business_text(str(entity["email"]), 120)
+            if entity.get("url") and not extracted.get("website"):
+                extracted["website"] = _clean_business_text(str(entity["url"]), 300)
+            address = _flatten_address(entity.get("address"))
+            if address and not extracted.get("address"):
+                extracted["address"] = address
+    return extracted
+
+
+def _scrape_business_detail(url: str, session: requests.Session) -> dict[str, Any]:
+    try:
+        response = session.get(url, timeout=10, allow_redirects=True)
+        if response.status_code >= 400 or "text/html" not in response.headers.get("content-type", "").lower():
+            return {}
+    except requests.RequestException:
+        return {}
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    structured_data = _extract_structured_business_data(soup)
+    for tag in soup(["script", "style", "noscript", "svg"]):
+        tag.decompose()
+    text = _clean_business_text(soup.get_text(" ", strip=True), 1800)
+    title = soup.title.string.strip() if soup.title and soup.title.string else ""
+    description_tag = soup.find("meta", attrs={"name": "description"}) or soup.find(
+        "meta", attrs={"property": "og:description"}
+    )
+    description = str(description_tag.get("content", "")).strip() if description_tag else ""
+    website_links: list[str] = []
+    current_host = urlparse(response.url).netloc.lower().removeprefix("www.")
+
+    for anchor in soup.find_all("a", href=True):
+        href = anchor.get("href", "").strip()
+        if not _is_business_result_link(href):
+            continue
+        absolute_url = urljoin(response.url, href)
+        parsed = urlparse(absolute_url)
+        if parsed.scheme not in {"http", "https"}:
+            continue
+        host = parsed.netloc.lower().removeprefix("www.")
+        if host and host != current_host and absolute_url not in website_links:
+            website_links.append(absolute_url)
+        if len(website_links) >= 5:
+            break
+
+    return {
+        "detail_title": title,
+        "detail_description": description,
+        "detail_text": text,
+        "structured_name": structured_data.get("name", ""),
+        "structured_address": structured_data.get("address", ""),
+        "structured_phone": structured_data.get("phone", ""),
+        "structured_email": structured_data.get("email", ""),
+        "structured_website": structured_data.get("website", ""),
+        "emails": sorted(set(EMAIL_RE.findall(response.text))),
+        "phones": sorted(set(match.strip() for match in PHONE_RE.findall(text)))[:8],
+        "external_links": website_links,
+    }
+
+
+def _scrape_business_source(source_id: str, query: str, location: str, limit: int) -> dict[str, Any]:
+    search_url = _business_source_url(source_id, query, location)
+    source = BUSINESS_SOURCES[source_id]
+    session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            )
+        }
+    )
+
+    try:
+        response = session.get(search_url, timeout=14, allow_redirects=True)
+    except requests.RequestException as exc:
+        return {"source": source_id, "label": source["label"], "search_url": search_url, "results": [], "error": str(exc)}
+
+    if response.status_code >= 400:
+        return {
+            "source": source_id,
+            "label": source["label"],
+            "search_url": search_url,
+            "results": [],
+            "error": f"{source['label']} returned HTTP {response.status_code}.",
+        }
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    parsed_search_url = urlparse(response.url)
+    search_host = parsed_search_url.netloc.lower().removeprefix("www.")
+    source_domain = _business_source_domain(source_id)
+    is_google_search_page = "google." in search_host
+    seen: set[str] = set()
+    candidates: list[dict[str, Any]] = []
+
+    for anchor in soup.find_all("a", href=True):
+        href = anchor.get("href", "").strip()
+        if not _is_business_result_link(href):
+            continue
+
+        absolute_url = urljoin(response.url, href)
+        if is_google_search_page:
+            absolute_url = _extract_google_target_url(absolute_url)
+        parsed = urlparse(absolute_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            continue
+
+        host = parsed.netloc.lower().removeprefix("www.")
+        if is_google_search_page:
+            if source_domain and not _domain_matches(absolute_url, source_domain):
+                continue
+        elif search_host and host != search_host:
+            continue
+
+        title = _clean_business_text(anchor.get_text(" ", strip=True), 140)
+        if len(title) < 3:
+            continue
+        if absolute_url in seen:
+            continue
+        seen.add(absolute_url)
+
+        parent_text = _clean_business_text(anchor.parent.get_text(" ", strip=True) if anchor.parent else title)
+        score = _business_link_score(source_id, absolute_url, title, parent_text, query, location)
+        if score < 0:
+            continue
+        candidates.append(
+            {
+                "score": score,
+                "title": title,
+                "url": absolute_url,
+                "parent_text": parent_text,
+            }
+        )
+
+    candidates.sort(key=lambda item: item["score"], reverse=True)
+    results: list[dict[str, Any]] = []
+    for candidate in candidates[:limit]:
+        results.append(
+            {
+                "id": f"{source_id}-{len(results) + 1}",
+                "name": candidate["title"],
+                "source": source_id,
+                "source_label": source["label"],
+                "url": candidate["url"],
+                "search_url": response.url,
+                "snippet": candidate["parent_text"],
+                "address": "",
+                "phone": "",
+                "website": "",
+                "business_type": query,
+                "source_score": candidate["score"],
+            }
+        )
+
+    if not results:
+        page_title = soup.title.string.strip() if soup.title and soup.title.string else source["label"]
+        page_text = _clean_business_text(soup.get_text(" ", strip=True), 900)
+        results.append(
+            {
+                "id": f"{source_id}-1",
+                "name": page_title,
+                "source": source_id,
+                "source_label": source["label"],
+                "url": response.url,
+                "search_url": response.url,
+                "snippet": page_text,
+                "address": "",
+                "phone": "",
+                "website": "",
+                "business_type": query,
+                "source_score": 0,
+            }
+        )
+
+    for result in results[: min(8, len(results))]:
+        detail = _scrape_business_detail(result["url"], session)
+        if detail:
+            result.update(detail)
+            result["name"] = detail.get("structured_name") or result["name"] or detail.get("detail_title", "")
+            result["snippet"] = detail.get("detail_description") or result["snippet"] or detail.get("detail_text", "")[:500]
+            phones = detail.get("phones") or []
+            emails = detail.get("emails") or []
+            external_links = detail.get("external_links") or []
+            result["phone"] = detail.get("structured_phone") or (phones[0] if phones else "")
+            result["email"] = detail.get("structured_email") or (emails[0] if emails else "")
+            result["address"] = detail.get("structured_address") or result["address"]
+            result["website"] = detail.get("structured_website") or (external_links[0] if external_links else "")
+
+    return {
+        "source": source_id,
+        "label": source["label"],
+        "search_url": response.url,
+        "results": results,
+        "error": "" if results else f"No scrapeable {source['label']} results were found on the returned page.",
+    }
+
+
+def _custom_search_business_source(source_id: str, query: str, location: str, limit: int) -> dict[str, Any]:
+    source = BUSINESS_SOURCES[source_id]
+    domain = _business_source_domain(source_id)
+    search_url = _business_source_url(source_id, query, location)
+    if not settings.google_search_api_key or not settings.google_search_engine_id:
+        return {
+            "source": source_id,
+            "label": source["label"],
+            "search_url": search_url,
+            "results": [],
+            "error": "GOOGLE_SEARCH_API_KEY or GOOGLE_SEARCH_ENGINE_ID is not configured.",
+        }
+
+    search_text = " ".join(part for part in [query.strip(), location.strip()] if part)
+    site_query = f"{search_text} site:{domain}" if domain else search_text
+    params = urlencode(
+        {
+            "key": settings.google_search_api_key,
+            "cx": settings.google_search_engine_id,
+            "q": site_query,
+            "num": min(10, max(1, limit)),
+        }
+    )
+    api_url = f"https://www.googleapis.com/customsearch/v1?{params}"
+    try:
+        request = Request(api_url)
+        with urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace")
+        try:
+            parsed_error = json.loads(details)
+            message = parsed_error.get("error", {}).get("message", details)
+        except json.JSONDecodeError:
+            message = details
+        return {
+            "source": source_id,
+            "label": source["label"],
+            "search_url": search_url,
+            "results": [],
+            "error": f"Google Custom Search failed: {message}",
+        }
+    except URLError as exc:
+        return {
+            "source": source_id,
+            "label": source["label"],
+            "search_url": search_url,
+            "results": [],
+            "error": f"Could not reach Google Custom Search: {exc.reason}",
+        }
+
+    session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            )
+        }
+    )
+    results: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    for item in data.get("items") or []:
+        link = item.get("link", "")
+        if not link or link in seen_urls:
+            continue
+        if domain and domain.replace("www.", "") not in urlparse(link).netloc.lower() + urlparse(link).path.lower():
+            continue
+        seen_urls.add(link)
+        pagemap = item.get("pagemap") or {}
+        metatags = (pagemap.get("metatags") or [{}])[0]
+        result = {
+            "id": f"{source_id}-{len(results) + 1}",
+            "name": item.get("title") or source["label"],
+            "source": source_id,
+            "source_label": source["label"],
+            "url": link,
+            "search_url": search_url,
+            "snippet": item.get("snippet") or "",
+            "address": "",
+            "phone": metatags.get("telephone", ""),
+            "email": metatags.get("email", ""),
+            "website": metatags.get("og:url", "") or link,
+            "business_type": query,
+            "custom_search": True,
+        }
+        results.append(result)
+        if len(results) >= limit:
+            break
+
+    for result in results[: min(6, len(results))]:
+        detail = _scrape_business_detail(result["url"], session)
+        if detail:
+            result.update(detail)
+            result["name"] = detail.get("structured_name") or result["name"] or detail.get("detail_title", "")
+            result["snippet"] = detail.get("detail_description") or result["snippet"] or detail.get("detail_text", "")[:500]
+            phones = detail.get("phones") or []
+            emails = detail.get("emails") or []
+            external_links = detail.get("external_links") or []
+            result["phone"] = detail.get("structured_phone") or result.get("phone") or (phones[0] if phones else "")
+            result["email"] = detail.get("structured_email") or result.get("email") or (emails[0] if emails else "")
+            result["address"] = detail.get("structured_address") or result["address"]
+            result["website"] = detail.get("structured_website") or result.get("website") or (external_links[0] if external_links else "")
+
+    return {
+        "source": source_id,
+        "label": source["label"],
+        "search_url": search_url,
+        "results": results,
+        "error": "" if results else f"No Custom Search results found for {source['label']}.",
+    }
+
+
+def _business_places_results(query: str, location: str, limit: int, radius_km: int = 25) -> dict[str, Any]:
+    if not settings.google_places_api_key:
+        return {
+            "source": "google_maps",
+            "label": "Google Maps",
+            "search_url": "",
+            "results": [],
+            "error": "GOOGLE_PLACES_API_KEY is not configured.",
+        }
+
+    center = _geocode_address(f"{location} India".strip())
+    request_body: dict[str, Any] = {
+        "textQuery": " ".join(part for part in [query.strip(), location.strip()] if part),
+        "pageSize": min(20, max(3, limit)),
+        "regionCode": "IN",
+        "languageCode": "en",
+        "includePureServiceAreaBusinesses": True,
+    }
+    if center:
+        request_body["locationBias"] = {
+            "circle": {
+                "center": {"latitude": center["latitude"], "longitude": center["longitude"]},
+                "radius": radius_km * 1000,
+            }
+        }
+
+    request = Request(
+        "https://places.googleapis.com/v1/places:searchText",
+        data=json.dumps(request_body).encode("utf-8"),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": settings.google_places_api_key,
+            "X-Goog-FieldMask": (
+                "places.id,places.name,places.displayName,places.formattedAddress,"
+                "places.shortFormattedAddress,places.nationalPhoneNumber,places.internationalPhoneNumber,"
+                "places.websiteUri,places.googleMapsUri,places.rating,places.businessStatus,places.types,"
+                "places.primaryType,places.primaryTypeDisplayName"
+            ),
+        },
+    )
+
+    try:
+        with urlopen(request, timeout=20) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace")
+        return {
+            "source": "google_maps",
+            "label": "Google Maps",
+            "search_url": "",
+            "results": [],
+            "error": f"Google Places API request failed: {details}",
+        }
+    except URLError as exc:
+        return {
+            "source": "google_maps",
+            "label": "Google Maps",
+            "search_url": "",
+            "results": [],
+            "error": f"Could not reach Google Places API: {exc.reason}",
+        }
+
+    results = []
+    for index, place in enumerate((data.get("places") or [])[:limit], start=1):
+        lead = _normalize_place(place)
+        results.append(
+            {
+                "id": f"google_maps-{index}",
+                "name": lead["name"],
+                "source": "google_maps",
+                "source_label": "Google Maps",
+                "url": lead["google_maps_url"],
+                "search_url": lead["google_maps_url"],
+                "snippet": lead["address"],
+                "address": lead["address"],
+                "phone": lead["phone"],
+                "website": lead["website"],
+                "business_type": lead["business_type"],
+                "rating": lead["rating"],
+                "status": lead["status"],
+            }
+        )
+
+    return {
+        "source": "google_maps",
+        "label": "Google Maps",
+        "search_url": "",
+        "results": results,
+        "error": "" if results else "No Google Maps results found.",
+    }
+
+
+def _chat_completion(messages: list[dict[str, str]]) -> str:
+    if not settings.openai_api_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
+
+    request_body = {
+        "model": settings.openai_model,
+        "messages": messages,
+        "temperature": 0.2,
+        "max_tokens": 750,
+    }
+    request = Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=json.dumps(request_body).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {settings.openai_api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with urlopen(request, timeout=28) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace")
+        try:
+            parsed_details = json.loads(details)
+            message = parsed_details.get("error", {}).get("message", "OpenAI request failed.")
+        except json.JSONDecodeError:
+            message = "OpenAI request failed."
+        raise HTTPException(status_code=exc.code, detail=message) from exc
+    except URLError as exc:
+        raise HTTPException(status_code=502, detail=f"Could not reach OpenAI: {exc.reason}") from exc
+
+    try:
+        return data["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError, TypeError) as exc:
+        raise HTTPException(status_code=502, detail="OpenAI returned an unexpected response.") from exc
+
+
+def _find_social_profiles(name: str, address: str = "", website: str = "") -> dict[str, Any]:
+    platforms = [
+        ("instagram", "Instagram", "instagram.com"),
+        ("facebook", "Facebook", "facebook.com"),
+        ("youtube", "YouTube", "youtube.com"),
+        ("linkedin", "LinkedIn", "linkedin.com/company"),
+    ]
+    location_hint = " ".join(address.split(",")[:2])
+    fallback_searches = [
+        {
+            "platform": platform_id,
+            "label": label,
+            "url": f"https://www.google.com/search?{urlencode({'q': f'{name} {location_hint} site:{domain}'})}",
+        }
+        for platform_id, label, domain in platforms
+    ]
+
+    if not settings.google_search_api_key or not settings.google_search_engine_id:
+        return {
+            "profiles": [],
+            "fallback_searches": fallback_searches,
+            "error": "GOOGLE_SEARCH_API_KEY or GOOGLE_SEARCH_ENGINE_ID is not configured.",
+        }
+
+    profiles: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    errors: list[str] = []
+
+    for platform_id, label, domain in platforms:
+        query_variants = [
+            f'"{name}" {location_hint} site:{domain}'.strip(),
+            f'{name} {location_hint} {label}'.strip(),
+            f'"{name}" "{label}"'.strip(),
+        ]
+        for query_text in query_variants:
+            query = urlencode(
+                {
+                    "key": settings.google_search_api_key,
+                    "cx": settings.google_search_engine_id,
+                    "q": query_text,
+                    "num": 5,
+                }
+            )
+            request = Request(f"https://www.googleapis.com/customsearch/v1?{query}")
+            try:
+                with urlopen(request, timeout=12) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+            except HTTPError as exc:
+                details = exc.read().decode("utf-8", errors="replace")
+                try:
+                    error_data = json.loads(details)
+                    message = error_data.get("error", {}).get("message", details)
+                except json.JSONDecodeError:
+                    message = details
+                errors.append(message)
+                break
+            except URLError as exc:
+                errors.append(f"Could not reach Google Custom Search: {exc.reason}")
+                break
+
+            matched_profile = None
+            for item in data.get("items") or []:
+                link = item.get("link", "")
+                if domain.replace("/company", "") not in link or link in seen_urls:
+                    continue
+                matched_profile = {
+                    "platform": platform_id,
+                    "label": label,
+                    "url": link,
+                    "title": item.get("title", label),
+                }
+                break
+
+            if matched_profile:
+                seen_urls.add(matched_profile["url"])
+                profiles.append(matched_profile)
+                break
+
+    return {
+        "profiles": profiles,
+        "fallback_searches": fallback_searches,
+        "error": errors[0] if errors and not profiles else "",
+    }
+
+
+@app.post("/api/auth/register")
+def register(payload: RegisterRequest) -> dict[str, Any]:
+    name = payload.name.strip()
+    email = payload.email.strip().lower()
+    password = payload.password
+    if not name or not email or len(password) < 6:
+        raise HTTPException(status_code=400, detail="Name, valid email, and 6+ character password are required.")
+
+    salt, password_digest = hash_password(password)
+    try:
+        user = create_user(name, email, salt, password_digest)
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="An account with this email already exists.") from exc
+
+    token = create_token()
+    create_session(user["id"], token)
+    return {"token": token, "user": user}
+
+
+@app.post("/api/auth/login")
+def login(payload: AuthRequest) -> dict[str, Any]:
+    email = payload.email.strip().lower()
+    user_row = get_user_by_email(email)
+    if not user_row or not verify_password(payload.password, user_row["password_salt"], user_row["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+
+    token = create_token()
+    create_session(user_row["id"], token)
+    return {
+        "token": token,
+        "user": {
+            "id": user_row["id"],
+            "name": user_row["name"],
+            "email": user_row["email"],
+        },
+    }
+
+
+@app.get("/api/auth/me")
+def me(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    return {"user": user}
+
+
+@app.post("/api/auth/logout")
+def logout(authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    token = _bearer_token(authorization)
+    if token:
+        delete_session(token)
+    return {"ok": True}
+
+
+@app.post("/api/csv-exports")
+def create_csv_export(payload: CsvExportRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    if not payload.leads:
+        raise HTTPException(status_code=400, detail="Select at least one lead to export.")
+
+    user = _require_user(authorization)
+    export_id = save_csv_export(payload.leads, payload.export_name.strip() or "Lead export", user["id"], payload.source)
+    if not export_id:
+        raise HTTPException(status_code=500, detail="Could not save CSV export.")
+
+    return {"id": export_id, "row_count": len(payload.leads)}
+
+
+@app.get("/api/csv-exports")
+def csv_exports(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    return {"exports": list_csv_exports(user["id"])}
+
+
+@app.get("/api/csv-exports/{export_id}")
+def csv_export_detail(export_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    export = get_csv_export(export_id, user["id"])
+    if not export:
+        raise HTTPException(status_code=404, detail="CSV export not found.")
+    return {"export": export}
+
+
+@app.get("/api/search-history")
+def search_history(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user(authorization)
+    return {"history": list_lead_search_history()}
+
+
+@app.get("/api/search-history/{search_id}")
+def search_history_detail(search_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user(authorization)
+    search = get_lead_search_history(search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Search history record not found.")
+    return {"search": search}
+
+
+@app.post("/api/admin/login")
+def admin_login(payload: AdminLoginRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    if not verify_admin_password(payload.password):
+        raise HTTPException(status_code=401, detail="Invalid admin password.")
+    token = create_admin_session(user["id"])
+    return {"admin_token": token, "user": user}
+
+
+@app.get("/api/admin/me")
+def admin_me(
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user = _require_admin(authorization, x_admin_token)
+    return {"admin": True, "user": user}
+
+
+@app.get("/api/admin/overview")
+def admin_dashboard(
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_admin(authorization, x_admin_token)
+    return admin_overview()
+
+
+@app.get("/api/admin/tables/{table_name}")
+def admin_records(
+    table_name: str,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_admin(authorization, x_admin_token)
+    try:
+        return admin_table_records(table_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.put("/api/admin/tables/{table_name}/{record_id}")
+def admin_update_record(
+    table_name: str,
+    record_id: int,
+    payload: AdminUpdateRecordRequest,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_admin(authorization, x_admin_token)
+    try:
+        return update_admin_record(table_name, record_id, payload.values)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/social-profiles")
+def social_profiles(payload: SocialProfileRequest) -> dict[str, Any]:
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Company name is required.")
+    return _find_social_profiles(payload.name.strip(), payload.address, payload.website)
+
+
+@app.get("/api/business-search/history")
+def business_search_history(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    return {"history": list_business_search_history(user["id"])}
+
+
+@app.get("/api/business-search/history/{search_id}")
+def business_search_history_detail(search_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    search = get_business_search_history(search_id, user["id"])
+    if not search:
+        raise HTTPException(status_code=404, detail="Business search history record not found.")
+    return {"search": search}
+
+
+@app.post("/api/business-search")
+def business_search(payload: BusinessSearchRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    query = payload.query.strip()
+    location = payload.location.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Enter a business, product, or service to search.")
+
+    if payload.source != "all" and payload.source not in BUSINESS_SOURCES and payload.source != "google_maps":
+        raise HTTPException(status_code=400, detail="Unknown business search source.")
+
+    source_ids = ["google_maps", *BUSINESS_SOURCES.keys()] if payload.source == "all" else [payload.source]
+    per_source_limit = payload.max_results if payload.source != "all" else max(3, math.ceil(payload.max_results / len(source_ids)))
+    source_reports: list[dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
+
+    for source_id in source_ids:
+        if source_id == "google_maps":
+            report = _business_places_results(query, location, per_source_limit, payload.radius_km)
+        else:
+            report = _custom_search_business_source(source_id, query, location, per_source_limit)
+            if not report.get("results"):
+                fallback_report = _scrape_business_source(source_id, query, location, per_source_limit)
+                if fallback_report.get("results"):
+                    fallback_report["error"] = report.get("error", "")
+                    report = fallback_report
+            if not report.get("results"):
+                report["results"] = [_source_lookup_result(source_id, query, location, report.get("error", ""))]
+
+        source_reports.append(
+            {
+                "source": report["source"],
+                "label": report["label"],
+                "search_url": report.get("search_url", ""),
+                "count": len(report.get("results") or []),
+                "error": report.get("error", ""),
+            }
+        )
+        results.extend(report.get("results") or [])
+
+    unique_results: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    for result in results:
+        dedupe_key = result.get("url") or f"{result.get('source')}:{result.get('name')}"
+        if dedupe_key in seen_urls:
+            continue
+        seen_urls.add(dedupe_key)
+        result["id"] = f"business-{len(unique_results) + 1}"
+        unique_results.append(result)
+        if len(unique_results) >= payload.max_results:
+            break
+
+    response = {
+        "query": query,
+        "location": location,
+        "source": payload.source,
+        "radius_km": payload.radius_km,
+        "count": len(unique_results),
+        "results": unique_results,
+        "sources": source_reports,
+    }
+    response["database_search_id"] = save_business_search(payload, response, user["id"])
+    return response
+
+
+@app.post("/api/leads/search")
+def search_leads(payload: LeadSearchRequest) -> dict[str, Any]:
+    if not settings.google_places_api_key:
+        raise HTTPException(status_code=500, detail="GOOGLE_PLACES_API_KEY is not configured.")
+
+    text_query = _build_places_query(payload)
+    if not text_query:
+        raise HTTPException(
+            status_code=400,
+            detail="Enter a company name, city/area, pincode, or business type.",
+        )
+
+    center = _geocode_address(_build_geocode_address(payload))
+    request_body = {
+        "textQuery": text_query,
+        "pageSize": 20,
+        "regionCode": "IN",
+        "languageCode": "en",
+        "includePureServiceAreaBusinesses": True,
+    }
+    if center:
+        request_body["locationBias"] = {
+            "circle": {
+                "center": {
+                    "latitude": center["latitude"],
+                    "longitude": center["longitude"],
+                },
+                "radius": payload.radius_km * 1000,
+            }
+        }
+
+    places: list[dict[str, Any]] = []
+    next_page_token: str | None = None
+    pages_fetched = 0
+
+    while pages_fetched < payload.max_pages:
+        page_body = dict(request_body)
+        if next_page_token:
+            page_body["pageToken"] = next_page_token
+
+        encoded_body = json.dumps(page_body).encode("utf-8")
+        request = Request(
+            "https://places.googleapis.com/v1/places:searchText",
+            data=encoded_body,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": settings.google_places_api_key,
+                "X-Goog-FieldMask": (
+                    "places.id,places.name,places.displayName,places.formattedAddress,"
+                    "places.shortFormattedAddress,places.nationalPhoneNumber,"
+                    "places.internationalPhoneNumber,places.websiteUri,places.googleMapsUri,"
+                    "places.rating,places.businessStatus,places.types,places.primaryType,"
+                    "places.primaryTypeDisplayName,places.location,nextPageToken,searchUri"
+                ),
+            },
+        )
+
+        try:
+            with urlopen(request, timeout=20) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            details = exc.read().decode("utf-8", errors="replace")
+            raise HTTPException(
+                status_code=exc.code,
+                detail=f"Google Places API request failed: {details}",
+            ) from exc
+        except URLError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not reach Google Places API: {exc.reason}",
+            ) from exc
+
+        pages_fetched += 1
+        places.extend(data.get("places") or [])
+        next_page_token = data.get("nextPageToken")
+        if not next_page_token:
+            break
+
+        time.sleep(0.35)
+
+    seen_place_ids: set[str] = set()
+    leads: list[dict[str, Any]] = []
+    for place in places:
+        lead = _normalize_place(place)
+        if lead["id"] in seen_place_ids:
+            continue
+        seen_place_ids.add(lead["id"])
+
+        distance = None
+        if center:
+            distance = _distance_km(
+                center["latitude"],
+                center["longitude"],
+                lead["latitude"],
+                lead["longitude"],
+            )
+            if distance is not None and distance > payload.radius_km:
+                continue
+
+        lead["distance_km"] = round(distance, 2) if distance is not None else None
+        leads.append(lead)
+
+    leads.sort(key=lambda lead: lead["distance_km"] if lead["distance_km"] is not None else 999999)
+
+    response = {
+        "query": text_query,
+        "radius_km": payload.radius_km,
+        "center": center,
+        "pages_fetched": pages_fetched,
+        "count": len(leads),
+        "leads": leads,
+    }
+    response["database_search_id"] = save_lead_search(payload, response)
+    return response
+
+
+@app.post("/api/scrape")
+def scrape(payload: WebsiteScrapeRequest) -> dict[str, Any]:
+    try:
+        response = scrape_website(payload.url, CrawlOptions(max_pages=payload.max_pages))
+        response["database_scrape_id"] = save_website_scrape(response)
+        return response
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/lead-ai/chat")
+def lead_ai_chat(payload: LeadAiChatRequest) -> dict[str, Any]:
+    question = payload.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question is required.")
+
+    context = {
+        "selected_google_places_lead": payload.lead or {},
+        "latest_website_scrape": payload.scrape or {},
+    }
+    has_lead_context = bool(payload.lead)
+    has_scrape_context = bool(payload.scrape)
+    recent_history = [
+        {"role": message.role, "content": message.content}
+        for message in payload.history[-8:]
+        if message.role in {"user", "assistant"} and message.content.strip()
+    ]
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are Lead AI for NextGTools, a fast business-research assistant. "
+                "Give responsive, direct answers in plain English. Prefer short sections and bullets. "
+                "Use the selected Google Places lead and website scrape context whenever available. "
+                "If asked for phone numbers, emails, websites, addresses, products, services, owners, "
+                "or social links, extract only what appears in the provided context. "
+                "If context is missing, answer generally but clearly say what data is missing and what to scrape next. "
+                "Never invent contact details, prices, people, services, or company facts. "
+                "Keep normal answers under 180 words unless the user asks for more detail."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Available context flags:\n"
+                f"- selected_lead_loaded: {has_lead_context}\n"
+                f"- website_scrape_loaded: {has_scrape_context}\n\n"
+                f"Available lead and scrape context:\n{_trim_json(context)}"
+            ),
+        },
+        *recent_history,
+        {"role": "user", "content": question},
+    ]
+
+    answer = _chat_completion(messages)
+    message_id = save_lead_ai_message(
+        question,
+        answer,
+        payload.lead,
+        payload.scrape,
+        settings.openai_model,
+    )
+
+    return {
+        "answer": answer,
+        "model": settings.openai_model,
+        "database_message_id": message_id,
+    }
+
+
+@app.post("/api/business-ai/chat")
+def business_ai_chat(payload: BusinessAiChatRequest) -> dict[str, Any]:
+    question = payload.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question is required.")
+
+    context = {
+        "selected_business_result": payload.business or {},
+        "business_search_context": payload.search_context or {},
+    }
+    recent_history = [
+        {"role": message.role, "content": message.content}
+        for message in payload.history[-8:]
+        if message.role in {"user", "assistant"} and message.content.strip()
+    ]
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are Business AI for NextGTools. Answer using the selected business result, "
+                "source page text, Custom Search snippets, and Business Search context. "
+                "Be fast, direct, and practical. Use short sections or bullets. "
+                "When asked for contact info, products, services, website, social profile, source, "
+                "or summary, extract only details present in the context. "
+                "If the context does not include the answer, say what is missing and suggest which source "
+                "or website page to inspect next. Do not invent contacts, claims, owners, prices, or services. "
+                "Keep normal answers under 180 words."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Available Business Search context:\n{_trim_json(context)}",
+        },
+        *recent_history,
+        {"role": "user", "content": question},
+    ]
+
+    answer = _chat_completion(messages)
+    message_id = save_lead_ai_message(
+        question,
+        answer,
+        payload.business,
+        payload.search_context,
+        settings.openai_model,
+    )
+
+    return {
+        "answer": answer,
+        "model": settings.openai_model,
+        "database_message_id": message_id,
+    }

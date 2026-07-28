@@ -1,0 +1,56 @@
+import React from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { LogOut, ArrowLeft, FileSpreadsheet } from 'lucide-react';
+
+const pageTitles = {
+  '/': 'Dashboard',
+  '/lead-search': 'Lead Search',
+  '/lead-search/csv': 'CSV History',
+  '/search-history': 'Search History',
+  '/business-search': 'Business Search',
+  '/business-search/history': 'Business History',
+  '/admin': 'Admin',
+  '/tender-ai': 'TenderAI',
+  '/knowledge-base': 'Knowledge Base',
+  '/settings': 'Settings',
+};
+
+const Topbar = ({ user, onLogout }) => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const pageTitle = pageTitles[location.pathname] || 'NextG Tools';
+  const isLeadSearch = location.pathname.startsWith('/lead-search');
+  const initials = user?.name
+    ? user.name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()
+    : 'NT';
+
+  return (
+    <header className="topbar">
+      <div className="topbar-left">
+        {isLeadSearch && (
+          <button className="topbar-nav-btn" onClick={() => navigate('/')}>
+            <ArrowLeft size={16} /> Back
+          </button>
+        )}
+        <h2 className="topbar-title">{pageTitle}</h2>
+        {isLeadSearch && (
+          <div className="topbar-context-actions">
+            <button className="topbar-nav-btn" onClick={() => navigate('/lead-search/csv')}>
+              <FileSpreadsheet size={15} /> CSV
+            </button>
+          </div>
+        )}
+      </div>
+      <div className="topbar-right">
+        <button className="topbar-btn topbar-btn-logout" title="Logout" onClick={onLogout}>
+          <LogOut size={15} /> Logout
+        </button>
+        <div className="topbar-avatar" title={user?.email || 'User'}>
+          {initials}
+        </div>
+      </div>
+    </header>
+  );
+};
+
+export default Topbar;
