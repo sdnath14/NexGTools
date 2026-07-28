@@ -3,17 +3,14 @@ import {
   AlertCircle,
   Bot,
   Building2,
-  ChevronDown,
   Download,
   ExternalLink,
-  Filter,
   Loader2,
   Mail,
   MapPin,
   Phone,
   Search,
   Send,
-  Sparkles,
   X,
 } from 'lucide-react';
 import '../BusinessSearch.css';
@@ -59,10 +56,7 @@ const BUSINESS_AI_WELCOME = {
 
 const BusinessSearch = () => {
   const [query, setQuery] = useState('');
-  const [location, setLocation] = useState('');
-  const [radiusKm, setRadiusKm] = useState('25');
-  const [selectedSource, setSelectedSource] = useState(SEARCH_SOURCES[0]);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const selectedSource = SEARCH_SOURCES[0];
   const [isSearching, setIsSearching] = useState(false);
   const [results, setResults] = useState([]);
   const [sources, setSources] = useState([]);
@@ -70,11 +64,12 @@ const BusinessSearch = () => {
   const [selectedResult, setSelectedResult] = useState(null);
   const [selectedResultIds, setSelectedResultIds] = useState(new Set());
   const [csvError, setCsvError] = useState('');
+  const [isSourceScraping, setIsSourceScraping] = useState(false);
+  const [sourceScrapeError, setSourceScrapeError] = useState('');
   const [aiMessages, setAiMessages] = useState([BUSINESS_AI_WELCOME]);
   const [aiQuestion, setAiQuestion] = useState('');
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [aiError, setAiError] = useState('');
-  const dropdownRef = useRef(null);
   const inputRef = useRef(null);
   const aiChatEndRef = useRef(null);
   const checkedResults = useMemo(
@@ -83,23 +78,6 @@ const BusinessSearch = () => {
   );
   const allResultsChecked = results.length > 0 && checkedResults.length === results.length;
   const exportCount = checkedResults.length || results.length;
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    const handleOutside = (e) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
-        setDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleOutside);
-    return () => document.removeEventListener('mousedown', handleOutside);
-  }, []);
-
-  const handleSourceSelect = (source) => {
-    setSelectedSource(source);
-    setDropdownOpen(false);
-    inputRef.current?.focus();
-  };
 
   useEffect(() => {
     aiChatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -115,6 +93,7 @@ const BusinessSearch = () => {
     setSelectedResult(null);
     setSelectedResultIds(new Set());
     setCsvError('');
+    setSourceScrapeError('');
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/business-search`, {
@@ -125,8 +104,6 @@ const BusinessSearch = () => {
         },
         body: JSON.stringify({
           query: query.trim(),
-          location: location.trim(),
-          radius_km: Number(radiusKm),
           source: selectedSource.id,
           max_results: selectedSource.id === 'all' ? 60 : 24,
         }),
@@ -171,6 +148,49 @@ const BusinessSearch = () => {
       if (allResultsChecked) return new Set();
       return new Set(results.map((result) => result.id));
     });
+  };
+
+  const scrapeSelectedSource = async () => {
+    if (!selectedResult?.url || selectedResult.lookup_only || isSourceScraping) return;
+
+    setIsSourceScraping(true);
+    setSourceScrapeError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/scrape`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders(),
+        },
+        body: JSON.stringify({
+          url: selectedResult.url,
+          max_pages: 3,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not scrape this source page.');
+
+      const enrichedResult = {
+        ...selectedResult,
+        source_scrape: data,
+      };
+      setSelectedResult(enrichedResult);
+      setResults((current) => current.map(
+        (result) => result.id === enrichedResult.id ? enrichedResult : result,
+      ));
+      setAiMessages((current) => [
+        ...current,
+        {
+          id: `source-scrape-${Date.now()}`,
+          role: 'assistant',
+          content: `${selectedResult.source_label || 'Source'} scrape loaded: ${data.pages_scraped || 0} pages, ${data.emails?.length || 0} emails, and ${data.phones?.length || 0} phone numbers. You can now ask me about this scraped information.`,
+        },
+      ]);
+    } catch (scrapeError) {
+      setSourceScrapeError(scrapeError.message || 'Could not scrape this source page.');
+    } finally {
+      setIsSourceScraping(false);
+    }
   };
 
   const exportBusinessCsv = async () => {
@@ -229,7 +249,7 @@ const BusinessSearch = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = checkedResults.length ? 'nextgtools-selected-business-results.csv' : 'nextgtools-all-business-results.csv';
+    link.download = checkedResults.length ? 'nexgtools-selected-business-results.csv' : 'nexgtools-all-business-results.csv';
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -258,8 +278,6 @@ const BusinessSearch = () => {
           business: selectedResult,
           search_context: {
             query,
-            location,
-            radius_km: radiusKm,
             selected_source: selectedSource,
             sources,
             result_count: results.length,
@@ -302,70 +320,16 @@ const BusinessSearch = () => {
 
       {/* ── Hero Section ──────────────────────────────────── */}
       <div className="bs-hero">
-        <div className="bs-hero-bg-orb bs-orb-1"></div>
-        <div className="bs-hero-bg-orb bs-orb-2"></div>
-        <div className="bs-hero-bg-orb bs-orb-3"></div>
-
         <div className="bs-hero-content">
-          <div className="bs-hero-badge">
-            <Sparkles size={14} />
-            <span>Powered by AI</span>
-          </div>
-          <h1 className="bs-hero-title">
-            Search <span className="bs-gradient-text">Businesses</span> Across India
-          </h1>
+          <h1 className="bs-hero-title">Business Search</h1>
           <p className="bs-hero-subtitle">
-            Find companies, manufacturers, dealers & service providers from 
-            JustDial, IndiaMart, Zauba Corp, Google Maps and more — all in one place.
+            Find companies, products, and services across all connected business sources.
           </p>
         </div>
 
         {/* ── Main Search Bar ──────────────────────────────── */}
         <form className="bs-search-container" onSubmit={handleSearch}>
-          <div className="bs-source-row">
-            <div className="bs-source-selector" ref={dropdownRef}>
-              <button
-                type="button"
-                className="bs-source-trigger"
-                onClick={() => setDropdownOpen(!dropdownOpen)}
-              >
-                <span className="bs-source-icon">{selectedSource.icon}</span>
-                <span className="bs-source-label">{selectedSource.label}</span>
-                <ChevronDown
-                  size={14}
-                  className={`bs-chevron ${dropdownOpen ? 'bs-chevron-open' : ''}`}
-                />
-              </button>
-
-              {dropdownOpen && (
-                <div className="bs-dropdown">
-                  <div className="bs-dropdown-header">
-                    <Filter size={14} />
-                    <span>Select Search Source</span>
-                  </div>
-                  {SEARCH_SOURCES.map((source) => (
-                    <button
-                      key={source.id}
-                      type="button"
-                      className={`bs-dropdown-item ${selectedSource.id === source.id ? 'bs-dropdown-item-active' : ''}`}
-                      onClick={() => handleSourceSelect(source)}
-                    >
-                      <span className="bs-dropdown-icon">{source.icon}</span>
-                      <div className="bs-dropdown-text">
-                        <span className="bs-dropdown-label">{source.label}</span>
-                        <span className="bs-dropdown-desc">{source.desc}</span>
-                      </div>
-                      {selectedSource.id === source.id && (
-                        <span className="bs-dropdown-check">✓</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="bs-search-bar bs-three-field-bar">
+          <div className="bs-search-bar bs-query-bar">
 
             {/* Query Input */}
             <div className="bs-input-wrap">
@@ -388,36 +352,6 @@ const BusinessSearch = () => {
                   <X size={14} />
                 </button>
               )}
-            </div>
-
-            <div className="bs-divider"></div>
-
-            {/* Location Input */}
-            <div className="bs-location-wrap">
-              <MapPin size={16} className="bs-location-icon" />
-              <input
-                type="text"
-                className="bs-location-input"
-                placeholder="Area or pincode"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                id="business-location-input"
-              />
-            </div>
-
-            <div className="bs-divider"></div>
-
-            <div className="bs-radius-wrap">
-              <select
-                value={radiusKm}
-                onChange={(event) => setRadiusKm(event.target.value)}
-                aria-label="Search radius"
-              >
-                <option value="5">5 km radius</option>
-                <option value="10">10 km radius</option>
-                <option value="25">25 km radius</option>
-                <option value="50">50 km radius</option>
-              </select>
             </div>
 
             {/* Search Button */}
@@ -546,9 +480,15 @@ const BusinessSearch = () => {
                   role="button"
                   tabIndex={0}
                   className={`bs-result-card ${selectedResult?.id === result.id ? 'bs-result-card-active' : ''} ${selectedResultIds.has(result.id) ? 'bs-result-card-checked' : ''}`}
-                  onClick={() => setSelectedResult(result)}
+                  onClick={() => {
+                    setSelectedResult(result);
+                    setSourceScrapeError('');
+                  }}
                   onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') setSelectedResult(result);
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      setSelectedResult(result);
+                      setSourceScrapeError('');
+                    }
                   }}
                 >
                   <input
@@ -597,13 +537,43 @@ const BusinessSearch = () => {
                       <span>{selectedResult.source_label}</span>
                       <h3>{selectedResult.name}</h3>
                     </div>
-                    {selectedResult.url && (
-                      <a href={selectedResult.url} target="_blank" rel="noreferrer" className="bs-open-link">
-                        <ExternalLink size={16} />
-                        Open
-                      </a>
-                    )}
+                    <div className="bs-detail-actions">
+                      {selectedResult.url && !selectedResult.lookup_only && (
+                        <button
+                          type="button"
+                          className="bs-scrape-source-btn"
+                          onClick={scrapeSelectedSource}
+                          disabled={isSourceScraping}
+                        >
+                          {isSourceScraping
+                            ? <Loader2 size={16} className="bs-spin" />
+                            : <Search size={16} />}
+                          {isSourceScraping
+                            ? 'Scraping...'
+                            : `Scrape ${selectedResult.source_label || 'source'}`}
+                        </button>
+                      )}
+                      {selectedResult.url && (
+                        <a href={selectedResult.url} target="_blank" rel="noreferrer" className="bs-open-link">
+                          <ExternalLink size={16} />
+                          Open
+                        </a>
+                      )}
+                    </div>
                   </div>
+
+                  {selectedResult.lookup_only && (
+                    <div className="bs-source-scrape-note">
+                      This is a source search link, not a specific company page. Open it and select a company result first.
+                    </div>
+                  )}
+
+                  {sourceScrapeError && (
+                    <div className="bs-error bs-source-scrape-error">
+                      <AlertCircle size={15} />
+                      {sourceScrapeError}
+                    </div>
+                  )}
 
                   <div className="bs-detail-grid">
                     <div>
@@ -640,6 +610,28 @@ const BusinessSearch = () => {
                         'No extra page text was available from this source.'}
                     </p>
                   </div>
+
+                  {selectedResult.source_scrape && (
+                    <div className="bs-detail-block bs-source-scrape-result">
+                      <span>{selectedResult.source_label} Source Scrape</span>
+                      <div className="bs-scrape-stats">
+                        <strong>{selectedResult.source_scrape.pages_scraped || 0} pages</strong>
+                        <strong>{selectedResult.source_scrape.emails?.length || 0} emails</strong>
+                        <strong>{selectedResult.source_scrape.phones?.length || 0} phones</strong>
+                      </div>
+                      <p>
+                        {selectedResult.source_scrape.pages?.[0]?.description ||
+                          selectedResult.source_scrape.pages?.[0]?.text?.slice(0, 1200) ||
+                          'The source page was reached, but no readable text was returned.'}
+                      </p>
+                      {selectedResult.source_scrape.emails?.length > 0 && (
+                        <p><strong>Emails:</strong> {selectedResult.source_scrape.emails.join(', ')}</p>
+                      )}
+                      {selectedResult.source_scrape.phones?.length > 0 && (
+                        <p><strong>Phones:</strong> {selectedResult.source_scrape.phones.join(', ')}</p>
+                      )}
+                    </div>
+                  )}
 
                   {selectedResult.external_links?.length > 0 && (
                     <div className="bs-detail-block">
@@ -717,7 +709,13 @@ const BusinessSearch = () => {
                         </div>
                       )}
                       <div className="bs-ai-suggestions">
-                        {['Business summary', 'Show contacts only', 'What services do they offer?', 'Is this a good lead?'].map((suggestion) => (
+                        {[
+                          ...(selectedResult.source_scrape ? ['Summarize scraped source'] : []),
+                          'Business summary',
+                          'Show contacts only',
+                          'What services do they offer?',
+                          'Is this a good lead?',
+                        ].map((suggestion) => (
                           <button
                             type="button"
                             key={suggestion}

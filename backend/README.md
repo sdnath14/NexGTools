@@ -1,4 +1,4 @@
-# NextGTools Backend
+# NexGTools Backend
 
 Python API layer for search and AI features.
 

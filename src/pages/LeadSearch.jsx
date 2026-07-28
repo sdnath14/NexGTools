@@ -23,7 +23,7 @@ const LeadSearch = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState('');
   const [csvError, setCsvError] = useState('');
-  const [lastQuery, setLastQuery] = useState('');
+  const [lastSearchCriteria, setLastSearchCriteria] = useState(null);
   const [scraperUrl, setScraperUrl] = useState('');
   const [scraperMaxPages, setScraperMaxPages] = useState('10');
   const [scrapeResult, setScrapeResult] = useState(null);
@@ -155,12 +155,18 @@ const LeadSearch = () => {
       setLeads(data.leads || []);
       setSelectedLeadId(data.leads?.[0]?.id || '');
       setSelectedLeadIds(new Set());
-      setLastQuery(data.query ? `${data.query} within ${data.radius_km} km${data.pages_fetched ? `, ${data.pages_fetched} page${data.pages_fetched === 1 ? '' : 's'}` : ''}` : '');
+      setLastSearchCriteria({
+        companyName: form.companyName.trim(),
+        businessType: form.businessType.trim(),
+        location: (form.pincode || form.cityArea).trim(),
+        radiusKm: Number(form.radiusKm),
+        query: data.query || '',
+      });
     } catch (searchError) {
       setLeads([]);
       setSelectedLeadId('');
       setSelectedLeadIds(new Set());
-      setLastQuery('');
+      setLastSearchCriteria(null);
       setError(searchError.message || 'Something went wrong while searching.');
     } finally {
       setIsSearching(false);
@@ -171,7 +177,18 @@ const LeadSearch = () => {
     if (!leads.length) return;
 
     const leadsToExport = checkedLeads.length ? checkedLeads : leads;
-    const exportName = checkedLeads.length ? 'Selected lead export' : 'All visible lead export';
+    const searchedFor = [
+      lastSearchCriteria?.companyName,
+      lastSearchCriteria?.businessType,
+    ].filter(Boolean).join(' · ') || lastSearchCriteria?.query || 'Lead search';
+    const searchedNear = lastSearchCriteria?.location
+      ? ` in ${lastSearchCriteria.location}`
+      : '';
+    const searchedRadius = lastSearchCriteria?.radiusKm
+      ? ` (${lastSearchCriteria.radiusKm} km)`
+      : '';
+    const selectionLabel = checkedLeads.length ? ' — Selected leads' : '';
+    const exportName = `${searchedFor}${searchedNear}${searchedRadius}${selectionLabel}`;
     setCsvError('');
     try {
       const response = await fetch(`${API_BASE_URL}/api/csv-exports`, {
@@ -229,7 +246,7 @@ const LeadSearch = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = checkedLeads.length ? 'nextgtools-selected-leads.csv' : 'nextgtools-all-leads.csv';
+    link.download = checkedLeads.length ? 'nexgtools-selected-leads.csv' : 'nexgtools-all-leads.csv';
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -262,7 +279,7 @@ const LeadSearch = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'nextgtools-website-scrape.json';
+    link.download = 'nexgtools-website-scrape.json';
     link.click();
     URL.revokeObjectURL(url);
   };

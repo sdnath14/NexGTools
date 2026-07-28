@@ -15,13 +15,13 @@ const tools = [
   },
   {
     title: 'Business Search',
-    description: 'Search and discover company profiles, market data, and key financials.',
+    description: 'Search companies across connected sources, scrape source pages, and ask Business AI.',
     icon: Building2,
     color: '#3b82f6',
     bg: '#eff6ff',
     border: '#bfdbfe',
-    link: null,
-    soon: true,
+    link: '/business-search',
+    soon: false,
   },
   {
     title: 'TenderAI',

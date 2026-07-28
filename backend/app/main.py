@@ -45,7 +45,7 @@ from .database import (
 from .scraper import CrawlOptions, EMAIL_RE, PHONE_RE, scrape_website
 
 
-app = FastAPI(title="NextGTools API", version="0.1.0")
+app = FastAPI(title="NexGTools API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -1492,7 +1492,7 @@ def lead_ai_chat(payload: LeadAiChatRequest) -> dict[str, Any]:
         {
             "role": "system",
             "content": (
-                "You are Lead AI for NextGTools, a fast business-research assistant. "
+                "You are Lead AI for NexGTools, a fast business-research assistant. "
                 "Give responsive, direct answers in plain English. Prefer short sections and bullets. "
                 "Use the selected Google Places lead and website scrape context whenever available. "
                 "If asked for phone numbers, emails, websites, addresses, products, services, owners, "
@@ -1537,8 +1537,34 @@ def business_ai_chat(payload: BusinessAiChatRequest) -> dict[str, Any]:
     if not question:
         raise HTTPException(status_code=400, detail="Question is required.")
 
+    selected_business = payload.business or {}
+    source_scrape = selected_business.get("source_scrape") or {}
+    source_scrape_context = {
+        "source": selected_business.get("source_label") or selected_business.get("source"),
+        "start_url": source_scrape.get("start_url"),
+        "domain": source_scrape.get("domain"),
+        "pages_scraped": source_scrape.get("pages_scraped", 0),
+        "emails": source_scrape.get("emails") or [],
+        "phones": source_scrape.get("phones") or [],
+        "errors": source_scrape.get("errors") or [],
+        "pages": [
+            {
+                "url": page.get("url"),
+                "title": page.get("title"),
+                "description": page.get("description"),
+                "headings": page.get("headings"),
+                "text": (page.get("text") or "")[:6000],
+            }
+            for page in (source_scrape.get("pages") or [])[:3]
+        ],
+    } if source_scrape else {}
     context = {
-        "selected_business_result": payload.business or {},
+        "source_page_scrape": source_scrape_context,
+        "selected_business_result": {
+            key: value
+            for key, value in selected_business.items()
+            if key != "source_scrape"
+        },
         "business_search_context": payload.search_context or {},
     }
     recent_history = [
@@ -1550,8 +1576,11 @@ def business_ai_chat(payload: BusinessAiChatRequest) -> dict[str, Any]:
         {
             "role": "system",
             "content": (
-                "You are Business AI for NextGTools. Answer using the selected business result, "
-                "source page text, Custom Search snippets, and Business Search context. "
+                "You are Business AI for NexGTools. Answer using the selected business result, "
+                "source page scrape, Custom Search snippets, and Business Search context. "
+                "Treat source_page_scrape as the primary evidence when it is present. Read its page text, "
+                "descriptions, headings, emails, and phones before answering. Clearly distinguish facts found "
+                "in the scraped source from facts found only in search snippets. "
                 "Be fast, direct, and practical. Use short sections or bullets. "
                 "When asked for contact info, products, services, website, social profile, source, "
                 "or summary, extract only details present in the context. "

@@ -94,6 +94,18 @@ def initialize_database() -> None:
             )
             cursor.execute(
                 """
+                CREATE TABLE IF NOT EXISTS users (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    email VARCHAR(255) NOT NULL UNIQUE,
+                    password_salt VARCHAR(64) NOT NULL,
+                    password_hash VARCHAR(128) NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS business_searches (
                     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
                     user_id BIGINT UNSIGNED,
@@ -157,18 +169,6 @@ def initialize_database() -> None:
                     lead_json JSON,
                     scrape_json JSON,
                     model VARCHAR(120),
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-                """
-            )
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS users (
-                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                    name VARCHAR(255) NOT NULL,
-                    email VARCHAR(255) NOT NULL UNIQUE,
-                    password_salt VARCHAR(64) NOT NULL,
-                    password_hash VARCHAR(128) NOT NULL,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """

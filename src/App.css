@@ -25,6 +25,7 @@
   flex: 1;
   padding: 1.5rem 2rem 3rem;
   overflow-y: auto;
+  background: var(--app-bg);
 }
 
 .app-loading {
@@ -74,13 +75,13 @@
 }
 
 .sidebar-logo-text span {
-  color: #34d399;
+  color: var(--app-accent);
 }
 
 .sidebar-logo-mini {
   font-size: 1.5rem;
   font-weight: 800;
-  color: #34d399;
+  color: var(--app-accent);
 }
 
 .sidebar-nav {
@@ -125,14 +126,14 @@
 }
 
 .sidebar-link-active {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(59, 130, 246, 0.1));
-  color: #60a5fa;
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
   font-weight: 600;
 }
 
 .sidebar-link-active:hover {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.25), rgba(59, 130, 246, 0.15));
-  color: #93c5fd;
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
 }
 
 .sidebar-bottom {
@@ -169,8 +170,8 @@
   justify-content: space-between;
   padding: 0 2rem;
   height: 65px;
-  background: white;
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--app-surface);
+  border-bottom: 1px solid var(--app-border);
   position: sticky;
   top: 0;
   z-index: 50;
@@ -185,7 +186,7 @@
 .topbar-title {
   font-size: 1.15rem;
   font-weight: 700;
-  color: #111827;
+  color: var(--app-text);
 }
 
 .topbar-context-actions {

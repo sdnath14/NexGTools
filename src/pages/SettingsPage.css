@@ -1,0 +1,159 @@
+.settings-page {
+  width: min(900px, 100%);
+  margin: 0 auto;
+  display: grid;
+  gap: 1rem;
+  color: var(--app-text);
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.5rem 0 0.75rem;
+}
+
+.settings-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 0.75rem;
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+}
+
+.settings-header h1,
+.settings-section-head h2 {
+  color: var(--app-text);
+}
+
+.settings-header h1 {
+  font-size: 1.45rem;
+}
+
+.settings-header p,
+.settings-section-head p {
+  color: var(--app-muted);
+}
+
+.settings-header p {
+  margin-top: 0.2rem;
+  font-size: 0.88rem;
+}
+
+.settings-card {
+  padding: 1.25rem;
+  border: 1px solid var(--app-border);
+  border-radius: 0.875rem;
+  background: var(--app-surface);
+}
+
+.settings-section-head {
+  margin-bottom: 1rem;
+}
+
+.settings-section-head h2 {
+  font-size: 1rem;
+}
+
+.settings-section-head p {
+  margin-top: 0.2rem;
+  font-size: 0.8rem;
+}
+
+.settings-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.settings-choice,
+.settings-accent {
+  border: 1px solid var(--app-border);
+  background: var(--app-surface);
+  color: var(--app-text);
+  cursor: pointer;
+}
+
+.settings-choice {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.7rem;
+  min-height: 76px;
+  padding: 0.85rem;
+  border-radius: 0.75rem;
+  text-align: left;
+}
+
+.settings-choice span {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.settings-choice small {
+  color: var(--app-muted);
+}
+
+.settings-choice-active {
+  border-color: var(--app-accent);
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+  box-shadow: 0 0 0 2px var(--app-accent-ring);
+}
+
+.settings-accent-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.settings-accent {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 120px;
+  padding: 0.65rem 0.8rem;
+  border-radius: 0.65rem;
+  font-weight: 700;
+}
+
+.settings-accent > span {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+}
+
+.settings-accent-active {
+  border-color: var(--app-accent);
+}
+
+.settings-segmented {
+  display: inline-flex;
+  padding: 0.25rem;
+  border-radius: 0.65rem;
+  background: var(--app-subtle);
+}
+
+.settings-segmented button {
+  border: none;
+  border-radius: 0.5rem;
+  padding: 0.55rem 0.85rem;
+  background: transparent;
+  color: var(--app-muted);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.settings-segmented button.active {
+  background: var(--app-surface);
+  color: var(--app-accent);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+}
+
+@media (max-width: 700px) {
+  .settings-theme-grid {
+    grid-template-columns: 1fr;
+  }
+}

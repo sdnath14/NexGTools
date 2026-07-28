@@ -1,1 +1,1 @@
-"""Backend package for NextGTools."""
+"""Backend package for NexGTools."""

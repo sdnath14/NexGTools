@@ -1,27 +1,21 @@
-@font-face {
-  font-family: 'Lokeya';
-  src: url('/fonts/Lokeya.ttf') format('truetype');
-  font-weight: 400 900;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Lokeya';
-  src: url('/fonts/Lokeya Alternate.otf') format('opentype');
-  font-weight: 400 900;
-  font-style: italic;
-  font-display: swap;
-}
-
 :root {
-  --app-font-family: 'Lokeya', system-ui, sans-serif;
+  --app-font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --app-accent: #2563eb;
+  --app-accent-hover: #1d4ed8;
+  --app-accent-soft: #eff6ff;
+  --app-accent-ring: rgba(37, 99, 235, 0.18);
+  --app-bg: #f1f5f9;
+  --app-surface: #ffffff;
+  --app-subtle: #f8fafc;
+  --app-border: #e2e8f0;
+  --app-text: #0f172a;
+  --app-muted: #64748b;
   font-family: var(--app-font-family);
   line-height: 1.5;
   font-weight: 400;
   color-scheme: light;
-  color: #1f2937;
-  background-color: #f1f5f9;
+  color: var(--app-text);
+  background-color: var(--app-bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -35,6 +29,9 @@ body {
   min-width: 320px;
   min-height: 100vh;
   font-family: var(--app-font-family);
+  color: var(--app-text);
+  background: var(--app-bg);
+  transition: color 0.2s ease, background-color 0.2s ease;
 }
 
 button,
@@ -53,3 +50,286 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 p { margin: 0; }
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --app-bg: #0b1120;
+  --app-surface: #111827;
+  --app-subtle: #172033;
+  --app-border: #293548;
+  --app-text: #e5edf7;
+  --app-muted: #94a3b8;
+}
+
+html[data-density='compact'] .app-content {
+  padding: 1rem 1.25rem 2rem;
+}
+
+html[data-density='compact'] :where(.ls-page, .bs-page, .csv-page, .admin-page, .settings-page) {
+  gap: 0.75rem;
+}
+
+html[data-theme='dark'] :where(
+  .app-layout,
+  .app-main,
+  .app-content,
+  .dash-page,
+  .ls-page,
+  .bs-page,
+  .csv-page,
+  .admin-page,
+  .settings-page
+) {
+  background-color: var(--app-bg);
+  color: var(--app-text);
+}
+
+html[data-theme='dark'] :where(
+  .topbar,
+  .dash-tool-card,
+  .ls-form-card,
+  .ls-panel,
+  .bs-hero,
+  .bs-search-bar,
+  .bs-results-section,
+  .bs-result-card,
+  .bs-result-detail,
+  .bs-ai-panel,
+  .csv-panel,
+  .admin-card,
+  .admin-panel,
+  .settings-card,
+  input,
+  textarea,
+  select
+) {
+  background-color: var(--app-surface);
+  border-color: var(--app-border);
+  color: var(--app-text);
+}
+
+html[data-theme='dark'] :where(
+  h1, h2, h3, h4, h5, h6,
+  .topbar-title,
+  .ls-lead-name,
+  .bs-detail-grid strong,
+  .bs-detail-head h3,
+  .bs-result-card h3,
+  input,
+  textarea,
+  select
+) {
+  color: var(--app-text);
+}
+
+html[data-theme='dark'] :where(
+  p,
+  small,
+  label,
+  .topbar-search,
+  .ls-panel-sub,
+  .bs-hero-subtitle,
+  .bs-results-header p,
+  .bs-detail-block p
+) {
+  color: var(--app-muted);
+}
+
+html[data-theme='dark'] :where(
+  .bs-results-header,
+  .bs-results-list,
+  .bs-detail-grid div,
+  .bs-ai-head,
+  .bs-ai-bottom,
+  .csv-panel-title,
+  .admin-panel-head,
+  .topbar-search,
+  .topbar-nav-btn
+) {
+  background-color: var(--app-subtle);
+  border-color: var(--app-border);
+}
+
+html[data-theme='dark'] :where(.bs-result-card:hover, .csv-row:hover, .topbar-nav-btn:hover) {
+  background-color: #1e293b;
+}
+
+html[data-theme='dark'] .app-content :where(
+  h1, h2, h3, h4,
+  label, strong,
+  th, td,
+  .dash-section-label,
+  .dash-tool-card h3,
+  .ls-lead-name,
+  .ls-detail-list div,
+  .csv-row span,
+  .history-row span,
+  .history-lead-card h3,
+  .admin-stat-card strong,
+  .admin-table-head h2
+) {
+  color: var(--app-text) !important;
+}
+
+html[data-theme='dark'] .app-content :where(
+  p, small,
+  .ls-form-hint,
+  .ls-panel-sub,
+  .ls-lead-address,
+  .ls-lead-meta,
+  .ls-panel-footer,
+  .csv-empty,
+  .history-empty,
+  .history-lead-meta,
+  .admin-stat-card span,
+  .admin-stat-card small
+) {
+  color: var(--app-muted) !important;
+}
+
+html[data-theme='dark'] :where(
+  .dash-tool-card,
+  .ls-hero,
+  .ls-form-card,
+  .ls-panel,
+  .ls-panel-header,
+  .ls-lead-row,
+  .ls-card,
+  .ls-card-header,
+  .ls-card-body,
+  .ls-scrape-result,
+  .ls-scrape-contact-box,
+  .ls-ai-chat-area,
+  .ls-ai-bottom,
+  .bs-hero,
+  .bs-results-section,
+  .bs-results-header,
+  .bs-results-list,
+  .bs-result-card,
+  .bs-result-detail,
+  .bs-detail-grid div,
+  .bs-detail-block,
+  .bs-ai-panel,
+  .bs-ai-head,
+  .bs-ai-bottom,
+  .csv-panel,
+  .csv-panel-title,
+  .csv-detail-head,
+  .history-header,
+  .history-panel,
+  .history-panel-title,
+  .history-detail-head,
+  .history-row,
+  .history-lead-card,
+  .admin-lock-card,
+  .admin-hero,
+  .admin-stat-card,
+  .admin-table-panel,
+  .admin-table-head
+) {
+  background: var(--app-surface) !important;
+  border-color: var(--app-border) !important;
+}
+
+html[data-theme='dark'] :where(.dash-welcome, .dash-tools-wrap) {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+html[data-theme='dark'] :where(
+  .ls-panel-header,
+  .ls-panel-footer,
+  .ls-card-header,
+  .ls-ai-bottom,
+  .bs-results-header,
+  .bs-results-list,
+  .bs-ai-head,
+  .bs-ai-bottom,
+  .csv-panel-title,
+  .history-panel-title,
+  .history-detail-head,
+  .admin-table-head,
+  .csv-table-wrap th
+) {
+  background: var(--app-subtle) !important;
+}
+
+html[data-theme='dark'] :where(
+  .ls-lead-row:hover,
+  .ls-lead-row-active,
+  .bs-result-card:hover,
+  .bs-result-card-active,
+  .csv-row:hover,
+  .csv-row-active,
+  .history-row:hover,
+  .history-row-active,
+  .csv-table-wrap tbody tr:nth-child(even)
+) {
+  background: #1e293b !important;
+}
+
+html[data-theme='dark'] :where(
+  input,
+  textarea,
+  select,
+  .ls-ai-input-row input,
+  .bs-ai-form input,
+  .topbar-search
+) {
+  background: #0f172a !important;
+  border-color: var(--app-border) !important;
+  color: var(--app-text) !important;
+}
+
+html[data-theme='dark'] :where(input, textarea)::placeholder {
+  color: #718096 !important;
+  opacity: 1;
+}
+
+html[data-theme='dark'] :where(
+  .csv-table-wrap th,
+  .csv-table-wrap td,
+  .admin-table-scroll th,
+  .admin-table-scroll td
+) {
+  border-color: var(--app-border) !important;
+}
+
+html[data-theme='dark'] :where(
+  .topbar-nav-btn,
+  .topbar-icon-btn,
+  .settings-choice,
+  .settings-accent,
+  .settings-segmented button.active
+) {
+  background: var(--app-subtle);
+  border-color: var(--app-border);
+  color: var(--app-text);
+}
+
+:where(
+  .bs-search-btn,
+  .bs-export-btn,
+  .bs-scrape-source-btn,
+  .ls-search-btn,
+  .ls-csv-btn,
+  .auth-submit
+) {
+  background: var(--app-accent);
+}
+
+:where(
+  .bs-search-btn,
+  .bs-export-btn,
+  .bs-scrape-source-btn,
+  .ls-search-btn,
+  .ls-csv-btn,
+  .auth-submit
+):hover:not(:disabled) {
+  background: var(--app-accent-hover);
+}
+
+:where(input, textarea, select):focus {
+  border-color: var(--app-accent);
+}

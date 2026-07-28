@@ -226,3 +226,76 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Dark theme */
+html[data-theme='dark'] .csv-header,
+html[data-theme='dark'] .csv-panel,
+html[data-theme='dark'] .csv-detail,
+html[data-theme='dark'] .csv-detail-head {
+  background: var(--app-surface) !important;
+  border-color: var(--app-border) !important;
+}
+
+html[data-theme='dark'] .csv-header h1,
+html[data-theme='dark'] .csv-panel-title,
+html[data-theme='dark'] .csv-detail-head h2,
+html[data-theme='dark'] .csv-row span {
+  color: var(--app-text) !important;
+}
+
+html[data-theme='dark'] .csv-header p,
+html[data-theme='dark'] .csv-detail-head p,
+html[data-theme='dark'] .csv-row small,
+html[data-theme='dark'] .csv-empty {
+  color: var(--app-muted) !important;
+}
+
+html[data-theme='dark'] .csv-panel-title {
+  background: var(--app-subtle) !important;
+  border-color: var(--app-border) !important;
+}
+
+html[data-theme='dark'] .csv-row {
+  background: var(--app-surface) !important;
+  border-color: var(--app-border) !important;
+}
+
+html[data-theme='dark'] .csv-row:hover,
+html[data-theme='dark'] .csv-row-active {
+  background: #1e293b !important;
+}
+
+html[data-theme='dark'] .csv-detail-head button {
+  background: var(--app-accent) !important;
+  color: #ffffff !important;
+}
+
+html[data-theme='dark'] .csv-table-wrap,
+html[data-theme='dark'] .csv-table-wrap table,
+html[data-theme='dark'] .csv-table-wrap tbody {
+  background: #0f172a !important;
+}
+
+html[data-theme='dark'] .csv-table-wrap th {
+  background: var(--app-accent) !important;
+  border-color: color-mix(in srgb, var(--app-accent) 70%, #ffffff) !important;
+  color: #ffffff !important;
+}
+
+html[data-theme='dark'] .csv-table-wrap td {
+  background: var(--app-surface) !important;
+  border-color: var(--app-border) !important;
+  color: var(--app-text) !important;
+}
+
+html[data-theme='dark'] .csv-table-wrap tbody tr:nth-child(even) td {
+  background: var(--app-subtle) !important;
+}
+
+html[data-theme='dark'] .csv-table-wrap tbody tr:hover td {
+  background: #1e293b !important;
+}
+
+html[data-theme='dark'] .csv-table-wrap {
+  scrollbar-color: #475569 #0f172a;
+}

@@ -5,12 +5,13 @@ import Topbar from './components/Topbar';
 import Dashboard from './pages/Dashboard';
 import LeadSearch from './pages/LeadSearch';
 import BusinessSearch from './pages/BusinessSearch';
-import BusinessSearchHistory from './pages/BusinessSearchHistory';
 import CsvHistory from './pages/CsvHistory';
 import SearchHistory from './pages/SearchHistory';
 import AdminPage from './pages/AdminPage';
 import AuthPage from './pages/AuthPage';
+import SettingsPage from './pages/SettingsPage';
 import { ADMIN_TOKEN_KEY, API_BASE_URL, AUTH_TOKEN_KEY, adminHeaders, authHeaders } from './auth';
+import { applyAppearance, loadAppearance, saveAppearance } from './appearance';
 import './App.css';
 
 function App() {
@@ -18,6 +19,22 @@ function App() {
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
+  const [appearance, setAppearance] = useState(loadAppearance);
+
+  useEffect(() => {
+    applyAppearance(appearance);
+    if (appearance.theme !== 'system') return undefined;
+
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleSystemTheme = () => applyAppearance(appearance);
+    media.addEventListener('change', handleSystemTheme);
+    return () => media.removeEventListener('change', handleSystemTheme);
+  }, [appearance]);
+
+  const updateAppearance = (nextAppearance) => {
+    setAppearance(nextAppearance);
+    saveAppearance(nextAppearance);
+  };
 
   useEffect(() => {
     const loadUser = async () => {
@@ -71,7 +88,7 @@ function App() {
   };
 
   if (!authChecked) {
-    return <div className="app-loading">Loading NextG Tools...</div>;
+    return <div className="app-loading">Loading NexG Tools...</div>;
   }
 
   if (!user) {
@@ -91,7 +108,7 @@ function App() {
               <Route path="/lead-search/csv" element={<CsvHistory />} />
               <Route path="/search-history" element={<SearchHistory />} />
               <Route path="/business-search" element={<BusinessSearch />} />
-              <Route path="/business-search/history" element={<BusinessSearchHistory />} />
+              <Route path="/settings" element={<SettingsPage appearance={appearance} onAppearanceChange={updateAppearance} />} />
               <Route path="/admin" element={<AdminPage onAdminUnlocked={setIsAdmin} />} />
             </Routes>
           </main>

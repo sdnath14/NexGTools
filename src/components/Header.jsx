@@ -16,7 +16,7 @@ const Header = () => {
           </button>
         )}
         <Link to="/" style={{ textDecoration: 'none' }}>
-          <h1 className="title" style={{ fontSize: '2rem', margin: 0 }}>NextG <span>Tools</span></h1>
+          <h1 className="title" style={{ fontSize: '2rem', margin: 0 }}>NexG <span>Tools</span></h1>
         </Link>
       </div>
       

@@ -69,7 +69,7 @@ def scrape_website(start_url: str, options: CrawlOptions | None = None) -> dict[
     session.headers.update(
         {
             "User-Agent": (
-                "NextGToolsScraper/0.1 "
+                "NexGToolsScraper/0.1 "
                 "(compatible; business lead research; +http://localhost)"
             )
         }

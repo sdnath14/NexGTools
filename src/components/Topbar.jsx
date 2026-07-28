@@ -8,7 +8,6 @@ const pageTitles = {
   '/lead-search/csv': 'CSV History',
   '/search-history': 'Search History',
   '/business-search': 'Business Search',
-  '/business-search/history': 'Business History',
   '/admin': 'Admin',
   '/tender-ai': 'TenderAI',
   '/knowledge-base': 'Knowledge Base',
@@ -18,8 +17,9 @@ const pageTitles = {
 const Topbar = ({ user, onLogout }) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const pageTitle = pageTitles[location.pathname] || 'NextG Tools';
+  const pageTitle = pageTitles[location.pathname] || 'NexG Tools';
   const isLeadSearch = location.pathname.startsWith('/lead-search');
+  const showsDashboardBack = isLeadSearch || location.pathname === '/business-search';
   const initials = user?.name
     ? user.name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()
     : 'NT';
@@ -27,7 +27,7 @@ const Topbar = ({ user, onLogout }) => {
   return (
     <header className="topbar">
       <div className="topbar-left">
-        {isLeadSearch && (
+        {showsDashboardBack && (
           <button className="topbar-nav-btn" onClick={() => navigate('/')}>
             <ArrowLeft size={16} /> Back
           </button>
