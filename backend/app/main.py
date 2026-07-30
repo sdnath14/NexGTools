@@ -10,21 +10,20 @@ import time
 
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, Header, HTTPException, Query
-from pymysql.err import IntegrityError
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import requests
 
-from .auth import create_token, hash_password, verify_password
+from .auth import create_token, verify_password
 from .config import settings
 from .database import (
     admin_overview,
     admin_table_records,
     create_session,
     create_admin_session,
-    create_user,
     database_status,
     delete_session,
+    ensure_default_user,
     get_admin_session,
     get_csv_export,
     get_business_search_history,
@@ -64,6 +63,11 @@ app.add_middleware(
 def startup() -> None:
     try:
         initialize_database()
+        ensure_default_user(
+            "NexG Admin",
+            settings.default_login_email,
+            settings.default_login_password,
+        )
     except Exception:
         pass
 
@@ -1111,21 +1115,7 @@ def _find_social_profiles(name: str, address: str = "", website: str = "") -> di
 
 @app.post("/api/auth/register")
 def register(payload: RegisterRequest) -> dict[str, Any]:
-    name = payload.name.strip()
-    email = payload.email.strip().lower()
-    password = payload.password
-    if not name or not email or len(password) < 6:
-        raise HTTPException(status_code=400, detail="Name, valid email, and 6+ character password are required.")
-
-    salt, password_digest = hash_password(password)
-    try:
-        user = create_user(name, email, salt, password_digest)
-    except IntegrityError as exc:
-        raise HTTPException(status_code=409, detail="An account with this email already exists.") from exc
-
-    token = create_token()
-    create_session(user["id"], token)
-    return {"token": token, "user": user}
+    raise HTTPException(status_code=403, detail="Account registration is disabled for this internal workspace.")
 
 
 @app.post("/api/auth/login")

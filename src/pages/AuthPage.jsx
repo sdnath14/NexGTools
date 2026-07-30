@@ -8,15 +8,12 @@ import {
   LogIn,
   Mail,
   Search,
-  User,
-  UserPlus,
 } from 'lucide-react';
 import { API_BASE_URL, AUTH_TOKEN_KEY } from '../auth';
 import './AuthPage.css';
 
 const AuthPage = ({ onAuthenticated }) => {
-  const [mode, setMode] = useState('login');
-  const [form, setForm] = useState({ name: '', email: '', password: '' });
+  const [form, setForm] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -31,14 +28,10 @@ const AuthPage = ({ onAuthenticated }) => {
     setIsSubmitting(true);
 
     try {
-      const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
-      const body = mode === 'login'
-        ? { email: form.email, password: form.password }
-        : form;
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify(form),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -82,40 +75,12 @@ const AuthPage = ({ onAuthenticated }) => {
             </div>
 
             <div className="auth-form-heading">
-              <span>{mode === 'login' ? 'Welcome back' : 'Get started'}</span>
-              <h2>{mode === 'login' ? 'Sign in to your workspace' : 'Create your account'}</h2>
-              <p>
-                {mode === 'login'
-                  ? 'Enter your account details to continue.'
-                  : 'Create an account to save searches, scrapes, and exports.'}
-              </p>
+              <span>Welcome back</span>
+              <h2>Sign in to your workspace</h2>
+              <p>Enter your authorized account details to continue.</p>
             </div>
 
-            <div className="auth-mode-switch" aria-label="Authentication mode">
-              <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setError(''); }}>
-                Sign in
-              </button>
-              <button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => { setMode('register'); setError(''); }}>
-                Create account
-              </button>
-            </div>
-
-            <div className="auth-fields">
-              {mode === 'register' && (
-                <label>
-                  <span>Full name</span>
-                  <div className="auth-input-wrap">
-                    <User size={17} />
-                    <input
-                      value={form.name}
-                      onChange={(event) => updateForm('name', event.target.value)}
-                      placeholder="Your name"
-                      autoComplete="name"
-                      required
-                    />
-                  </div>
-                </label>
-              )}
+            <div className="auth-fields auth-login-fields">
               <label>
                 <span>Email address</span>
                 <div className="auth-input-wrap">
@@ -139,8 +104,7 @@ const AuthPage = ({ onAuthenticated }) => {
                     onChange={(event) => updateForm('password', event.target.value)}
                     type={showPassword ? 'text' : 'password'}
                     placeholder="Minimum 6 characters"
-                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                    minLength={6}
+                    autoComplete="current-password"
                     required
                   />
                   <button
@@ -158,10 +122,10 @@ const AuthPage = ({ onAuthenticated }) => {
             {error && <div className="auth-error">{error}</div>}
 
             <button className="auth-submit" disabled={isSubmitting}>
-              {mode === 'login' ? <LogIn size={17} /> : <UserPlus size={17} />}
-              {isSubmitting ? 'Please wait...' : mode === 'login' ? 'Sign in' : 'Create account'}
+              <LogIn size={17} />
+              {isSubmitting ? 'Signing in...' : 'Sign in'}
             </button>
-            <p className="auth-privacy">Your account securely separates your search and CSV history.</p>
+            <p className="auth-privacy">Private internal workspace. Registration is disabled.</p>
           </form>
         </main>
       </div>

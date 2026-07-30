@@ -442,6 +442,30 @@ def create_user(name: str, email: str, password_salt: str, password_hash: str) -
             return {"id": user_id, "name": name, "email": email}
 
 
+def ensure_default_user(name: str, email: str, password: str) -> None:
+    if not email or not password:
+        return
+    normalized_email = email.strip().lower()
+    salt, password_digest = hash_password(password)
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id FROM users WHERE email = %s", (normalized_email,))
+            existing = cursor.fetchone()
+            if existing:
+                cursor.execute(
+                    "UPDATE users SET name = %s, password_salt = %s, password_hash = %s WHERE id = %s",
+                    (name, salt, password_digest, existing["id"]),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO users (name, email, password_salt, password_hash)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (name, normalized_email, salt, password_digest),
+                )
+
+
 def get_user_by_email(email: str) -> dict[str, Any] | None:
     with db_connection() as connection:
         with connection.cursor() as cursor:
@@ -775,7 +799,6 @@ def list_lead_search_history() -> list[dict[str, Any]]:
                        radius_km, pages_fetched, result_count, center_json, created_at
                 FROM lead_searches
                 ORDER BY created_at DESC, id DESC
-                LIMIT 100
                 """
             )
             rows = cursor.fetchall()
@@ -844,7 +867,7 @@ def list_business_search_history(user_id: int | None = None) -> list[dict[str, A
     if user_id:
         query += " WHERE business_searches.user_id = %s"
         params = (user_id,)
-    query += " ORDER BY business_searches.created_at DESC, business_searches.id DESC LIMIT 100"
+    query += " ORDER BY business_searches.created_at DESC, business_searches.id DESC"
 
     with db_connection() as connection:
         with connection.cursor() as cursor:

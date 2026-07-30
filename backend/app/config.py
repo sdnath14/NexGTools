@@ -12,13 +12,17 @@ def load_dotenv(path: Path = ENV_PATH) -> None:
     if not path.exists():
         return
 
+    parsed: dict[str, str] = {}
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
 
         key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        parsed[key.strip()] = value.strip().strip('"').strip("'")
+
+    for key, value in parsed.items():
+        os.environ.setdefault(key, value)
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,8 @@ class Settings:
     mysql_password: str
     mysql_database: str
     admin_password: str
+    default_login_email: str
+    default_login_password: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -50,6 +56,8 @@ class Settings:
             mysql_password=os.getenv("MYSQL_PASSWORD", ""),
             mysql_database=os.getenv("MYSQL_DATABASE", "nextgtools"),
             admin_password=os.getenv("ADMIN_PASSWORD", ""),
+            default_login_email=os.getenv("DEFAULT_LOGIN_EMAIL", ""),
+            default_login_password=os.getenv("DEFAULT_LOGIN_PASSWORD", ""),
         )
 
     def missing_keys(self) -> list[str]:
