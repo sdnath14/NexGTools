@@ -1,0 +1,49 @@
+.outreach-page { display:flex; flex-direction:column; gap:1.25rem; color:var(--app-text); }
+.outreach-header,.outreach-card-head { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; }
+.outreach-header h1 { font-size:1.55rem; margin:0 0 .3rem; }
+.outreach-header p,.outreach-card-head p { color:#64748b; font-size:.84rem; margin:0; }
+.outreach-secondary,.outreach-tabs button,.outreach-channel-picker button,.outreach-send { display:inline-flex; align-items:center; justify-content:center; gap:.45rem; border-radius:.5rem; font:inherit; font-size:.83rem; font-weight:700; cursor:pointer; }
+.outreach-secondary { border:1px solid #d1d5db; background:var(--app-surface); color:var(--app-text); padding:.55rem .8rem; }
+.outreach-tabs { display:flex; gap:.4rem; border-bottom:1px solid var(--app-border); }
+.outreach-tabs button { border:0; border-bottom:2px solid transparent; border-radius:.4rem .4rem 0 0; background:transparent; color:#64748b; padding:.7rem .9rem; }
+.outreach-tabs button.active { color:var(--app-accent); border-bottom-color:var(--app-accent); }
+.outreach-alert { display:flex; align-items:center; gap:.5rem; padding:.7rem .9rem; border-radius:.5rem; font-size:.84rem; }
+.outreach-alert.error { color:#b91c1c; background:#fef2f2; border:1px solid #fecaca; }
+.outreach-alert.success { color:#047857; background:#ecfdf5; border:1px solid #a7f3d0; }
+.outreach-grid { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(330px,.8fr); gap:1.25rem; align-items:start; }
+.outreach-card { background:var(--app-surface); border:1px solid var(--app-border); border-radius:.75rem; box-shadow:0 1px 3px rgba(15,23,42,.04); padding:1.2rem; }
+.outreach-card h2 { font-size:1rem; margin:0 0 .25rem; }
+.outreach-search { display:flex; align-items:center; gap:.4rem; border:1px solid #d1d5db; border-radius:.45rem; padding:.45rem .6rem; color:#94a3b8; }
+.outreach-search input { border:0; outline:0; background:transparent; color:var(--app-text); min-width:150px; }
+.outreach-select-all { display:flex; gap:.45rem; align-items:center; margin:.9rem 0 .6rem; font-size:.78rem; color:#475569; }
+.outreach-contact-list { display:flex; flex-direction:column; gap:.45rem; max-height:580px; overflow:auto; }
+.outreach-contact { display:grid; grid-template-columns:20px minmax(150px,1fr) minmax(190px,1fr); gap:.65rem; align-items:center; border:1px solid var(--app-border); border-radius:.55rem; padding:.7rem; cursor:pointer; }
+.outreach-contact.selected { border-color:#60a5fa; background:#eff6ff; }
+.outreach-contact.disabled { opacity:.58; cursor:not-allowed; }
+.outreach-contact-main,.outreach-contact-values { display:flex; flex-direction:column; gap:.25rem; min-width:0; }
+.outreach-contact-main strong { font-size:.84rem; overflow-wrap:anywhere; }
+.outreach-contact small,.outreach-contact-values span { font-size:.72rem; color:#64748b; overflow-wrap:anywhere; }
+.outreach-contact-values span { display:flex; align-items:center; gap:.3rem; }
+.composer-card { display:flex; flex-direction:column; gap:.9rem; position:sticky; top:82px; }
+.outreach-channel-picker { display:grid; grid-template-columns:1fr 1fr; gap:.5rem; }
+.outreach-channel-picker button { border:1px solid #d1d5db; background:transparent; color:#475569; padding:.6rem; }
+.outreach-channel-picker button.active { color:#1d4ed8; border-color:#93c5fd; background:#eff6ff; }
+.outreach-provider { font-size:.74rem; color:#b45309; background:#fffbeb; border-radius:.4rem; padding:.45rem .6rem; }
+.outreach-provider.ready { color:#047857; background:#ecfdf5; }
+.outreach-field { display:flex; flex-direction:column; gap:.35rem; font-size:.75rem; font-weight:700; color:#475569; }
+.outreach-field input,.outreach-field textarea { border:1px solid #d1d5db; border-radius:.5rem; background:var(--app-surface); color:var(--app-text); padding:.7rem; font:inherit; outline:none; }
+.outreach-field textarea { resize:vertical; line-height:1.5; }
+.outreach-token-help { color:#64748b; }
+.outreach-send { border:0; color:white; background:#2563eb; padding:.7rem 1rem; }
+.outreach-send:disabled,.outreach-secondary:disabled { opacity:.55; cursor:not-allowed; }
+.outreach-empty { color:#94a3b8; text-align:center; padding:2.5rem 1rem; font-size:.85rem; }
+.outreach-history-list { display:flex; flex-direction:column; margin-top:1rem; }
+.outreach-history-row { display:grid; grid-template-columns:34px minmax(150px,.8fr) minmax(180px,1.5fr) 75px 150px; gap:.7rem; align-items:center; padding:.7rem 0; border-top:1px solid var(--app-border); font-size:.78rem; }
+.outreach-history-row>span:nth-child(2) { display:flex; flex-direction:column; gap:.2rem; }
+.outreach-history-row small,.outreach-history-row time,.outreach-history-message { color:#64748b; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.outreach-history-icon { width:30px; height:30px; display:grid; place-items:center; border-radius:50%; background:#eff6ff; color:#2563eb; }
+.outreach-history-icon.whatsapp { background:#ecfdf5; color:#059669; }
+.outreach-status { text-transform:capitalize; font-weight:700; }
+.outreach-status.sent { color:#059669; }.outreach-status.failed { color:#dc2626; }
+@media(max-width:950px){.outreach-grid{grid-template-columns:1fr}.composer-card{position:static}.outreach-history-row{grid-template-columns:34px 1fr 80px}.outreach-history-message,.outreach-history-row time{display:none}}
+@media(max-width:620px){.outreach-header,.outreach-card-head{flex-direction:column}.outreach-contact{grid-template-columns:20px 1fr}.outreach-contact-values{grid-column:2}.outreach-channel-picker{grid-template-columns:1fr}}

@@ -3,9 +3,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote_plus, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from email.message import EmailMessage
 import json
 import math
 import re
+import smtplib
 import time
 
 from bs4 import BeautifulSoup
@@ -34,10 +36,14 @@ from .database import (
     list_csv_exports,
     list_business_search_history,
     list_lead_search_history,
+    list_outreach_contacts,
+    list_outreach_messages,
     save_csv_export,
     save_business_search,
     save_lead_ai_message,
     save_lead_search,
+    save_outreach_contacts,
+    save_outreach_message,
     save_website_scrape,
     update_admin_record,
     verify_admin_password,
@@ -112,6 +118,15 @@ class LeadSearchRequest(BaseModel):
 class WebsiteScrapeRequest(BaseModel):
     url: str
     max_pages: int = Field(default=10, ge=1, le=25)
+    lead: dict[str, Any] | None = None
+    search_name: str = ""
+
+
+class OutreachSendRequest(BaseModel):
+    contact_ids: list[int]
+    channel: str
+    subject: str = "Business invitation"
+    message: str
 
 
 class ChatMessage(BaseModel):
@@ -1028,6 +1043,126 @@ def _chat_completion(messages: list[dict[str, str]]) -> str:
         raise HTTPException(status_code=502, detail="OpenAI returned an unexpected response.") from exc
 
 
+def _find_company_website_with_places(name: str, address: str = "") -> str:
+    if not settings.google_places_api_key:
+        return ""
+
+    request = Request(
+        "https://places.googleapis.com/v1/places:searchText",
+        data=json.dumps(
+            {
+                "textQuery": " ".join(part for part in [name.strip(), address.strip()] if part),
+                "pageSize": 3,
+                "languageCode": "en",
+            }
+        ).encode("utf-8"),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": settings.google_places_api_key,
+            "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.websiteUri",
+        },
+    )
+    try:
+        with urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError):
+        return ""
+
+    for place in data.get("places") or []:
+        if place.get("websiteUri"):
+            return str(place["websiteUri"])
+    return ""
+
+
+def _find_social_profiles_with_openai(name: str, address: str = "", website: str = "") -> dict[str, Any]:
+    if not settings.openai_api_key:
+        return {"profiles": [], "error": "OPENAI_API_KEY is not configured."}
+
+    allowed_domains = {
+        "instagram": "instagram.com",
+        "facebook": "facebook.com",
+        "youtube": "youtube.com",
+        "linkedin": "linkedin.com",
+    }
+    prompt = (
+        "Find the official social media profiles for the company described below. "
+        "Use web search and return only profiles that clearly belong to this company. "
+        "Return only valid JSON in this exact shape: "
+        '{"profiles":[{"platform":"instagram|facebook|youtube|linkedin",'
+        '"label":"Instagram|Facebook|YouTube|LinkedIn","url":"https://...",'
+        '"title":"profile title"}]}. '
+        "Do not return search-result URLs, guessed URLs, explanations, or markdown.\n"
+        f"Company name: {name}\nAddress: {address}\nOfficial website: {website}"
+    )
+    request_body = {
+        "model": settings.openai_model,
+        "tools": [{"type": "web_search"}],
+        "input": prompt,
+        "max_output_tokens": 1000,
+    }
+    request = Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(request_body).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {settings.openai_api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urlopen(request, timeout=35) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace")
+        try:
+            message = json.loads(details).get("error", {}).get("message", "OpenAI web search failed.")
+        except json.JSONDecodeError:
+            message = "OpenAI web search failed."
+        return {"profiles": [], "error": message}
+    except URLError as exc:
+        return {"profiles": [], "error": f"Could not reach OpenAI: {exc.reason}"}
+
+    output_text = "".join(
+        content.get("text", "")
+        for item in data.get("output") or []
+        if item.get("type") == "message"
+        for content in item.get("content") or []
+        if content.get("type") == "output_text"
+    ).strip()
+    try:
+        start, end = output_text.index("{"), output_text.rindex("}") + 1
+        candidates = json.loads(output_text[start:end]).get("profiles") or []
+    except (ValueError, json.JSONDecodeError, AttributeError):
+        return {"profiles": [], "error": "OpenAI web search returned an unreadable result."}
+
+    profiles: list[dict[str, str]] = []
+    seen_platforms: set[str] = set()
+    for candidate in candidates:
+        platform = str(candidate.get("platform", "")).lower()
+        url = str(candidate.get("url", "")).strip()
+        parsed = urlparse(url)
+        expected_domain = allowed_domains.get(platform)
+        host = parsed.netloc.lower().removeprefix("www.")
+        if (
+            not expected_domain
+            or platform in seen_platforms
+            or parsed.scheme != "https"
+            or (host != expected_domain and not host.endswith(f".{expected_domain}"))
+        ):
+            continue
+        seen_platforms.add(platform)
+        profiles.append(
+            {
+                "platform": platform,
+                "label": str(candidate.get("label") or platform.title()),
+                "url": url,
+                "title": str(candidate.get("title") or f"{name} on {platform.title()}"),
+            }
+        )
+    return {"profiles": profiles, "error": ""}
+
+
 def _find_social_profiles(name: str, address: str = "", website: str = "") -> dict[str, Any]:
     platforms = [
         ("instagram", "Instagram", "instagram.com"),
@@ -1056,7 +1191,46 @@ def _find_social_profiles(name: str, address: str = "", website: str = "") -> di
     seen_urls: set[str] = set()
     errors: list[str] = []
 
+    resolved_website = website.strip() or _find_company_website_with_places(name, address)
+
+    # Google Places supplies the selected company's official website. Prefer
+    # social links published by that website because they are stronger matches
+    # than similarly named accounts returned by a general web search.
+    if resolved_website:
+        try:
+            website_scrape = scrape_website(resolved_website, CrawlOptions(max_pages=4, timeout=12))
+            external_links = [
+                link.get("url", "")
+                for page in website_scrape.get("pages") or []
+                for link in (page.get("links") or {}).get("external") or []
+            ]
+            for platform_id, label, domain in platforms:
+                domain_root = domain.split("/")[0]
+                for link in external_links:
+                    parsed_host = urlparse(link).netloc.lower().removeprefix("www.")
+                    if parsed_host != domain_root and not parsed_host.endswith(f".{domain_root}"):
+                        continue
+                    if platform_id == "linkedin" and "/company/" not in urlparse(link).path.lower():
+                        continue
+                    clean_link = link.split("?", 1)[0].rstrip("/")
+                    if clean_link in seen_urls:
+                        continue
+                    seen_urls.add(clean_link)
+                    profiles.append(
+                        {
+                            "platform": platform_id,
+                            "label": label,
+                            "url": clean_link,
+                            "title": f"{name} on {label}",
+                        }
+                    )
+                    break
+        except (ValueError, requests.RequestException):
+            pass
+
     for platform_id, label, domain in platforms:
+        if any(profile["platform"] == platform_id for profile in profiles):
+            continue
         query_variants = [
             f'"{name}" {location_hint} site:{domain}'.strip(),
             f'{name} {location_hint} {label}'.strip(),
@@ -1105,6 +1279,12 @@ def _find_social_profiles(name: str, address: str = "", website: str = "") -> di
                 seen_urls.add(matched_profile["url"])
                 profiles.append(matched_profile)
                 break
+
+    if not profiles:
+        openai_result = _find_social_profiles_with_openai(name, address, resolved_website)
+        profiles = openai_result.get("profiles") or []
+        if not profiles and openai_result.get("error"):
+            errors.append(str(openai_result["error"]))
 
     return {
         "profiles": profiles,
@@ -1489,13 +1669,94 @@ def search_leads(payload: LeadSearchRequest) -> dict[str, Any]:
 
 
 @app.post("/api/scrape")
-def scrape(payload: WebsiteScrapeRequest) -> dict[str, Any]:
+def scrape(payload: WebsiteScrapeRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     try:
         response = scrape_website(payload.url, CrawlOptions(max_pages=payload.max_pages))
         response["database_scrape_id"] = save_website_scrape(response)
+        if payload.lead and authorization:
+            user = _require_user(authorization)
+            response["outreach_contacts_saved"] = save_outreach_contacts(
+                user["id"], payload.lead, response, payload.search_name.strip()
+            )
         return response
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/outreach")
+def outreach_workspace(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    return {
+        "contacts": list_outreach_contacts(user["id"]),
+        "history": list_outreach_messages(user["id"]),
+        "providers": {
+            "smtp": bool(settings.smtp_host and settings.smtp_from_email),
+            "whatsapp": bool(settings.whatsapp_api_url and settings.whatsapp_access_token),
+        },
+    }
+
+
+@app.post("/api/outreach/send")
+def send_outreach(payload: OutreachSendRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    channel = payload.channel.strip().lower()
+    if channel not in {"email", "whatsapp"}:
+        raise HTTPException(status_code=400, detail="Channel must be email or whatsapp.")
+    if not payload.contact_ids or not payload.message.strip():
+        raise HTTPException(status_code=400, detail="Select contacts and enter a message.")
+
+    contacts = {contact["id"]: contact for contact in list_outreach_contacts(user["id"])}
+    selected = [contacts[contact_id] for contact_id in payload.contact_ids if contact_id in contacts]
+    if not selected:
+        raise HTTPException(status_code=404, detail="No matching contacts were found.")
+
+    results = []
+    smtp = None
+    try:
+        if channel == "email":
+            if not settings.smtp_host or not settings.smtp_from_email:
+                raise HTTPException(status_code=503, detail="SMTP is not configured on the server.")
+            smtp = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20)
+            if settings.smtp_use_tls:
+                smtp.starttls()
+            if settings.smtp_username:
+                smtp.login(settings.smtp_username, settings.smtp_password)
+
+        for contact in selected:
+            recipient = (contact.get("email") if channel == "email" else contact.get("phone")) or ""
+            if not recipient:
+                results.append({"contact_id": contact["id"], "status": "skipped", "detail": f"No {channel} address"})
+                continue
+            personalized = payload.message.replace("{{company_name}}", contact["company_name"])
+            try:
+                if channel == "email":
+                    email = EmailMessage()
+                    email["From"] = settings.smtp_from_email
+                    email["To"] = recipient
+                    email["Subject"] = payload.subject.strip() or "Business invitation"
+                    email.set_content(personalized)
+                    smtp.send_message(email)
+                    provider_response = "SMTP accepted message"
+                else:
+                    if not settings.whatsapp_api_url or not settings.whatsapp_access_token:
+                        raise RuntimeError("WhatsApp API is not configured on the server.")
+                    api_response = requests.post(
+                        settings.whatsapp_api_url,
+                        headers={"Authorization": f"Bearer {settings.whatsapp_access_token}", "Content-Type": "application/json"},
+                        json={"messaging_product": "whatsapp", "to": recipient, "type": "text", "text": {"body": personalized}},
+                        timeout=20,
+                    )
+                    api_response.raise_for_status()
+                    provider_response = api_response.text
+                save_outreach_message(user["id"], contact["id"], channel, recipient, payload.subject, personalized, "sent", provider_response)
+                results.append({"contact_id": contact["id"], "status": "sent"})
+            except Exception as exc:
+                save_outreach_message(user["id"], contact["id"], channel, recipient, payload.subject, personalized, "failed", str(exc))
+                results.append({"contact_id": contact["id"], "status": "failed", "detail": str(exc)})
+    finally:
+        if smtp:
+            smtp.quit()
+    return {"results": results}
 
 
 @app.post("/api/lead-ai/chat")

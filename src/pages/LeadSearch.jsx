@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Bot, Building2, Download, ExternalLink, FileJson, Globe, Loader2, MapPin, Phone, Search, Send, Share2, Star } from 'lucide-react';
+import { AlertCircle, Bot, Building2, Download, ExternalLink, FileJson, Globe, Loader2, Mail, MapPin, Phone, Search, Send, Share2, Star, X } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import '../LeadSearch.css';
 
@@ -20,6 +20,7 @@ const LeadSearch = () => {
   const [leads, setLeads] = useState([]);
   const [selectedLeadId, setSelectedLeadId] = useState('');
   const [selectedLeadIds, setSelectedLeadIds] = useState(new Set());
+  const [minimumRating, setMinimumRating] = useState('all');
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState('');
   const [csvError, setCsvError] = useState('');
@@ -34,64 +35,87 @@ const LeadSearch = () => {
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [aiError, setAiError] = useState('');
   const [socialProfiles, setSocialProfiles] = useState([]);
-  const [socialFallbacks, setSocialFallbacks] = useState([]);
+  const [socialSearchResults, setSocialSearchResults] = useState([]);
   const [isSocialLoading, setIsSocialLoading] = useState(false);
   const [socialError, setSocialError] = useState('');
+  const [hasSearchedSocials, setHasSearchedSocials] = useState(false);
+  const [socialSearchQuery, setSocialSearchQuery] = useState('');
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailRecipient, setEmailRecipient] = useState('');
+  const [emailMessage, setEmailMessage] = useState('');
   const aiChatEndRef = useRef(null);
 
   const selectedLead = useMemo(
-    () => leads.find((lead) => lead.id === selectedLeadId) || leads[0] || null,
+    () => leads.find((lead) => lead.id === selectedLeadId) || null,
     [leads, selectedLeadId]
   );
+  const visibleLeads = useMemo(() => {
+    if (minimumRating === 'all') return leads;
+    const threshold = Number.parseFloat(minimumRating);
+    return leads.filter((lead) => {
+      const rating = Number.parseFloat(lead.rating);
+      return Number.isFinite(rating) && rating >= threshold;
+    });
+  }, [leads, minimumRating]);
   const checkedLeads = useMemo(
-    () => leads.filter((lead) => selectedLeadIds.has(lead.id)),
-    [leads, selectedLeadIds]
+    () => visibleLeads.filter((lead) => selectedLeadIds.has(lead.id)),
+    [visibleLeads, selectedLeadIds]
   );
-  const allLeadsChecked = leads.length > 0 && checkedLeads.length === leads.length;
-  const exportCount = checkedLeads.length || leads.length;
+  const allLeadsChecked = visibleLeads.length > 0 && checkedLeads.length === visibleLeads.length;
+  const exportCount = checkedLeads.length || visibleLeads.length;
 
   useEffect(() => {
-    if (selectedLead?.website) {
-      setScraperUrl(selectedLead.website);
+    setScraperUrl(selectedLead?.website || '');
+    setScrapeResult(null);
+    setScrapeError('');
+    setEmailModalOpen(false);
+  }, [selectedLead]);
+
+  useEffect(() => {
+    if (!visibleLeads.some((lead) => lead.id === selectedLeadId)) {
+      setSelectedLeadId(visibleLeads[0]?.id || '');
     }
-  }, [selectedLead]);
+  }, [visibleLeads, selectedLeadId]);
 
   useEffect(() => {
-    const loadSocialProfiles = async () => {
-      if (!selectedLead?.name) {
-        setSocialProfiles([]);
-        setSocialFallbacks([]);
-        return;
-      }
-
-      setIsSocialLoading(true);
-      setSocialError('');
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/social-profiles`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: selectedLead.name,
-            address: selectedLead.address,
-            website: selectedLead.website,
-          }),
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || 'Could not find social profiles.');
-        setSocialProfiles(data.profiles || []);
-        setSocialFallbacks(data.fallback_searches || []);
-        setSocialError(data.error || '');
-      } catch (profileError) {
-        setSocialProfiles([]);
-        setSocialFallbacks([]);
-        setSocialError(profileError.message || 'Could not find social profiles.');
-      } finally {
-        setIsSocialLoading(false);
-      }
-    };
-
-    loadSocialProfiles();
+    setSocialProfiles([]);
+    setSocialSearchResults([]);
+    setSocialError('');
+    setHasSearchedSocials(false);
+    setSocialSearchQuery(selectedLead?.name || '');
   }, [selectedLead]);
+
+  const searchSocialProfiles = async (event) => {
+    event?.preventDefault();
+    const query = socialSearchQuery.trim();
+    if (!query || isSocialLoading) return;
+
+    setIsSocialLoading(true);
+    setSocialError('');
+    setHasSearchedSocials(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/social-profiles`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: query,
+          address: selectedLead.address,
+          website: selectedLead.website,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Social media search failed.');
+      setSocialProfiles(data.profiles || []);
+      setSocialSearchResults(data.fallback_searches || []);
+      setSocialError(data.error || '');
+    } catch (profileError) {
+      setSocialProfiles([]);
+      setSocialSearchResults([]);
+      setSocialError(profileError.message || 'Social media search failed. Please try again.');
+    } finally {
+      setIsSocialLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!selectedLead) return;
@@ -161,6 +185,7 @@ const LeadSearch = () => {
         location: (form.pincode || form.cityArea).trim(),
         radiusKm: Number(form.radiusKm),
         query: data.query || '',
+        databaseSearchId: data.database_search_id || null,
       });
     } catch (searchError) {
       setLeads([]);
@@ -174,9 +199,9 @@ const LeadSearch = () => {
   };
 
   const exportCsv = async () => {
-    if (!leads.length) return;
+    if (!visibleLeads.length) return;
 
-    const leadsToExport = checkedLeads.length ? checkedLeads : leads;
+    const leadsToExport = checkedLeads.length ? checkedLeads : visibleLeads;
     const searchedFor = [
       lastSearchCriteria?.companyName,
       lastSearchCriteria?.businessType,
@@ -263,11 +288,33 @@ const LeadSearch = () => {
     });
   };
 
+  const changeMinimumRating = (event) => {
+    setMinimumRating(event.target.value);
+    // A rating change creates a new visible result set; stale checked rows
+    // should not remain selected for export after they disappear.
+    setSelectedLeadIds(new Set());
+  };
+
   const toggleAllLeadsChecked = () => {
     setSelectedLeadIds(() => {
       if (allLeadsChecked) return new Set();
-      return new Set(leads.map((lead) => lead.id));
+      return new Set(visibleLeads.map((lead) => lead.id));
     });
+  };
+
+  const openEmailModal = () => {
+    const recipient = selectedLead?.email || scrapeResult?.emails?.[0] || '';
+    setEmailRecipient(recipient);
+    setEmailMessage(`Hello ${selectedLead?.name || 'there'},\n\nWe came across your company and would like to discuss a potential business opportunity with you. Please let us know a convenient time to connect.\n\nBest regards,\nOur Team`);
+    setEmailModalOpen(true);
+  };
+
+  const sendEmail = (event) => {
+    event.preventDefault();
+    if (!emailRecipient.trim()) return;
+    const subject = `Business enquiry for ${selectedLead?.name || 'your company'}`;
+    window.location.href = `mailto:${encodeURIComponent(emailRecipient.trim())}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailMessage)}`;
+    setEmailModalOpen(false);
   };
 
   const downloadJson = () => {
@@ -291,10 +338,12 @@ const LeadSearch = () => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/scrape`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({
           url: scraperUrl,
           max_pages: Number(scraperMaxPages),
+          lead: selectedLead,
+          search_name: lastSearchCriteria?.query || lastSearchCriteria?.businessType || lastSearchCriteria?.companyName || '',
         }),
       });
 
@@ -446,8 +495,10 @@ const LeadSearch = () => {
         <div className="ls-panel ls-results-panel">
           <div className="ls-panel-header">
             <div>
-              <h3>Leads Found <span className="ls-count">({leads.length})</span></h3>
-              <p className="ls-panel-sub">Current search results only</p>
+              <h3>Leads Found <span className="ls-count">({visibleLeads.length})</span></h3>
+              <p className="ls-panel-sub">
+                {minimumRating === 'all' ? 'Current search results only' : `${minimumRating}+ star leads only`}
+              </p>
             </div>
             <div className="ls-panel-actions">
               <label className="ls-check-label">
@@ -459,7 +510,18 @@ const LeadSearch = () => {
                 />
                 Check all
               </label>
-              <button className="ls-csv-btn" onClick={exportCsv} disabled={!leads.length}>
+              <label className="ls-rating-filter">
+                <Star size={14} />
+                <select value={minimumRating} onChange={changeMinimumRating} aria-label="Minimum rating">
+                  <option value="all">All ratings</option>
+                  <option value="1">1+ stars</option>
+                  <option value="2">2+ stars</option>
+                  <option value="3">3+ stars</option>
+                  <option value="4">4+ stars</option>
+                  <option value="5">5 stars</option>
+                </select>
+              </label>
+              <button className="ls-csv-btn" onClick={exportCsv} disabled={!visibleLeads.length}>
                 <Download size={14} /> Export CSV {exportCount ? `(${exportCount})` : ''}
               </button>
             </div>
@@ -476,9 +538,9 @@ const LeadSearch = () => {
               {csvError}
             </div>
           ) : null}
-          {leads.length ? (
-            <div className="ls-results-list">
-              {leads.map((lead) => (
+          {visibleLeads.length ? (
+            <div className="ls-results-list" key={minimumRating}>
+              {visibleLeads.map((lead) => (
                 <button
                   className={`ls-lead-row ${selectedLead?.id === lead.id ? 'ls-lead-row-active' : ''} ${selectedLeadIds.has(lead.id) ? 'ls-lead-row-checked' : ''}`}
                   key={lead.id}
@@ -514,12 +576,12 @@ const LeadSearch = () => {
           ) : (
             <div className="ls-empty-state">
               <Search size={40} className="ls-empty-icon" />
-              <p>{isSearching ? 'Searching Google Places...' : 'Fresh list. Run a search to show current leads here.'}</p>
-              <span>{isSearching ? 'This usually takes a few seconds.' : 'Saved leads stay in history.'}</span>
+              <p>{isSearching ? 'Searching Google Places...' : leads.length ? 'No leads match this rating.' : 'Fresh list. Run a search to show current leads here.'}</p>
+              <span>{isSearching ? 'This usually takes a few seconds.' : leads.length ? 'Choose a lower minimum rating to see more results.' : 'Saved leads stay in history.'}</span>
             </div>
           )}
           <div className="ls-panel-footer">
-            Showing {leads.length} leads inside the selected radius. CSV exports {checkedLeads.length ? `${checkedLeads.length} selected` : 'all visible'} leads.
+            Showing {visibleLeads.length} of {leads.length} leads inside the selected radius. CSV exports {checkedLeads.length ? `${checkedLeads.length} selected` : 'all visible'} leads.
           </div>
         </div>
 
@@ -558,53 +620,107 @@ const LeadSearch = () => {
                   Open in Google Maps
                 </a>
               ) : null}
+              <button
+                type="button"
+                className="ls-email-company-btn"
+                onClick={openEmailModal}
+              >
+                <Mail size={15} />
+                Email company
+              </button>
               <div className="ls-social-section">
                 <div className="ls-social-title">
                   <Share2 size={16} />
-                  Social Media
+                  Social Search
                 </div>
+                <form className="ls-social-search-form" onSubmit={searchSocialProfiles}>
+                  <Search size={16} />
+                  <input
+                    type="search"
+                    value={socialSearchQuery}
+                    onChange={(event) => setSocialSearchQuery(event.target.value)}
+                    placeholder="Search company or brand name..."
+                    aria-label="Company or brand name for social media search"
+                  />
+                  <button type="submit" disabled={isSocialLoading || !socialSearchQuery.trim()}>
+                    {isSocialLoading ? 'Searching...' : 'Search'}
+                  </button>
+                </form>
                 {isSocialLoading ? (
-                  <div className="ls-social-muted">
-                    <Loader2 size={14} className="ls-spin" />
-                    Searching social accounts...
-                  </div>
-                ) : socialProfiles.length ? (
-                  <div className="ls-social-links">
-                    {socialProfiles.map((profile) => (
-                      <a
-                        key={`${profile.platform}-${profile.url}`}
-                        href={profile.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className={`ls-social-link ls-social-${profile.platform}`}
-                      >
-                        <span>{profile.label[0]}</span>
-                        {profile.label}
-                      </a>
-                    ))}
-                  </div>
-                ) : (
-                  <>
-                    <div className="ls-social-muted">
-                      {socialError || 'No direct social media accounts found yet.'}
+                  <div className="ls-social-search-state">
+                    <span className="ls-social-search-icon">
+                      <Loader2 size={22} className="ls-spin" />
+                    </span>
+                    <div>
+                      <strong>Searching social media</strong>
+                      <p>Checking available profiles for {selectedLead.name}...</p>
                     </div>
-                    {socialFallbacks.length ? (
-                      <div className="ls-social-links ls-social-fallbacks">
-                        {socialFallbacks.map((profile) => (
-                          <a
-                            key={`${profile.platform}-${profile.url}`}
-                            href={profile.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className={`ls-social-link ls-social-${profile.platform}`}
-                          >
-                            <span>{profile.label[0]}</span>
-                            Search {profile.label}
-                          </a>
-                        ))}
-                      </div>
+                  </div>
+                ) : socialProfiles.length || socialSearchResults.length ? (
+                  <>
+                    {socialProfiles.length ? (
+                      <>
+                        <div className="ls-social-result-heading">Official profiles found</div>
+                        <div className="ls-social-links">
+                          {socialProfiles.map((profile) => (
+                            <a
+                              key={`${profile.platform}-${profile.url}`}
+                              href={profile.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={`ls-social-link ls-social-${profile.platform}`}
+                            >
+                              <span>{profile.label[0]}</span>
+                              {profile.label}
+                              <ExternalLink size={13} />
+                            </a>
+                          ))}
+                        </div>
+                      </>
+                    ) : null}
+                    {socialSearchResults.some((result) => !socialProfiles.some((profile) => profile.platform === result.platform)) ? (
+                      <>
+                        <div className="ls-social-result-heading ls-social-more-heading">
+                          Search this company on
+                        </div>
+                        <div className="ls-social-links">
+                          {socialSearchResults
+                            .filter((result) => !socialProfiles.some((profile) => profile.platform === result.platform))
+                            .map((result) => (
+                              <a
+                                key={`search-${result.platform}`}
+                                href={result.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className={`ls-social-link ls-social-${result.platform}`}
+                                title={`Search ${result.label} results for ${socialSearchQuery.trim()}`}
+                              >
+                                <span>{result.label[0]}</span>
+                                {result.label} results
+                                <ExternalLink size={13} />
+                              </a>
+                            ))}
+                        </div>
+                      </>
+                    ) : null}
+                    {socialError && !socialProfiles.length ? (
+                      <p className="ls-social-result-note">Official profiles could not be verified, so company-specific search links are shown instead.</p>
                     ) : null}
                   </>
+                ) : (
+                  <div className="ls-social-search-state">
+                    <span className="ls-social-search-icon"><Search size={22} /></span>
+                    <div className="ls-social-search-copy">
+                      <strong>{hasSearchedSocials ? 'No social profiles found' : 'Social Media Search'}</strong>
+                      <p>
+                        {socialError
+                          ? socialError
+                          : hasSearchedSocials
+                            ? `We couldn't find a verified social media profile for ${selectedLead.name}.`
+                            : `Search for available social media profiles connected to ${selectedLead.name}.`}
+                      </p>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
@@ -697,6 +813,12 @@ const LeadSearch = () => {
                     <div className="ls-scrape-contact-box">
                       <strong>Emails</strong>
                       <p>{scrapeResult.emails?.join(', ') || 'No emails found'}</p>
+                      {scrapeResult.emails?.length ? (
+                        <button type="button" className="ls-email-company-btn ls-email-scrape-btn" onClick={openEmailModal}>
+                          <Mail size={15} />
+                          Send email
+                        </button>
+                      ) : null}
                       <strong>Phones</strong>
                       <p>{scrapeResult.phones?.join(', ') || 'No phones found'}</p>
                     </div>
@@ -796,6 +918,33 @@ const LeadSearch = () => {
           </div>
         </div>
       </div>
+
+      {emailModalOpen ? (
+        <div className="ls-modal-backdrop" role="presentation" onMouseDown={() => setEmailModalOpen(false)}>
+          <form className="ls-email-modal" role="dialog" aria-modal="true" aria-labelledby="ls-email-title" onSubmit={sendEmail} onMouseDown={(event) => event.stopPropagation()}>
+            <div className="ls-email-modal-header">
+              <div>
+                <h3 id="ls-email-title">Email {selectedLead?.name}</h3>
+                <p>Edit the message before opening it in your email app.</p>
+              </div>
+              <button type="button" className="ls-modal-close" onClick={() => setEmailModalOpen(false)} aria-label="Close email modal"><X size={18} /></button>
+            </div>
+            <div className="ls-field">
+              <label>To</label>
+              <input type="email" placeholder="company@example.com" value={emailRecipient} onChange={(event) => setEmailRecipient(event.target.value)} required autoFocus />
+              {!emailRecipient ? <small className="ls-email-help">No company email was found yet. Enter one here or scrape the company website first.</small> : null}
+            </div>
+            <div className="ls-field">
+              <label>Message</label>
+              <textarea rows="9" value={emailMessage} onChange={(event) => setEmailMessage(event.target.value)} required />
+            </div>
+            <div className="ls-email-modal-actions">
+              <button type="button" className="ls-btn ls-btn-ghost" onClick={() => setEmailModalOpen(false)}>Cancel</button>
+              <button type="submit" className="ls-btn ls-btn-primary" disabled={!emailRecipient.trim() || !emailMessage.trim()}><Send size={16} /> Open email app</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
 
     </div>
   );

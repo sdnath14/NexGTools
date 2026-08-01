@@ -9,6 +9,7 @@ import CsvHistory from './pages/CsvHistory';
 import AdminPage from './pages/AdminPage';
 import AuthPage from './pages/AuthPage';
 import SettingsPage from './pages/SettingsPage';
+import Outreach from './pages/Outreach';
 import { ADMIN_TOKEN_KEY, API_BASE_URL, AUTH_TOKEN_KEY, adminHeaders, authHeaders } from './auth';
 import { applyAppearance, loadAppearance, saveAppearance } from './appearance';
 import './App.css';
@@ -107,6 +108,7 @@ function App() {
               <Route path="/lead-search/csv" element={<CsvHistory type="lead_search" />} />
               <Route path="/business-search" element={<BusinessSearch />} />
               <Route path="/business-search/csv" element={<CsvHistory type="business_search" />} />
+              <Route path="/outreach" element={<Outreach />} />
               <Route path="/settings" element={<SettingsPage appearance={appearance} onAppearanceChange={updateAppearance} />} />
               <Route path="/admin" element={<AdminPage onAdminUnlocked={setIsAdmin} />} />
             </Routes>

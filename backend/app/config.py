@@ -40,6 +40,14 @@ class Settings:
     admin_password: str
     default_login_email: str
     default_login_password: str
+    smtp_host: str
+    smtp_port: int
+    smtp_username: str
+    smtp_password: str
+    smtp_from_email: str
+    smtp_use_tls: bool
+    whatsapp_api_url: str
+    whatsapp_access_token: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -58,6 +66,14 @@ class Settings:
             admin_password=os.getenv("ADMIN_PASSWORD", ""),
             default_login_email=os.getenv("DEFAULT_LOGIN_EMAIL", ""),
             default_login_password=os.getenv("DEFAULT_LOGIN_PASSWORD", ""),
+            smtp_host=os.getenv("SMTP_HOST", ""),
+            smtp_port=int(os.getenv("SMTP_PORT", "587")),
+            smtp_username=os.getenv("SMTP_USERNAME", ""),
+            smtp_password=os.getenv("SMTP_PASSWORD", ""),
+            smtp_from_email=os.getenv("SMTP_FROM_EMAIL", ""),
+            smtp_use_tls=os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"},
+            whatsapp_api_url=os.getenv("WHATSAPP_API_URL", ""),
+            whatsapp_access_token=os.getenv("WHATSAPP_ACCESS_TOKEN", ""),
         )
 
     def missing_keys(self) -> list[str]:

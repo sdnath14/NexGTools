@@ -175,6 +175,46 @@ def initialize_database() -> None:
             )
             cursor.execute(
                 """
+                CREATE TABLE IF NOT EXISTS outreach_contacts (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT UNSIGNED NOT NULL,
+                    lead_place_id VARCHAR(255),
+                    company_name VARCHAR(500) NOT NULL,
+                    search_name VARCHAR(500),
+                    website TEXT,
+                    email VARCHAR(255),
+                    phone VARCHAR(160),
+                    scrape_id BIGINT UNSIGNED,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_outreach_contact (user_id, lead_place_id, email, phone),
+                    INDEX idx_outreach_user (user_id),
+                    CONSTRAINT fk_outreach_contact_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_outreach_contact_scrape FOREIGN KEY (scrape_id) REFERENCES website_scrapes(id) ON DELETE SET NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS outreach_messages (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT UNSIGNED NOT NULL,
+                    contact_id BIGINT UNSIGNED NOT NULL,
+                    channel VARCHAR(32) NOT NULL,
+                    recipient VARCHAR(255) NOT NULL,
+                    subject VARCHAR(500),
+                    message TEXT NOT NULL,
+                    status VARCHAR(32) NOT NULL,
+                    provider_response TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_outreach_messages_user (user_id),
+                    CONSTRAINT fk_outreach_message_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_outreach_message_contact FOREIGN KEY (contact_id) REFERENCES outreach_contacts(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS user_sessions (
                     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
                     user_id BIGINT UNSIGNED NOT NULL,
@@ -395,6 +435,98 @@ def save_website_scrape(scrape: dict[str, Any]) -> int | None:
                 return cursor.lastrowid
     except Exception:
         return None
+
+
+def save_outreach_contacts(
+    user_id: int,
+    lead: dict[str, Any],
+    scrape: dict[str, Any],
+    search_name: str = "",
+) -> int:
+    emails = [str(value).strip().lower() for value in scrape.get("emails") or [] if str(value).strip()]
+    phones = [str(value).strip() for value in scrape.get("phones") or [] if str(value).strip()]
+    pairs = [(email, "") for email in emails] + [("", phone) for phone in phones]
+    if not pairs:
+        return 0
+    saved = 0
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            for email, phone in pairs:
+                cursor.execute(
+                    """
+                    INSERT INTO outreach_contacts (
+                        user_id, lead_place_id, company_name, search_name, website,
+                        email, phone, scrape_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        company_name = VALUES(company_name), search_name = VALUES(search_name),
+                        website = VALUES(website), scrape_id = VALUES(scrape_id), updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (
+                        user_id,
+                        lead.get("id") or None,
+                        lead.get("name") or "Unknown company",
+                        search_name,
+                        lead.get("website") or scrape.get("start_url"),
+                        email,
+                        phone,
+                        scrape.get("database_scrape_id"),
+                    ),
+                )
+                saved += 1
+    return saved
+
+
+def list_outreach_contacts(user_id: int) -> list[dict[str, Any]]:
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, company_name, search_name, website, email, phone, created_at, updated_at
+                FROM outreach_contacts WHERE user_id = %s
+                ORDER BY updated_at DESC, id DESC
+                """,
+                (user_id,),
+            )
+            rows = cursor.fetchall()
+    for row in rows:
+        for key in ("created_at", "updated_at"):
+            if row.get(key): row[key] = row[key].isoformat()
+    return rows
+
+
+def save_outreach_message(user_id: int, contact_id: int, channel: str, recipient: str, subject: str, message: str, status: str, provider_response: str = "") -> int:
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO outreach_messages (user_id, contact_id, channel, recipient, subject, message, status, provider_response)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (user_id, contact_id, channel, recipient, subject, message, status, provider_response[:4000]),
+            )
+            return cursor.lastrowid
+
+
+def list_outreach_messages(user_id: int) -> list[dict[str, Any]]:
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT outreach_messages.id, outreach_messages.channel, outreach_messages.recipient,
+                       outreach_messages.subject, outreach_messages.message, outreach_messages.status,
+                       outreach_messages.created_at, outreach_contacts.company_name
+                FROM outreach_messages
+                JOIN outreach_contacts ON outreach_contacts.id = outreach_messages.contact_id
+                WHERE outreach_messages.user_id = %s
+                ORDER BY outreach_messages.created_at DESC, outreach_messages.id DESC LIMIT 250
+                """,
+                (user_id,),
+            )
+            rows = cursor.fetchall()
+    for row in rows:
+        if row.get("created_at"): row["created_at"] = row["created_at"].isoformat()
+    return rows
 
 
 def save_lead_ai_message(
