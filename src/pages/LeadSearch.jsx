@@ -96,7 +96,7 @@ const LeadSearch = () => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/social-profiles`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({
           name: query,
           address: selectedLead.address,
@@ -160,7 +160,7 @@ const LeadSearch = () => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/leads/search`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({
           company_name: form.companyName,
           pincode: form.pincode,
@@ -176,8 +176,11 @@ const LeadSearch = () => {
         throw new Error(data.detail || 'Lead search failed.');
       }
 
-      setLeads(data.leads || []);
-      setSelectedLeadId(data.leads?.[0]?.id || '');
+      const uniqueLeads = [...new Map((data.leads || []).map((lead) => [
+        lead.id || `${lead.name}|${lead.website}|${lead.phone}`.toLowerCase(), lead,
+      ])).values()];
+      setLeads(uniqueLeads);
+      setSelectedLeadId(uniqueLeads[0]?.id || '');
       setSelectedLeadIds(new Set());
       setLastSearchCriteria({
         companyName: form.companyName.trim(),
@@ -201,7 +204,10 @@ const LeadSearch = () => {
   const exportCsv = async () => {
     if (!visibleLeads.length) return;
 
-    const leadsToExport = checkedLeads.length ? checkedLeads : visibleLeads;
+    const selectedForExport = checkedLeads.length ? checkedLeads : visibleLeads;
+    const leadsToExport = [...new Map(selectedForExport.map((lead) => [
+      lead.id || `${lead.name}|${lead.website}|${lead.phone}`.toLowerCase(), lead,
+    ])).values()];
     const searchedFor = [
       lastSearchCriteria?.companyName,
       lastSearchCriteria?.businessType,
@@ -238,6 +244,7 @@ const LeadSearch = () => {
 
     const headers = [
       'Name',
+      'Company Email',
       'Phone',
       'Address',
       'Business Type',
@@ -252,6 +259,7 @@ const LeadSearch = () => {
     ];
     const rows = leadsToExport.map((lead) => [
       lead.name,
+      lead.email || lead.emails?.[0] || '',
       lead.phone,
       lead.address,
       lead.business_type,

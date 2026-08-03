@@ -4,6 +4,7 @@ from urllib.parse import parse_qs, quote_plus, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from email.message import EmailMessage
+from email.utils import formataddr
 import json
 import math
 import re
@@ -24,6 +25,7 @@ from .database import (
     create_session,
     create_admin_session,
     database_status,
+    delete_admin_record,
     delete_session,
     ensure_default_user,
     get_admin_session,
@@ -127,6 +129,8 @@ class OutreachSendRequest(BaseModel):
     channel: str
     subject: str = "Business invitation"
     message: str
+    sender_name: str = ""
+    reply_to_email: str = ""
 
 
 class ChatMessage(BaseModel):
@@ -1337,11 +1341,21 @@ def create_csv_export(payload: CsvExportRequest, authorization: str | None = Hea
         raise HTTPException(status_code=400, detail="Select at least one lead to export.")
 
     user = _require_user(authorization)
-    export_id = save_csv_export(payload.leads, payload.export_name.strip() or "Lead export", user["id"], payload.source)
+    unique_leads: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for lead in payload.leads:
+        identity = str(lead.get("id") or "").strip().lower() or "|".join(
+            str(lead.get(key) or "").strip().lower() for key in ("name", "website", "phone", "email")
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        unique_leads.append(lead)
+    export_id = save_csv_export(unique_leads, payload.export_name.strip() or "Lead export", user["id"], payload.source)
     if not export_id:
         raise HTTPException(status_code=500, detail="Could not save CSV export.")
 
-    return {"id": export_id, "row_count": len(payload.leads)}
+    return {"id": export_id, "row_count": len(unique_leads)}
 
 
 @app.get("/api/csv-exports")
@@ -1430,6 +1444,20 @@ def admin_update_record(
         return update_admin_record(table_name, record_id, payload.values)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/admin/tables/{table_name}/{record_id}")
+def admin_delete_record(
+    table_name: str,
+    record_id: int,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_admin(authorization, x_admin_token)
+    try:
+        return delete_admin_record(table_name, record_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/api/social-profiles")
@@ -1552,7 +1580,7 @@ def business_search(payload: BusinessSearchRequest, authorization: str | None = 
 
 
 @app.post("/api/leads/search")
-def search_leads(payload: LeadSearchRequest) -> dict[str, Any]:
+def search_leads(payload: LeadSearchRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     if not settings.google_places_api_key:
         raise HTTPException(status_code=500, detail="GOOGLE_PLACES_API_KEY is not configured.")
 
@@ -1656,6 +1684,43 @@ def search_leads(payload: LeadSearchRequest) -> dict[str, Any]:
 
     leads.sort(key=lambda lead: lead["distance_km"] if lead["distance_km"] is not None else 999999)
 
+    # Google Places does not return company email addresses. Enrich every result
+    # that has a website, in parallel, so CSV and outreach records contain the
+    # available public email and phone details.
+    def enrich_lead(lead: dict[str, Any]) -> dict[str, Any]:
+        lead["email"] = str(lead.get("email") or "")
+        lead["emails"] = list(lead.get("emails") or [])
+        lead["phones"] = [lead["phone"]] if lead.get("phone") else []
+        if not lead.get("website"):
+            return lead
+        try:
+            scrape = scrape_website(lead["website"], CrawlOptions(max_pages=3, timeout=8))
+            lead["emails"] = scrape.get("emails") or []
+            lead["email"] = lead["emails"][0] if lead["emails"] else ""
+            lead["phones"] = list(dict.fromkeys(
+                ([lead["phone"]] if lead.get("phone") else []) + (scrape.get("phones") or [])
+            ))
+            lead["contact_scrape"] = {
+                "start_url": scrape.get("start_url"),
+                "emails": lead["emails"],
+                "phones": lead["phones"],
+            }
+        except Exception:
+            pass
+        return lead
+
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(leads)))) as executor:
+        leads = list(executor.map(enrich_lead, leads))
+
+    user = get_user_by_token(_bearer_token(authorization)) if authorization else None
+    if user:
+        for lead in leads:
+            save_outreach_contacts(
+                user["id"], lead, lead.get("contact_scrape") or {
+                    "emails": lead.get("emails") or [], "phones": lead.get("phones") or []
+                }, text_query,
+            )
+
     response = {
         "query": text_query,
         "radius_km": payload.radius_km,
@@ -1692,6 +1757,10 @@ def outreach_workspace(authorization: str | None = Header(default=None)) -> dict
         "providers": {
             "smtp": bool(settings.smtp_host and settings.smtp_from_email),
             "whatsapp": bool(settings.whatsapp_api_url and settings.whatsapp_access_token),
+        },
+        "sender": {
+            "name": user.get("name") or "",
+            "email": settings.smtp_from_email,
         },
     }
 
@@ -1731,7 +1800,10 @@ def send_outreach(payload: OutreachSendRequest, authorization: str | None = Head
             try:
                 if channel == "email":
                     email = EmailMessage()
-                    email["From"] = settings.smtp_from_email
+                    sender_name = payload.sender_name.strip()
+                    email["From"] = formataddr((sender_name, settings.smtp_from_email)) if sender_name else settings.smtp_from_email
+                    if payload.reply_to_email.strip():
+                        email["Reply-To"] = payload.reply_to_email.strip()
                     email["To"] = recipient
                     email["Subject"] = payload.subject.strip() or "Business invitation"
                     email.set_content(personalized)

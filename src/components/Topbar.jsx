@@ -8,6 +8,7 @@ const pageTitles = {
   '/lead-search/csv': 'CSV History',
   '/business-search': 'Business Search',
   '/business-search/csv': 'Business CSV History',
+  '/outreach': 'Company Outreach',
   '/admin': 'Admin',
   '/tender-ai': 'TenderAI',
   '/knowledge-base': 'Knowledge Base',
@@ -20,7 +21,7 @@ const Topbar = ({ user, onLogout }) => {
   const pageTitle = pageTitles[location.pathname] || 'NexG Tools';
   const isLeadSearch = location.pathname.startsWith('/lead-search');
   const isBusinessSearch = location.pathname.startsWith('/business-search');
-  const showsDashboardBack = isLeadSearch || isBusinessSearch;
+  const showsDashboardBack = location.pathname !== '/';
   const initials = user?.name
     ? user.name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()
     : 'NT';

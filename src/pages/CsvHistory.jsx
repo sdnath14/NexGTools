@@ -5,6 +5,7 @@ import './CsvHistory.css';
 
 const LEAD_COLUMNS = [
   { key: 'name', label: 'Name' },
+  { key: 'email', label: 'Company Email' },
   { key: 'phone', label: 'Phone' },
   { key: 'address', label: 'Address' },
   { key: 'business_type', label: 'Business Type' },

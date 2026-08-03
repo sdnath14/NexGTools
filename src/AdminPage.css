@@ -59,7 +59,8 @@
 .admin-refresh-btn,
 .admin-save-btn,
 .admin-edit-btn,
-.admin-cancel-btn {
+.admin-cancel-btn,
+.admin-delete-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -294,6 +295,10 @@
   background: #eff6ff;
   color: #1d4ed8;
 }
+
+.admin-row-actions { display:flex; align-items:center; gap:.4rem; }
+.admin-delete-btn { min-height:32px; padding:0 .65rem; background:#fef2f2; color:#b91c1c; }
+.admin-delete-btn:disabled { opacity:.55; cursor:not-allowed; }
 
 .admin-cancel-btn {
   background: #fef2f2;

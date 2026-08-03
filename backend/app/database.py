@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from typing import Any, Iterator
+from urllib.parse import urlparse
+import hashlib
 import json
+import re
 
 import pymysql
 from pymysql.cursors import DictCursor
@@ -181,6 +184,8 @@ def initialize_database() -> None:
                     lead_place_id VARCHAR(255),
                     company_name VARCHAR(500) NOT NULL,
                     search_name VARCHAR(500),
+                    category VARCHAR(120),
+                    contact_key VARCHAR(64),
                     website TEXT,
                     email VARCHAR(255),
                     phone VARCHAR(160),
@@ -188,12 +193,26 @@ def initialize_database() -> None:
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                     UNIQUE KEY uq_outreach_contact (user_id, lead_place_id, email, phone),
+                    UNIQUE KEY uq_outreach_contact_key (user_id, contact_key),
                     INDEX idx_outreach_user (user_id),
                     CONSTRAINT fk_outreach_contact_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                     CONSTRAINT fk_outreach_contact_scrape FOREIGN KEY (scrape_id) REFERENCES website_scrapes(id) ON DELETE SET NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
+            cursor.execute(
+                """
+                SELECT COLUMN_NAME AS column_name FROM information_schema.columns
+                WHERE table_schema = %s AND table_name = 'outreach_contacts'
+                """,
+                (settings.mysql_database,),
+            )
+            outreach_columns = {row["column_name"] for row in cursor.fetchall()}
+            if "category" not in outreach_columns:
+                cursor.execute("ALTER TABLE outreach_contacts ADD COLUMN category VARCHAR(120) AFTER search_name")
+            if "contact_key" not in outreach_columns:
+                cursor.execute("ALTER TABLE outreach_contacts ADD COLUMN contact_key VARCHAR(64) AFTER category")
+                cursor.execute("ALTER TABLE outreach_contacts ADD UNIQUE KEY uq_outreach_contact_key (user_id, contact_key)")
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS outreach_messages (
@@ -445,36 +464,94 @@ def save_outreach_contacts(
 ) -> int:
     emails = [str(value).strip().lower() for value in scrape.get("emails") or [] if str(value).strip()]
     phones = [str(value).strip() for value in scrape.get("phones") or [] if str(value).strip()]
-    pairs = [(email, "") for email in emails] + [("", phone) for phone in phones]
-    if not pairs:
+    email = emails[0] if emails else str(lead.get("email") or "").strip().lower()
+    phone = str(lead.get("phone") or (phones[0] if phones else "")).strip()
+    if not email and not phone:
         return 0
-    saved = 0
+    company_name = str(lead.get("name") or "Unknown company").strip()
+    website = str(lead.get("website") or scrape.get("start_url") or "").strip()
+    place_id = str(lead.get("id") or "").strip()
+    normalized_phone = re.sub(r"\D", "", phone)
+    parsed_website = urlparse(website if "://" in website else f"https://{website}")
+    normalized_website = parsed_website.netloc.lower().removeprefix("www.")
+    identity = place_id or email or normalized_phone or normalized_website or company_name.lower()
+    contact_key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    category_source = " ".join(
+        str(value or "") for value in (lead.get("business_type"), search_name)
+    ).lower()
+    category = next(
+        (name for name, terms in {
+            "restaurants": ("restaurant", "food", "cafe"),
+            "garage": ("garage", "car repair", "auto repair", "automotive"),
+            "hotels": ("hotel", "lodging", "resort"),
+            "manufacturing": ("manufactur", "factory", "industrial"),
+        }.items() if any(term in category_source for term in terms)),
+        "general",
+    )
     with db_connection() as connection:
         with connection.cursor() as cursor:
-            for email, phone in pairs:
+            match_conditions = ["contact_key = %s"]
+            match_values: list[Any] = [contact_key]
+            for column, value in (("lead_place_id", place_id), ("email", email), ("phone", phone), ("website", website)):
+                if value:
+                    match_conditions.append(f"{column} = %s")
+                    match_values.append(value)
+            match_conditions.append("LOWER(company_name) = %s")
+            match_values.append(company_name.lower())
+            cursor.execute(
+                f"""SELECT id, email, phone, contact_key FROM outreach_contacts
+                    WHERE user_id = %s AND ({' OR '.join(match_conditions)})
+                    ORDER BY updated_at DESC, id DESC LIMIT 1""",
+                (user_id, *match_values),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                cursor.execute(
+                    """UPDATE outreach_contacts
+                       SET company_name = %s, search_name = %s, category = %s, contact_key = %s, website = %s,
+                           email = %s, phone = %s, scrape_id = %s,
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE id = %s""",
+                    (
+                        company_name,
+                        search_name,
+                        category,
+                        existing.get("contact_key") or contact_key,
+                        website,
+                        email or existing.get("email") or "",
+                        phone or existing.get("phone") or "",
+                        scrape.get("database_scrape_id"),
+                        existing["id"],
+                    ),
+                )
+            else:
                 cursor.execute(
                     """
                     INSERT INTO outreach_contacts (
-                        user_id, lead_place_id, company_name, search_name, website,
-                        email, phone, scrape_id
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        user_id, lead_place_id, company_name, search_name, category, contact_key,
+                        website, email, phone, scrape_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE
                         company_name = VALUES(company_name), search_name = VALUES(search_name),
-                        website = VALUES(website), scrape_id = VALUES(scrape_id), updated_at = CURRENT_TIMESTAMP
+                        category = VALUES(category), website = VALUES(website),
+                        email = COALESCE(NULLIF(VALUES(email), ''), email),
+                        phone = COALESCE(NULLIF(VALUES(phone), ''), phone),
+                        scrape_id = VALUES(scrape_id), updated_at = CURRENT_TIMESTAMP
                     """,
                     (
                         user_id,
-                        lead.get("id") or None,
-                        lead.get("name") or "Unknown company",
+                        place_id or None,
+                        company_name,
                         search_name,
-                        lead.get("website") or scrape.get("start_url"),
+                        category,
+                        contact_key,
+                        website,
                         email,
                         phone,
                         scrape.get("database_scrape_id"),
                     ),
                 )
-                saved += 1
-    return saved
+    return 1
 
 
 def list_outreach_contacts(user_id: int) -> list[dict[str, Any]]:
@@ -482,13 +559,24 @@ def list_outreach_contacts(user_id: int) -> list[dict[str, Any]]:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, company_name, search_name, website, email, phone, created_at, updated_at
+                SELECT id, company_name, search_name, category, website, email, phone, created_at, updated_at
                 FROM outreach_contacts WHERE user_id = %s
                 ORDER BY updated_at DESC, id DESC
                 """,
                 (user_id,),
             )
             rows = cursor.fetchall()
+    # Older scrapes stored email and phone as separate rows. Merge those rows in
+    # the response so each company is shown once without destroying message history.
+    merged: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        key = str(row.get("website") or row.get("company_name") or row["id"]).strip().lower()
+        if key not in merged:
+            merged[key] = row
+        else:
+            merged[key]["email"] = merged[key].get("email") or row.get("email") or ""
+            merged[key]["phone"] = merged[key].get("phone") or row.get("phone") or ""
+    rows = list(merged.values())
     for row in rows:
         for key in ("created_at", "updated_at"):
             if row.get(key): row[key] = row[key].isoformat()
@@ -747,6 +835,18 @@ ADMIN_TABLES: dict[str, dict[str, Any]] = {
         "editable": ["lead_json"],
         "order": "created_at DESC, id DESC",
     },
+    "outreach_contacts": {
+        "label": "Outreach Contacts",
+        "fields": ["id", "user_id", "lead_place_id", "company_name", "search_name", "category", "website", "email", "phone", "created_at", "updated_at"],
+        "editable": ["lead_place_id", "company_name", "search_name", "category", "website", "email", "phone"],
+        "order": "updated_at DESC, id DESC",
+    },
+    "outreach_messages": {
+        "label": "Outreach Messages",
+        "fields": ["id", "user_id", "contact_id", "channel", "recipient", "subject", "message", "status", "provider_response", "created_at"],
+        "editable": ["channel", "recipient", "subject", "message", "status", "provider_response"],
+        "order": "created_at DESC, id DESC",
+    },
 }
 
 
@@ -821,6 +921,17 @@ def update_admin_record(table_name: str, record_id: int, values: dict[str, Any])
                 f"UPDATE `{table_name}` SET {assignments} WHERE id = %s",
                 tuple(params),
             )
+    return admin_table_records(table_name, limit=100)
+
+
+def delete_admin_record(table_name: str, record_id: int) -> dict[str, Any]:
+    if table_name not in ADMIN_TABLES:
+        raise ValueError("Unknown admin table.")
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(f"DELETE FROM `{table_name}` WHERE id = %s", (record_id,))
+            if cursor.rowcount != 1:
+                raise ValueError("Record not found.")
     return admin_table_records(table_name, limit=100)
 
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Database, KeyRound, RefreshCcw, Save, ShieldCheck, Table2 } from 'lucide-react';
+import { AlertCircle, Database, KeyRound, RefreshCcw, Save, ShieldCheck, Table2, Trash2 } from 'lucide-react';
 import '../AdminPage.css';
 import { ADMIN_TOKEN_KEY, API_BASE_URL, adminHeaders, authHeaders } from '../auth';
 
@@ -20,6 +20,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
   const [tableData, setTableData] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [draftValues, setDraftValues] = useState({});
+  const [deletingId, setDeletingId] = useState(null);
 
   const selectedOverview = useMemo(
     () => overview.find((table) => table.name === activeTable),
@@ -152,6 +153,32 @@ const AdminPage = ({ onAdminUnlocked }) => {
     }
   };
 
+  const deleteRecord = async (record) => {
+    if (!activeTable || deletingId) return;
+    const description = record.company_name || record.name || record.query_text || record.result_name || `record #${record.id}`;
+    if (!window.confirm(`Delete ${description}? This cannot be undone.`)) return;
+    setDeletingId(record.id);
+    setError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/tables/${activeTable}/${record.id}`, {
+        method: 'DELETE',
+        headers: requestHeaders(),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not delete record.');
+      setTableData(data);
+      if (editingId === record.id) {
+        setEditingId(null);
+        setDraftValues({});
+      }
+      await loadOverview();
+    } catch (err) {
+      setError(err.message || 'Could not delete record.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const refreshAll = async () => {
     setBusy(true);
     setError('');
@@ -206,7 +233,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
         <div>
           <span>Admin Console</span>
           <h1>Database Control Center</h1>
-          <p>View searches, exports, users, scrapes, and AI records. Only editable fields can be updated.</p>
+          <p>View, update, and delete application records. Structural IDs, relationships, timestamps, passwords, and tokens remain protected.</p>
         </div>
         <button className="admin-refresh-btn" onClick={refreshAll} disabled={busy}>
           <RefreshCcw size={17} />
@@ -286,15 +313,16 @@ const AdminPage = ({ onAdminUnlocked }) => {
                     );
                   })}
                   <td>
-                    {editingId === record.id ? (
-                      <button className="admin-cancel-btn" onClick={() => setEditingId(null)}>
-                        Cancel
+                    <div className="admin-row-actions">
+                      {editingId === record.id ? (
+                        <button className="admin-cancel-btn" onClick={() => setEditingId(null)}>Cancel</button>
+                      ) : (
+                        <button className="admin-edit-btn" onClick={() => startEditing(record)}>Edit</button>
+                      )}
+                      <button className="admin-delete-btn" onClick={() => deleteRecord(record)} disabled={deletingId === record.id}>
+                        <Trash2 size={14} /> {deletingId === record.id ? 'Deleting…' : 'Delete'}
                       </button>
-                    ) : (
-                      <button className="admin-edit-btn" onClick={() => startEditing(record)}>
-                        Edit
-                      </button>
-                    )}
+                    </div>
                   </td>
                 </tr>
               ))}
