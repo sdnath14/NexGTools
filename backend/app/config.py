@@ -48,6 +48,12 @@ class Settings:
     smtp_use_tls: bool
     whatsapp_api_url: str
     whatsapp_access_token: str
+    chroma_persist_directory: str
+    chroma_collection_name: str
+    knowledge_max_upload_mb: int
+    knowledge_embedding_batch_size: int
+    knowledge_cleaning_batch_size: int
+    knowledge_cleaning_concurrency: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -74,6 +80,14 @@ class Settings:
             smtp_use_tls=os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"},
             whatsapp_api_url=os.getenv("WHATSAPP_API_URL", ""),
             whatsapp_access_token=os.getenv("WHATSAPP_ACCESS_TOKEN", ""),
+            chroma_persist_directory=os.getenv(
+                "CHROMA_PERSIST_DIRECTORY", "/var/lib/company-rag/chroma"
+            ),
+            chroma_collection_name=os.getenv("CHROMA_COLLECTION_NAME", "company_knowledge"),
+            knowledge_max_upload_mb=int(os.getenv("KNOWLEDGE_MAX_UPLOAD_MB", "200")),
+            knowledge_embedding_batch_size=int(os.getenv("KNOWLEDGE_EMBEDDING_BATCH_SIZE", "500")),
+            knowledge_cleaning_batch_size=int(os.getenv("KNOWLEDGE_CLEANING_BATCH_SIZE", "10")),
+            knowledge_cleaning_concurrency=int(os.getenv("KNOWLEDGE_CLEANING_CONCURRENCY", "4")),
         )
 
     def missing_keys(self) -> list[str]:

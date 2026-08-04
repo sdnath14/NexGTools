@@ -9,10 +9,14 @@ import json
 import math
 import re
 import smtplib
+import tempfile
+import threading
 import time
+import uuid
+from pathlib import Path
 
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import BackgroundTasks, FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import requests
@@ -40,6 +44,9 @@ from .database import (
     list_lead_search_history,
     list_outreach_contacts,
     list_outreach_messages,
+    list_knowledge_chat_messages,
+    list_knowledge_conversations,
+    search_knowledge_chat_messages,
     save_csv_export,
     save_business_search,
     save_lead_ai_message,
@@ -47,13 +54,21 @@ from .database import (
     save_outreach_contacts,
     save_outreach_message,
     save_website_scrape,
+    save_knowledge_chat_message,
+    delete_knowledge_chat_messages,
+    create_knowledge_conversation,
+    delete_knowledge_conversation,
     update_admin_record,
     verify_admin_password,
 )
 from .scraper import CrawlOptions, EMAIL_RE, PHONE_RE, scrape_website
+from .knowledge_base import answer_question, delete_document, get_records, ingest_file, knowledge_status, list_documents, validate_upload
 
 
 app = FastAPI(title="NexGTools API", version="0.1.0")
+
+_upload_jobs: dict[str, dict[str, Any]] = {}
+_upload_jobs_lock = threading.Lock()
 
 app.add_middleware(
     CORSMiddleware,
@@ -188,6 +203,16 @@ class AdminLoginRequest(BaseModel):
 
 class AdminUpdateRecordRequest(BaseModel):
     values: dict[str, Any]
+
+
+class KnowledgeQuestionRequest(BaseModel):
+    question: str
+    document_ids: list[str] = Field(default_factory=list)
+    conversation_id: str = ""
+
+
+class KnowledgeConversationRequest(BaseModel):
+    pass
 
 
 BUSINESS_SOURCES: dict[str, dict[str, str]] = {
@@ -1333,6 +1358,238 @@ def logout(authorization: str | None = Header(default=None)) -> dict[str, bool]:
     if token:
         delete_session(token)
     return {"ok": True}
+
+
+@app.get("/api/knowledge/status")
+def get_knowledge_status(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    try:
+        return knowledge_status(user["id"])
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Knowledge base is unavailable: {exc}") from exc
+
+
+@app.get("/api/knowledge/documents")
+def get_knowledge_documents(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    try:
+        return {"documents": list_documents(user["id"])}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Could not load documents: {exc}") from exc
+
+
+@app.get("/api/knowledge/records")
+def get_knowledge_records(
+    document_ids: str = Query(default=""),
+    limit: int = Query(default=250, ge=1, le=1000),
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user = _require_user(authorization)
+    selected = [value.strip() for value in document_ids.split(",") if value.strip()]
+    try:
+        records = get_records(user["id"], selected or None, limit)
+        return {"records": records, "per_sheet_limit": limit}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Could not load knowledge records: {exc}") from exc
+
+
+def _knowledge_conversation_id(value: str) -> str:
+    clean = re.sub(r"[^A-Za-z0-9_-]", "", value or "shared")[:80]
+    return clean or "shared"
+
+
+@app.get("/api/knowledge/conversations")
+def get_knowledge_conversations(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    try:
+        return {"conversations": list_knowledge_conversations(user["id"])}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Could not load conversations: {exc}") from exc
+
+
+@app.post("/api/knowledge/conversations")
+def create_knowledge_conversation_route(
+    payload: KnowledgeConversationRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user = _require_user(authorization)
+    try:
+        return {"conversation": create_knowledge_conversation(user["id"])}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Could not create conversation: {exc}") from exc
+
+
+@app.delete("/api/knowledge/conversations/{conversation_id}")
+def delete_knowledge_conversation_route(
+    conversation_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, bool]:
+    user = _require_user(authorization)
+    try:
+        if not delete_knowledge_conversation(user["id"], _knowledge_conversation_id(conversation_id)):
+            raise HTTPException(status_code=404, detail="Conversation not found or cannot be deleted.")
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Could not delete conversation: {exc}") from exc
+
+
+@app.get("/api/knowledge/conversations/{conversation_id}/messages")
+def get_knowledge_conversation_messages(
+    conversation_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user = _require_user(authorization)
+    try:
+        return {"messages": list_knowledge_chat_messages(user["id"], _knowledge_conversation_id(conversation_id))}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Could not load conversation history: {exc}") from exc
+
+
+@app.delete("/api/knowledge/conversations/{conversation_id}/messages")
+def clear_knowledge_conversation_messages(
+    conversation_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user = _require_user(authorization)
+    try:
+        deleted = delete_knowledge_chat_messages(user["id"], _knowledge_conversation_id(conversation_id))
+        return {"ok": True, "deleted": deleted}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Could not clear conversation history: {exc}") from exc
+
+
+@app.get("/api/knowledge/conversations/{conversation_id}/search")
+def search_knowledge_conversation(
+    conversation_id: str,
+    q: str = Query(min_length=1, max_length=200),
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user = _require_user(authorization)
+    try:
+        return {"messages": search_knowledge_chat_messages(user["id"], _knowledge_conversation_id(conversation_id), q)}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Could not search conversation history: {exc}") from exc
+
+
+def _process_knowledge_upload(
+    job_id: str,
+    user_id: int,
+    safe_name: str,
+    temporary_path: Path,
+    content_type: str,
+) -> None:
+    with _upload_jobs_lock:
+        _upload_jobs[job_id]["status"] = "indexing"
+    try:
+        document = ingest_file(user_id, safe_name, temporary_path, content_type)
+        with _upload_jobs_lock:
+            _upload_jobs[job_id].update({"status": "completed", "document": document})
+    except Exception as exc:
+        with _upload_jobs_lock:
+            _upload_jobs[job_id].update({"status": "failed", "error": str(exc)})
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+@app.post("/api/knowledge/documents", status_code=202)
+async def upload_knowledge_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user = _require_user(authorization)
+    temporary_path: Path | None = None
+    queued = False
+    try:
+        safe_name, extension = validate_upload(file.filename or "document", file.content_type or "")
+        maximum = settings.knowledge_max_upload_mb * 1024 * 1024
+        total = 0
+        temporary_directory = Path(tempfile.gettempdir()) / "company-rag"
+        temporary_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(prefix=f"{user['id']}-", suffix=extension, dir=temporary_directory, delete=False) as temporary:
+            temporary_path = Path(temporary.name)
+            while chunk := await file.read(1024 * 1024):
+                total += len(chunk)
+                if total > maximum:
+                    raise ValueError(f"File exceeds the {settings.knowledge_max_upload_mb} MB upload limit.")
+                temporary.write(chunk)
+        job_id = uuid.uuid4().hex
+        with _upload_jobs_lock:
+            _upload_jobs[job_id] = {
+                "id": job_id,
+                "user_id": user["id"],
+                "filename": safe_name,
+                "status": "queued",
+            }
+        background_tasks.add_task(
+            _process_knowledge_upload,
+            job_id,
+            user["id"],
+            safe_name,
+            temporary_path,
+            file.content_type or "",
+        )
+        queued = True
+        return {"job": {"id": job_id, "filename": safe_name, "status": "queued"}}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Could not process document: {exc}") from exc
+    finally:
+        await file.close()
+        if temporary_path and not queued:
+            temporary_path.unlink(missing_ok=True)
+
+
+@app.get("/api/knowledge/uploads/{job_id}")
+def knowledge_upload_status(job_id: str, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    with _upload_jobs_lock:
+        job = dict(_upload_jobs.get(job_id) or {})
+    if not job or job.get("user_id") != user["id"]:
+        raise HTTPException(status_code=404, detail="Upload job not found.")
+    job.pop("user_id", None)
+    return {"job": job}
+
+
+@app.delete("/api/knowledge/documents/{document_id}")
+def remove_knowledge_document(document_id: str, authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    user = _require_user(authorization)
+    try:
+        if not delete_document(user["id"], document_id):
+            raise HTTPException(status_code=404, detail="Document not found.")
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Could not delete document: {exc}") from exc
+
+
+@app.post("/api/knowledge/ask")
+def ask_knowledge_base(
+    payload: KnowledgeQuestionRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user = _require_user(authorization)
+    conversation_id = _knowledge_conversation_id(payload.conversation_id)
+    try:
+        question = payload.question.strip()
+        if not question:
+            raise ValueError("Question is required.")
+        save_knowledge_chat_message(user["id"], conversation_id, "user", question)
+        history = list_knowledge_chat_messages(user["id"], conversation_id, limit=12)
+        # The company assistant is intentionally scoped to the entire tenant
+        # knowledge base. Document IDs are retained in the request shape for
+        # backwards compatibility, but cannot restrict a chat answer.
+        response = answer_question(user["id"], question, None, history)
+        save_knowledge_chat_message(user["id"], conversation_id, "assistant", response["answer"], response.get("sources") or [])
+        return response
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Could not answer question: {exc}") from exc
 
 
 @app.post("/api/csv-exports")

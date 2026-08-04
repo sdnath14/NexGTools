@@ -10,7 +10,12 @@ lerna-debug.log*
 node_modules
 .venv
 .mysql-data/
+.mysql-data.failed-*/
 .mysql-run/
+.chroma/
+.knowledge-uploads/
+backend/app/Data/
+*.cleaned.json
 __pycache__/
 *.py[cod]
 dist

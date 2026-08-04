@@ -26,7 +26,8 @@ const tools = [
     title: 'Knowledge Base',
     description: 'Access central company internal documentation, processes, and guides.',
     icon: BookOpen,
-    themeClass: 'card-knowledge'
+    themeClass: 'card-knowledge',
+    link: '/knowledge-base'
   }
 ];
 
