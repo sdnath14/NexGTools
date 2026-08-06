@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Database, KeyRound, RefreshCcw, Save, ShieldCheck, Table2, Trash2 } from 'lucide-react';
+import { AlertCircle, Database, KeyRound, RefreshCcw, Save, ShieldCheck, Table2, Trash2, UserPlus } from 'lucide-react';
 import '../AdminPage.css';
 import { ADMIN_TOKEN_KEY, API_BASE_URL, adminHeaders, authHeaders } from '../auth';
 
@@ -21,6 +21,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
   const [editingId, setEditingId] = useState(null);
   const [draftValues, setDraftValues] = useState({});
   const [deletingId, setDeletingId] = useState(null);
+  const [newUser, setNewUser] = useState({ name: '', email: '', password: '' });
 
   const selectedOverview = useMemo(
     () => overview.find((table) => table.name === activeTable),
@@ -192,6 +193,26 @@ const AdminPage = ({ onAdminUnlocked }) => {
     }
   };
 
+  const createUser = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/users`, {
+        method: 'POST', headers: requestHeaders(), body: JSON.stringify(newUser),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not create user.');
+      setNewUser({ name: '', email: '', password: '' });
+      await loadOverview();
+      if (activeTable === 'users') await loadTable('users');
+    } catch (err) {
+      setError(err.message || 'Could not create user.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (loading) {
     return <div className="admin-loading">Checking admin access...</div>;
   }
@@ -247,6 +268,17 @@ const AdminPage = ({ onAdminUnlocked }) => {
           <span>{error}</span>
         </div>
       )}
+
+      <form className="admin-create-user" onSubmit={createUser}>
+        <div>
+          <h2><UserPlus size={20} /> Create user</h2>
+          <p>Create login credentials for a new workspace user. The password is stored securely and is never shown again.</p>
+        </div>
+        <label>Name<input value={newUser.name} onChange={(event) => setNewUser((current) => ({ ...current, name: event.target.value }))} placeholder="User name" required /></label>
+        <label>Email<input type="email" value={newUser.email} onChange={(event) => setNewUser((current) => ({ ...current, email: event.target.value }))} placeholder="user@company.com" required /></label>
+        <label>Initial password<input type="password" value={newUser.password} onChange={(event) => setNewUser((current) => ({ ...current, password: event.target.value }))} placeholder="At least 6 characters" minLength="6" required /></label>
+        <button type="submit" className="admin-save-btn" disabled={busy}><UserPlus size={17} /> Create user</button>
+      </form>
 
       <div className="admin-overview-grid">
         {overview.map((table) => (

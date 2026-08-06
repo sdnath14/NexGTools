@@ -20,13 +20,14 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 import requests
 
-from .auth import create_token, verify_password
+from .auth import create_token, hash_password, verify_password
 from .config import settings
 from .database import (
     admin_overview,
     admin_table_records,
     create_session,
     create_admin_session,
+    create_user,
     database_status,
     delete_admin_record,
     delete_session,
@@ -155,6 +156,10 @@ class AuthRequest(BaseModel):
 
 class RegisterRequest(AuthRequest):
     name: str
+
+
+class AdminCreateUserRequest(RegisterRequest):
+    pass
 
 
 class CsvExportRequest(BaseModel):
@@ -1534,6 +1539,27 @@ def admin_dashboard(
 ) -> dict[str, Any]:
     _require_admin(authorization, x_admin_token)
     return admin_overview()
+
+
+@app.post("/api/admin/users")
+def admin_create_user(
+    payload: AdminCreateUserRequest,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_admin(authorization, x_admin_token)
+    name = payload.name.strip()
+    email = payload.email.strip().lower()
+    if not name:
+        raise HTTPException(status_code=400, detail="User name is required.")
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="A valid email address is required.")
+    if len(payload.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
+    if get_user_by_email(email):
+        raise HTTPException(status_code=409, detail="A user with this email already exists.")
+    salt, password_hash = hash_password(payload.password)
+    return {"user": create_user(name, email, salt, password_hash)}
 
 
 @app.get("/api/admin/tables/{table_name}")
