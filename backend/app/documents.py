@@ -112,6 +112,18 @@ def list_files(user_id: int) -> list[dict[str, Any]]:
             return list(cursor.fetchall())
 
 
+def delete_file(user_id: int, file_id: str) -> None:
+    """Remove an owned upload, its indexed rows, and its stored original."""
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT storage_path FROM document_files WHERE id=%s AND user_id=%s", (file_id, user_id))
+            file_row = cursor.fetchone()
+            if not file_row:
+                raise ValueError("Document not found.")
+            cursor.execute("DELETE FROM document_files WHERE id=%s AND user_id=%s", (file_id, user_id))
+    Path(file_row["storage_path"]).unlink(missing_ok=True)
+
+
 def file_contents(user_id: int, file_id: str) -> list[dict[str, Any]]:
     """Return all workbook rows; the client virtualizes rendering for large sheets."""
     with db_connection() as connection:

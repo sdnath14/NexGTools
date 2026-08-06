@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Database, Download, FileUp, Loader2, Search } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Database, Download, FileUp, Loader2, Search, Trash2 } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './DataLibrary.css';
 import './DataLibraryWorkbook.css';
@@ -20,10 +20,11 @@ export default function DataLibrary() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [question, setQuestion] = useState('');
-  const [messages, setMessages] = useState([]);
+  const [searchResult, setSearchResult] = useState(null);
   const [searching, setSearching] = useState(false);
   const [loadingMoreIndex, setLoadingMoreIndex] = useState(null);
   const [downloading, setDownloading] = useState(false);
+  const [deletingFileId, setDeletingFileId] = useState(null);
   const [error, setError] = useState('');
 
   const loadFiles = async () => {
@@ -38,12 +39,12 @@ export default function DataLibrary() {
 
   const toggleSource = (fileId) => {
     setSelectedFileIds((current) => current.includes(fileId) ? current.filter((id) => id !== fileId) : [...current, fileId]);
-    setMessages([]);
+    setSearchResult(null);
     setError('');
   };
 
-  const clearChat = () => {
-    setMessages([]);
+  const clearSearch = () => {
+    setSearchResult(null);
     setQuestion('');
     setError('');
   };
@@ -60,6 +61,20 @@ export default function DataLibrary() {
       }
       await loadFiles();
     } catch (uploadError) { setError(uploadError.message); } finally { setUploading(false); if (picker.current) picker.current.value = ''; }
+  };
+
+  const deleteSource = async (file) => {
+    if (deletingFileId || !window.confirm(`Delete “${file.filename}”? This will permanently remove the uploaded file and its searchable records.`)) return;
+    setDeletingFileId(file.id); setError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/documents/${file.id}`, { method: 'DELETE', headers: authHeaders() });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not delete the uploaded file.');
+      setSelectedFileIds((current) => current.filter((id) => id !== file.id));
+      setSearchResult(null);
+      if (workbook?.file.id === file.id) { setWorkbook(null); setActiveSheetId(null); }
+      await loadFiles();
+    } catch (deleteError) { setError(deleteError.message); } finally { setDeletingFileId(null); }
   };
 
   const openWorkbook = async (file) => {
@@ -105,33 +120,42 @@ export default function DataLibrary() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not search the uploaded data.');
       const records = data.records || [];
-      setMessages((current) => [...current, {
-        question,
-        answer: records.length ? `Found ${data.total} keyword match${data.total === 1 ? '' : 'es'} in your uploaded data. Showing ${records.length}.` : 'No matching rows were found in your uploaded data.',
-        sources: records,
+      setSearchResult({
+        query: question,
+        records,
         total: data.total || 0,
         hasMore: Boolean(data.has_more),
         fileIds: selectedFileIds,
-      }]);
+      });
       setQuestion('');
     } catch (askError) { setError(askError.message); } finally { setSearching(false); }
   };
 
-  const loadMore = async (index) => {
-    const message = messages[index];
-    if (!message || loadingMoreIndex !== null) return;
-    setLoadingMoreIndex(index); setError('');
+  const loadMore = async () => {
+    if (!searchResult || loadingMoreIndex !== null) return;
+    setLoadingMoreIndex(true); setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/documents/search`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ query: message.question, limit: 50, offset: message.sources.length, file_ids: message.fileIds || [] }) });
+      const response = await fetch(`${API_BASE_URL}/api/documents/search`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ query: searchResult.query, limit: 50, offset: searchResult.records.length, file_ids: searchResult.fileIds || [] }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not load more results.');
-      setMessages((current) => current.map((item, itemIndex) => itemIndex !== index ? item : {
-        ...item,
-        sources: [...item.sources, ...(data.records || [])],
+      setSearchResult((current) => current && {
+        ...current,
+        records: [...current.records, ...(data.records || [])],
+        total: data.total || current.total,
         hasMore: Boolean(data.has_more),
-        answer: `Found ${data.total} keyword matches in your uploaded data. Showing ${item.sources.length + (data.records || []).length}.`,
-      }));
+      });
     } catch (loadError) { setError(loadError.message); } finally { setLoadingMoreIndex(null); }
+  };
+
+  const downloadSearchResults = () => {
+    if (!searchResult?.records.length) return;
+    const columns = tableColumns(searchResult.records);
+    const csvCell = (value) => `"${displayValue(value).replaceAll('"', '""')}"`;
+    const csv = [columns.map(csvCell).join(','), ...searchResult.records.map((record) => columns.map((column) => csvCell(record.record_json?.[column])).join(','))].join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url; link.download = `data-library-search-${new Date().toISOString().slice(0, 10)}.csv`; link.click();
+    URL.revokeObjectURL(url);
   };
 
   return <div className="library-page">
@@ -139,11 +163,13 @@ export default function DataLibrary() {
     {error && <div className="library-alert"><AlertCircle size={17} /> {error}</div>}
     {activePanel === 'search' && <section className="library-grid">
       <div className="library-card"><div className="library-card-head"><div><h2>Documents</h2><span>Select sources to search, or leave all unselected to search every source.</span></div><button onClick={loadFiles} className="library-refresh">Refresh</button></div>
-        {loading ? <div className="library-empty"><Loader2 className="spin" /> Loading documents…</div> : files.length ? <div className="library-files">{files.map((file) => <div key={file.id} className={`library-file ${selectedFileIds.includes(file.id) ? 'selected' : ''}`} onClick={() => file.status === 'completed' && toggleSource(file.id)}><label className="library-source-select"><input type="checkbox" checked={selectedFileIds.includes(file.id)} onClick={(event) => event.stopPropagation()} onChange={() => toggleSource(file.id)} disabled={file.status !== 'completed'} aria-label={`Search ${file.filename}`} /></label><div className="library-file-text"><Database size={19} /><div><strong>{file.filename}</strong><small>{file.file_type.replace('.', '').toUpperCase()} · {formatBytes(file.file_size)} · {file.records || 0} records</small></div></div><span className={`library-status ${file.status}`}>{file.status === 'completed' ? <CheckCircle2 size={15} /> : file.status === 'failed' ? <AlertCircle size={15} /> : <Loader2 className="spin" size={15} />}{file.status}</span></div>)}</div> : <div className="library-empty"><Database size={28} /> Upload a source to create searchable records.</div>}
+        {loading ? <div className="library-empty"><Loader2 className="spin" /> Loading documents…</div> : files.length ? <div className="library-files">{files.map((file) => <div key={file.id} className={`library-file ${selectedFileIds.includes(file.id) ? 'selected' : ''}`} onClick={() => file.status === 'completed' && toggleSource(file.id)}><label className="library-source-select"><input type="checkbox" checked={selectedFileIds.includes(file.id)} onClick={(event) => event.stopPropagation()} onChange={() => toggleSource(file.id)} disabled={file.status !== 'completed'} aria-label={`Search ${file.filename}`} /></label><div className="library-file-text"><Database size={19} /><div><strong>{file.filename}</strong><small>{file.file_type.replace('.', '').toUpperCase()} · {formatBytes(file.file_size)} · {file.records || 0} records</small></div></div><div className="library-file-actions"><span className={`library-status ${file.status}`}>{file.status === 'completed' ? <CheckCircle2 size={15} /> : file.status === 'failed' ? <AlertCircle size={15} /> : <Loader2 className="spin" size={15} />}{file.status}</span><button type="button" className="library-delete-source" onClick={(event) => { event.stopPropagation(); deleteSource(file); }} disabled={deletingFileId !== null} aria-label={`Delete ${file.filename}`}>{deletingFileId === file.id ? <Loader2 className="spin" size={15} /> : <Trash2 size={15} />}</button></div></div>)}</div> : <div className="library-empty"><Database size={28} /> Upload a source to create searchable records.</div>}
       </div>
-      <div className="library-card library-answer"><div className="library-card-head"><div><h2>Search uploaded data</h2><span>Keyword matches only — results come directly from your stored rows.</span></div><button type="button" className="library-refresh" onClick={clearChat} disabled={!messages.length}>Clear chat</button></div>
-        <div className="library-chat">{!messages.length && <div className="library-chat-empty">Enter a name, phone number, location, or any value from your Excel file.</div>}{messages.map((message, index) => { const columns = tableColumns(message.sources || []); return <div className="library-turn" key={`${message.question}-${index}`}><div className="library-bubble user">{message.question}</div><div className="library-bubble assistant">{message.answer}</div>{columns.length > 0 && <div className="library-table-wrap"><table><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{message.sources.map((record) => <tr key={record.id}>{columns.map((column) => <td key={column}>{displayValue(record.record_json?.[column])}</td>)}</tr>)}</tbody></table></div>}{message.hasMore && <button type="button" className="library-refresh" onClick={() => loadMore(index)} disabled={loadingMoreIndex !== null}>{loadingMoreIndex === index ? <><Loader2 className="spin" size={15} /> Loading more…</> : 'Need more results? Show next 50'}</button>}</div>; })}{searching && <div className="library-bubble assistant"><Loader2 className="spin" size={16} /> Searching your data…</div>}</div>
-        <form onSubmit={ask} className="library-query telegram-composer"><textarea value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); ask(event); } }} placeholder="Search your uploaded Excel data…" rows="1" /><button aria-label="Send search" disabled={!question.trim() || searching}>{searching ? <Loader2 className="spin" size={17} /> : <Search size={17} />}</button></form>
+      <div className="library-card library-search-panel"><div className="library-card-head"><div><h2>Search database</h2><span>Search exact keywords across your uploaded data.</span></div>{searchResult && <button type="button" className="library-refresh" onClick={clearSearch}>Clear search</button>}</div>
+        <form onSubmit={ask} className="library-query"><Search className="library-query-icon" size={19} /><input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Search by keyword, name, phone number, or location…" aria-label="Search uploaded data" /><button disabled={!question.trim() || searching}>{searching ? <Loader2 className="spin" size={17} /> : <Search size={17} />} Search</button></form>
+        {searching && <div className="library-search-state"><Loader2 className="spin" size={18} /> Searching your data…</div>}
+        {!searching && !searchResult && <div className="library-search-state">Enter a keyword to find matching rows in your uploaded files.</div>}
+        {!searching && searchResult && (() => { const columns = tableColumns(searchResult.records); return <div className="library-results"><div className="library-results-head"><div><h2>Search results</h2><span>{searchResult.total} result{searchResult.total === 1 ? '' : 's'} found{searchResult.query ? ` for “${searchResult.query}”` : ''}</span></div><button type="button" className="library-download-results" onClick={downloadSearchResults} disabled={!searchResult.records.length}><Download size={16} /> Download CSV</button></div>{columns.length ? <div className="library-table-wrap"><table><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{searchResult.records.map((record) => <tr key={record.id}>{columns.map((column) => <td key={column}>{displayValue(record.record_json?.[column])}</td>)}</tr>)}</tbody></table></div> : <div className="library-search-state">No matching rows were found.</div>}{searchResult.hasMore && <button type="button" className="library-load-more" onClick={loadMore} disabled={loadingMoreIndex !== null}>{loadingMoreIndex ? <><Loader2 className="spin" size={15} /> Loading more…</> : 'Show next 50 results'}</button>}</div>; })()}
       </div>
     </section>}
     {activePanel === 'workbook' && <section className="library-card library-workbook"><div className="library-card-head"><div><h2>{workbook?.file.filename || 'Workbook view'}</h2><span>Choose a completed file to view all of its sheets and rows.</span></div><div className="library-workbook-actions"><select className="library-workbook-picker" value={workbook?.file.id || ''} onChange={(event) => { const file = files.find((item) => item.id === event.target.value); if (file) openWorkbook(file); }}><option value="">Choose a workbook…</option>{files.filter((file) => file.status === 'completed').map((file) => <option key={file.id} value={file.id}>{file.filename}</option>)}</select>{workbook && <button type="button" className="library-refresh" onClick={downloadWorkbook} disabled={downloading}>{downloading ? <Loader2 className="spin" size={15} /> : <Download size={15} />} Download original</button>}</div></div>{workbook ? (workbook.loading ? <div className="library-empty"><Loader2 className="spin" /> Loading workbook…</div> : workbook.sheets.length ? <><div className="library-sheet-tabs">{workbook.sheets.map((sheet) => <button type="button" key={sheet.id} className={sheet.id === activeSheetId ? 'active' : ''} onClick={() => selectSheet(sheet.id)}>{sheet.name} ({sheet.row_count})</button>)}</div>{(() => { const sheet = workbook.sheets.find((item) => item.id === activeSheetId) || workbook.sheets[0]; const columns = sheet.headers_json || []; const rowHeight = 31; const start = Math.max(0, Math.floor(workbookScrollTop / rowHeight) - 8); const end = Math.min(sheet.records.length, start + 36); const visibleRows = sheet.records.slice(start, end); return <><div className="library-workbook-summary">All {sheet.row_count} rows are available. Scroll to view them.</div><div className="library-workbook-table" onScroll={(event) => setWorkbookScrollTop(event.currentTarget.scrollTop)}><table><thead><tr><th>#</th>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{start > 0 && <tr className="library-spacer-row"><td colSpan={columns.length + 1} style={{ height: start * rowHeight }} /></tr>}{visibleRows.map((record) => <tr key={record.record_number}><td>{record.record_number}</td>{columns.map((column) => <td key={column}>{displayValue(record.record_json?.[column])}</td>)}</tr>)}{end < sheet.records.length && <tr className="library-spacer-row"><td colSpan={columns.length + 1} style={{ height: (sheet.records.length - end) * rowHeight }} /></tr>}</tbody></table></div></>; })()}</> : <div className="library-empty">No structured rows were found in this file.</div>) : <div className="library-empty"><Database size={28} /> Choose a completed document above to open its workbook.</div>}</section>}

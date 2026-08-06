@@ -46,7 +46,7 @@ from .database import (
     verify_admin_password,
 )
 from .scraper import CrawlOptions, EMAIL_RE, PHONE_RE, scrape_website
-from .documents import answer as answer_documents, create_file, file_contents, file_download, ingest, list_files, search as search_documents, validate_upload
+from .documents import answer as answer_documents, create_file, delete_file, file_contents, file_download, ingest, list_files, search as search_documents, validate_upload
 
 
 app = FastAPI(title="NexGTools API", version="0.1.0")
@@ -1388,6 +1388,16 @@ async def upload_document(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         await file.close()
+
+
+@app.delete("/api/documents/{file_id}")
+def delete_document(file_id: str, authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    user = _require_user(authorization)
+    try:
+        delete_file(user["id"], file_id)
+        return {"deleted": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/api/documents/{file_id}/contents")

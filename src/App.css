@@ -497,3 +497,8 @@
     grid-template-columns: 1fr;
   }
 }
+
+.library-file-actions { display: flex; align-items: center; gap: .45rem; }
+.library-delete-source { display: grid; place-items: center; width: 29px; height: 29px; border: 1px solid #fecaca; border-radius: .4rem; background: #fff; color: #dc2626; cursor: pointer; }
+.library-delete-source:hover { background: #fef2f2; }
+.library-delete-source:disabled { opacity: .55; cursor: not-allowed; }
