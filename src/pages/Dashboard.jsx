@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   BarChart3,
   Building2,
-  BookOpen,
+  Database,
   Loader2,
   Megaphone,
   MoreVertical,
@@ -19,8 +19,8 @@ const SOURCE_COLORS = ['#7047eb', '#2478e5', '#18b981', '#ff9f1c', '#e43d91', '#
 const quickTools = [
   { title: 'Lead Search', description: 'Find and discover potential leads across multiple sources.', icon: Search, color: '#6c47ff', bg: '#eee9ff', link: '/lead-search' },
   { title: 'Business Search', description: 'Search for businesses and access key company information.', icon: Building2, color: '#287be0', bg: '#e8f2ff', link: '/business-search' },
-  { title: 'Knowledge Base', description: 'Explore internal documentation and guides.', icon: BookOpen, color: '#8061ee', bg: '#f0ecff', link: '/knowledge-base' },
   { title: 'Company Outreach', description: 'Manage company contacts and outreach activity.', icon: Megaphone, color: '#ec4899', bg: '#fceaf4', link: '/outreach' },
+  { title: 'Data Library', description: 'Upload and query Excel, PDF, Word, CSV and text documents.', icon: Database, color: '#0f766e', bg: '#e6fffb', link: '/data-library' },
 ];
 
 const startOfDay = (date) => {

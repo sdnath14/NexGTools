@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, Building2, BookOpen, Settings, ChevronLeft, ChevronRight, ShieldCheck, FileSpreadsheet, Send } from 'lucide-react';
+import { LayoutDashboard, Users, Building2, Database, Settings, ChevronLeft, ChevronRight, ShieldCheck, FileSpreadsheet, Send } from 'lucide-react';
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -9,7 +9,7 @@ const navItems = [
   { path: '/business-search', label: 'Business Search', icon: Building2 },
   { path: '/business-search/csv', label: 'Business CSV History', icon: FileSpreadsheet },
   { path: '/outreach', label: 'Company Outreach', icon: Send },
-  { path: '/knowledge-base', label: 'Knowledge Base', icon: BookOpen },
+  { path: '/data-library', label: 'Data Library', icon: Database },
 ];
 
 const Sidebar = ({ collapsed, onToggle, isAdmin }) => {

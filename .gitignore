@@ -12,7 +12,6 @@ node_modules
 .mysql-data/
 .mysql-data.failed-*/
 .mysql-run/
-.chroma/
 .knowledge-uploads/
 backend/app/Data/
 *.cleaned.json

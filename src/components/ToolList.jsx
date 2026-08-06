@@ -1,6 +1,6 @@
 import React from 'react';
 import ToolCard from './ToolCard';
-import { Building2, Users, BrainCircuit, BookOpen } from 'lucide-react';
+import { Building2, Users, BrainCircuit } from 'lucide-react';
 
 const tools = [
   {
@@ -21,13 +21,6 @@ const tools = [
     description: 'AI-powered analysis of request for proposals and tender documents.',
     icon: BrainCircuit,
     themeClass: 'card-tender'
-  },
-  {
-    title: 'Knowledge Base',
-    description: 'Access central company internal documentation, processes, and guides.',
-    icon: BookOpen,
-    themeClass: 'card-knowledge',
-    link: '/knowledge-base'
   }
 ];
 

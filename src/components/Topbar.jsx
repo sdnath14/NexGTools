@@ -9,9 +9,9 @@ const pageTitles = {
   '/business-search': 'Business Search',
   '/business-search/csv': 'Business CSV History',
   '/outreach': 'Company Outreach',
+  '/data-library': 'Data Library',
   '/admin': 'Admin',
   '/tender-ai': 'TenderAI',
-  '/knowledge-base': 'Knowledge Base',
   '/settings': 'Settings',
 };
 

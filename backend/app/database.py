@@ -249,124 +249,57 @@ def initialize_database() -> None:
             )
             cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS knowledge_documents (
+                CREATE TABLE IF NOT EXISTS document_files (
                     id CHAR(32) NOT NULL PRIMARY KEY,
                     user_id BIGINT UNSIGNED NOT NULL,
                     filename VARCHAR(500) NOT NULL,
-                    content_type VARCHAR(255),
-                    file_size BIGINT UNSIGNED NOT NULL,
-                    file_hash CHAR(64) NOT NULL,
-                    file_data LONGBLOB NULL,
-                    file_type VARCHAR(20),
-                    records_created INT UNSIGNED NOT NULL DEFAULT 0,
-                    vectors_created INT UNSIGNED NOT NULL DEFAULT 0,
-                    chunk_count INT UNSIGNED NOT NULL DEFAULT 0,
-                    status VARCHAR(32) NOT NULL DEFAULT 'processing',
-                    error_message TEXT,
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    content_type VARCHAR(255), file_type VARCHAR(32) NOT NULL,
+                    file_hash CHAR(64) NOT NULL, file_size BIGINT UNSIGNED NOT NULL,
+                    storage_path TEXT NOT NULL, status VARCHAR(32) NOT NULL DEFAULT 'queued',
+                    error_message TEXT, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    UNIQUE KEY uq_knowledge_user_hash (user_id, file_hash),
-                    INDEX idx_knowledge_user_created (user_id, created_at),
-                    CONSTRAINT fk_knowledge_document_user
-                        FOREIGN KEY (user_id) REFERENCES users(id)
-                        ON DELETE CASCADE
+                    UNIQUE KEY uq_document_file_hash (user_id, file_hash),
+                    INDEX idx_document_files_user_status (user_id, status, created_at),
+                    CONSTRAINT fk_document_files_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
             cursor.execute(
-                "SELECT COLUMN_NAME AS column_name, IS_NULLABLE AS is_nullable FROM information_schema.columns WHERE table_schema = %s AND table_name = 'knowledge_documents'",
-                (settings.mysql_database,),
-            )
-            document_columns = {row["column_name"]: row for row in cursor.fetchall()}
-            if document_columns.get("file_data", {}).get("is_nullable") == "NO":
-                cursor.execute("ALTER TABLE knowledge_documents MODIFY file_data LONGBLOB NULL")
-            for column, definition in {
-                "file_type": "VARCHAR(20)",
-                "records_created": "INT UNSIGNED NOT NULL DEFAULT 0",
-                "vectors_created": "INT UNSIGNED NOT NULL DEFAULT 0",
-            }.items():
-                if column not in document_columns:
-                    cursor.execute(f"ALTER TABLE knowledge_documents ADD COLUMN `{column}` {definition}")
-            cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS knowledge_records (
+                CREATE TABLE IF NOT EXISTS document_sheets (
                     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                    document_id CHAR(32) NOT NULL,
-                    user_id BIGINT UNSIGNED NOT NULL,
-                    record_number INT UNSIGNED NOT NULL,
-                    record_text MEDIUMTEXT NOT NULL,
-                    metadata_json JSON NOT NULL,
-                    record_id VARCHAR(150),
-                    structured_data JSON,
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE KEY uq_knowledge_document_record (document_id, record_number),
-                    INDEX idx_knowledge_records_user (user_id),
-                    INDEX idx_knowledge_records_document (document_id),
-                    CONSTRAINT fk_knowledge_record_document
-                        FOREIGN KEY (document_id) REFERENCES knowledge_documents(id)
-                        ON DELETE CASCADE,
-                    CONSTRAINT fk_knowledge_record_user
-                        FOREIGN KEY (user_id) REFERENCES users(id)
-                        ON DELETE CASCADE
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-                """
-            )
-            cursor.execute(
-                "SELECT COLUMN_NAME AS column_name FROM information_schema.columns WHERE table_schema = %s AND table_name = 'knowledge_records'",
-                (settings.mysql_database,),
-            )
-            record_columns = {row["column_name"] for row in cursor.fetchall()}
-            if "record_id" not in record_columns:
-                cursor.execute("ALTER TABLE knowledge_records ADD COLUMN record_id VARCHAR(150)")
-                cursor.execute("ALTER TABLE knowledge_records ADD UNIQUE KEY uq_knowledge_record_id (record_id)")
-            if "structured_data" not in record_columns:
-                cursor.execute("ALTER TABLE knowledge_records ADD COLUMN structured_data JSON")
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS knowledge_conversations (
-                    id VARCHAR(80) NOT NULL PRIMARY KEY,
-                    user_id BIGINT UNSIGNED NOT NULL,
-                    title VARCHAR(255) NOT NULL DEFAULT 'New conversation',
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    INDEX idx_knowledge_conversations_user_updated (user_id, updated_at),
-                    CONSTRAINT fk_knowledge_conversation_user
-                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                    file_id CHAR(32) NOT NULL, name VARCHAR(255) NOT NULL, position INT NOT NULL,
+                    headers_json JSON, row_count INT NOT NULL DEFAULT 0,
+                    UNIQUE KEY uq_document_sheet (file_id, position), INDEX idx_document_sheets_file (file_id),
+                    CONSTRAINT fk_document_sheets_file FOREIGN KEY (file_id) REFERENCES document_files(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
             cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS knowledge_chat_messages (
-                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                    user_id BIGINT UNSIGNED NOT NULL,
-                    conversation_id VARCHAR(80) NOT NULL DEFAULT 'shared',
-                    role VARCHAR(16) NOT NULL,
-                    content MEDIUMTEXT NOT NULL,
-                    sources_json JSON,
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_knowledge_chat_user_conversation (user_id, conversation_id, id),
-                    CONSTRAINT fk_knowledge_chat_user
-                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                CREATE TABLE IF NOT EXISTS document_records (
+                    id CHAR(40) NOT NULL PRIMARY KEY, file_id CHAR(32) NOT NULL,
+                    sheet_id BIGINT UNSIGNED NULL, record_number INT NOT NULL, record_json JSON NOT NULL,
+                    searchable_text MEDIUMTEXT NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_document_record (file_id, sheet_id, record_number),
+                    INDEX idx_document_records_file (file_id), INDEX idx_document_records_sheet (sheet_id),
+                    FULLTEXT KEY ft_document_records_text (searchable_text),
+                    CONSTRAINT fk_document_records_file FOREIGN KEY (file_id) REFERENCES document_files(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_document_records_sheet FOREIGN KEY (sheet_id) REFERENCES document_sheets(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
             cursor.execute(
-                """SELECT user_id FROM knowledge_conversations
-                   WHERE id = 'shared' AND title = 'Shared conversation'"""
+                """
+                CREATE TABLE IF NOT EXISTS document_processing_jobs (
+                    id CHAR(32) NOT NULL PRIMARY KEY, file_id CHAR(32) NOT NULL, status VARCHAR(32) NOT NULL,
+                    stage VARCHAR(64) NOT NULL, records_created INT NOT NULL DEFAULT 0, error_message TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_document_jobs_file (file_id, created_at),
+                    CONSTRAINT fk_document_jobs_file FOREIGN KEY (file_id) REFERENCES document_files(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
             )
-            for conversation in cursor.fetchall():
-                cursor.execute(
-                    """SELECT content FROM knowledge_chat_messages
-                       WHERE user_id = %s AND conversation_id = 'shared' AND role = 'user'
-                       ORDER BY id ASC LIMIT 1""",
-                    (conversation["user_id"],),
-                )
-                first_question = cursor.fetchone()
-                cursor.execute(
-                    "UPDATE knowledge_conversations SET title = %s WHERE id = 'shared' AND user_id = %s",
-                    ((first_question or {}).get("content", "Conversation history")[:255], conversation["user_id"]),
-                )
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS csv_exports (
@@ -813,431 +746,6 @@ def get_user_by_email(email: str) -> dict[str, Any] | None:
             cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
             return cursor.fetchone()
 
-
-def get_knowledge_document_by_hash(user_id: int, file_hash: str) -> dict[str, Any] | None:
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """SELECT id, filename, file_size, file_hash, chunk_count, status, created_at
-                   FROM knowledge_documents WHERE user_id = %s AND file_hash = %s""",
-                (user_id, file_hash),
-            )
-            return cursor.fetchone()
-
-
-def create_knowledge_document(
-    document_id: str,
-    user_id: int,
-    filename: str,
-    content_type: str,
-    file_hash: str,
-    file_size: int,
-    file_type: str,
-) -> None:
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """INSERT INTO knowledge_documents
-                   (id, user_id, filename, content_type, file_size, file_hash, file_type, status)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, 'processing')""",
-                (document_id, user_id, filename, content_type, file_size, file_hash, file_type),
-            )
-
-
-def complete_knowledge_document(document_id: str, user_id: int, record_count: int, vector_count: int) -> None:
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """UPDATE knowledge_documents SET status = 'completed', chunk_count = %s,
-                   records_created = %s, vectors_created = %s, error_message = NULL
-                   WHERE id = %s AND user_id = %s""",
-                (vector_count, record_count, vector_count, document_id, user_id),
-            )
-
-
-def replace_knowledge_records(document_id: str, user_id: int, records: list[dict[str, Any]]) -> None:
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute("DELETE FROM knowledge_records WHERE document_id = %s AND user_id = %s", (document_id, user_id))
-            if records:
-                cursor.executemany(
-                    """INSERT INTO knowledge_records
-                       (document_id, user_id, record_number, record_text, metadata_json, record_id, structured_data)
-                       VALUES (%s, %s, %s, %s, CAST(%s AS JSON), %s, CAST(%s AS JSON))""",
-                    [
-                        (document_id, user_id, index, record["content"], json.dumps(record.get("metadata") or {}),
-                         record["record_id"], json.dumps(record.get("structured_data") or {}))
-                        for index, record in enumerate(records, start=1)
-                    ],
-                )
-
-
-def count_knowledge_records(document_id: str, user_id: int) -> int:
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT COUNT(*) AS record_count FROM knowledge_records WHERE document_id = %s AND user_id = %s",
-                (document_id, user_id),
-            )
-            return int((cursor.fetchone() or {}).get("record_count") or 0)
-
-
-def list_knowledge_records(
-    user_id: int,
-    document_ids: list[str] | None = None,
-    limit: int | None = None,
-) -> list[dict[str, Any]]:
-    conditions = ["r.user_id = %s"]
-    values: list[Any] = [user_id]
-    if document_ids:
-        placeholders = ", ".join(["%s"] * len(document_ids))
-        conditions.append(f"r.document_id IN ({placeholders})")
-        values.extend(document_ids)
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            if limit is not None:
-                cursor.execute(
-                    f"""WITH ranked_records AS (
-                            SELECT r.id, r.record_id, r.document_id, d.filename,
-                                   d.created_at AS document_created_at,
-                                   r.record_number, r.record_text,
-                                   r.metadata_json AS metadata, r.structured_data,
-                                   ROW_NUMBER() OVER (
-                                       PARTITION BY r.document_id,
-                                           COALESCE(JSON_UNQUOTE(JSON_EXTRACT(r.metadata_json, '$.sheet_name')), '')
-                                       ORDER BY r.record_number
-                                   ) AS sheet_row_number
-                            FROM knowledge_records r
-                            JOIN knowledge_documents d ON d.id = r.document_id
-                            WHERE {' AND '.join(conditions)}
-                        )
-                        SELECT id, record_id, document_id, filename, record_number,
-                               record_text, metadata, structured_data, sheet_row_number
-                        FROM ranked_records
-                        WHERE sheet_row_number <= %s
-                        ORDER BY document_created_at DESC, document_id,
-                                 JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.sheet_name')),
-                                 record_number""",
-                    (*values, limit),
-                )
-            else:
-                cursor.execute(
-                    f"""SELECT r.id, r.record_id, r.document_id, d.filename, r.record_number, r.record_text,
-                           r.metadata_json AS metadata, r.structured_data
-                    FROM knowledge_records r
-                    JOIN knowledge_documents d ON d.id = r.document_id
-                    WHERE {' AND '.join(conditions)}
-                    ORDER BY d.created_at DESC, r.record_number ASC""",
-                    values,
-                )
-            rows = list(cursor.fetchall())
-    for row in rows:
-        if isinstance(row.get("metadata"), str):
-            row["metadata"] = json.loads(row["metadata"])
-        if isinstance(row.get("structured_data"), str):
-            row["structured_data"] = json.loads(row["structured_data"])
-        row.pop("sheet_row_number", None)
-        stored_data = row.pop("structured_data", None) or {}
-        # New records retain both the lossless extraction and cleaned JSON.
-        # The records table is a source preview, so it must show the original
-        # headers and cell values exactly. Cleaned fields remain available to
-        # the knowledge-answering pipeline but must not alter this view.
-        if isinstance(stored_data, dict) and (
-            "cleaned_fields" in stored_data or "source_fields" in stored_data
-        ):
-            cleaned_fields = stored_data.get("cleaned_fields")
-            source_fields = stored_data.get("source_fields")
-            fields = source_fields if isinstance(source_fields, dict) and source_fields else cleaned_fields
-            fields = fields if isinstance(fields, dict) else {}
-        else:
-            # Compatibility for records indexed before the flexible JSON format.
-            fields = stored_data if isinstance(stored_data, dict) else {}
-        text = str(row.pop("record_text", ""))
-        if not fields:
-            fields = {"Content": text}
-        row["fields"] = fields
-    return rows
-
-
-def get_knowledge_records_by_ids(user_id: int, record_ids: list[str]) -> dict[str, dict[str, Any]]:
-    """Fetch normalized JSON only inside the authenticated tenant boundary."""
-    if not record_ids:
-        return {}
-    placeholders = ", ".join(["%s"] * len(record_ids))
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"""SELECT record_id, record_text AS content, structured_data,
-                           metadata_json AS metadata
-                    FROM knowledge_records
-                    WHERE user_id = %s AND record_id IN ({placeholders})""",
-                (user_id, *record_ids),
-            )
-            rows = cursor.fetchall()
-    result: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        for key in ("structured_data", "metadata"):
-            if isinstance(row.get(key), str):
-                row[key] = json.loads(row[key])
-        result[row["record_id"]] = row
-    return result
-
-
-def list_knowledge_structured_records(user_id: int, document_ids: list[str] | None = None) -> list[dict[str, Any]]:
-    """Return canonical JSON records for exact, tenant-scoped knowledge queries."""
-    conditions = ["r.user_id = %s"]
-    values: list[Any] = [user_id]
-    if document_ids:
-        placeholders = ", ".join(["%s"] * len(document_ids))
-        conditions.append(f"r.document_id IN ({placeholders})")
-        values.extend(document_ids)
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"""SELECT r.record_id, r.document_id, r.structured_data, r.metadata_json AS metadata
-                    FROM knowledge_records r
-                    WHERE {' AND '.join(conditions)}
-                    ORDER BY r.id""",
-                values,
-            )
-            rows = cursor.fetchall()
-    for row in rows:
-        for key in ("structured_data", "metadata"):
-            if isinstance(row.get(key), str):
-                row[key] = json.loads(row[key])
-    return rows
-
-
-def search_knowledge_structured_records(
-    user_id: int,
-    terms: list[str],
-    document_ids: list[str] | None = None,
-    limit: int = 5000,
-) -> list[dict[str, Any]]:
-    """Use MySQL to narrow exact-value candidates without transferring every row."""
-    conditions = ["r.user_id = %s"]
-    values: list[Any] = [user_id]
-    if document_ids:
-        placeholders = ", ".join(["%s"] * len(document_ids))
-        conditions.append(f"r.document_id IN ({placeholders})")
-        values.extend(document_ids)
-    for term in terms:
-        conditions.append("LOWER(CAST(r.structured_data AS CHAR)) LIKE %s")
-        values.append(f"%{term.lower()}%")
-    values.append(limit)
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"""SELECT r.record_id, r.document_id, r.structured_data,
-                           r.metadata_json AS metadata
-                    FROM knowledge_records r
-                    WHERE {' AND '.join(conditions)}
-                    ORDER BY r.id LIMIT %s""",
-                values,
-            )
-            rows = list(cursor.fetchall())
-    for row in rows:
-        for key in ("structured_data", "metadata"):
-            if isinstance(row.get(key), str):
-                row[key] = json.loads(row[key])
-    return rows
-
-
-def count_knowledge_records_for_user(user_id: int, document_ids: list[str] | None = None) -> int:
-    conditions = ["user_id = %s"]
-    values: list[Any] = [user_id]
-    if document_ids:
-        placeholders = ", ".join(["%s"] * len(document_ids))
-        conditions.append(f"document_id IN ({placeholders})")
-        values.extend(document_ids)
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"SELECT COUNT(*) AS total FROM knowledge_records WHERE {' AND '.join(conditions)}",
-                values,
-            )
-            return int((cursor.fetchone() or {}).get("total") or 0)
-
-
-def save_knowledge_chat_message(
-    user_id: int, conversation_id: str, role: str, content: str, sources: list[dict[str, Any]] | None = None
-) -> None:
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """INSERT IGNORE INTO knowledge_conversations (id, user_id, title)
-                   VALUES (%s, %s, %s)""",
-                (conversation_id, user_id, "Shared conversation" if conversation_id == "shared" else "New conversation"),
-            )
-            cursor.execute(
-                """INSERT INTO knowledge_chat_messages (user_id, conversation_id, role, content, sources_json)
-                   VALUES (%s, %s, %s, %s, CAST(%s AS JSON))""",
-                (user_id, conversation_id, role, content, json.dumps(sources or [])),
-            )
-            if role == "user":
-                cursor.execute(
-                    """UPDATE knowledge_conversations
-                       SET title = CASE WHEN title = 'New conversation' THEN %s ELSE title END,
-                           updated_at = CURRENT_TIMESTAMP
-                       WHERE id = %s AND user_id = %s""",
-                    (content.strip()[:255] or "New conversation", conversation_id, user_id),
-                )
-            else:
-                cursor.execute(
-                    "UPDATE knowledge_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = %s AND user_id = %s",
-                    (conversation_id, user_id),
-                )
-
-
-def list_knowledge_chat_messages(user_id: int, conversation_id: str, limit: int = 100) -> list[dict[str, Any]]:
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """SELECT id, role, content, sources_json AS sources, created_at
-                   FROM knowledge_chat_messages
-                   WHERE user_id = %s AND conversation_id = %s
-                   ORDER BY id DESC LIMIT %s""",
-                (user_id, conversation_id, limit),
-            )
-            rows = list(cursor.fetchall())
-    rows.reverse()
-    for row in rows:
-        if isinstance(row.get("sources"), str):
-            row["sources"] = json.loads(row["sources"])
-        if row.get("created_at"):
-            row["created_at"] = row["created_at"].isoformat()
-    return rows
-
-
-def search_knowledge_chat_messages(user_id: int, conversation_id: str, query: str, limit: int = 20) -> list[dict[str, Any]]:
-    term = query.strip()
-    if not term:
-        return []
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """SELECT id, role, content, created_at
-                   FROM knowledge_chat_messages
-                   WHERE user_id = %s AND conversation_id = %s AND content LIKE %s
-                   ORDER BY id DESC LIMIT %s""",
-                (user_id, conversation_id, f"%{term}%", limit),
-            )
-            rows = list(cursor.fetchall())
-    for row in rows:
-        if row.get("created_at"):
-            row["created_at"] = row["created_at"].isoformat()
-    return rows
-
-
-def delete_knowledge_chat_messages(user_id: int, conversation_id: str) -> int:
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "DELETE FROM knowledge_chat_messages WHERE user_id = %s AND conversation_id = %s",
-                (user_id, conversation_id),
-            )
-            return cursor.rowcount
-
-
-def list_knowledge_conversations(user_id: int) -> list[dict[str, Any]]:
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """SELECT c.id, c.title, c.created_at, c.updated_at, COUNT(m.id) AS message_count
-                   FROM knowledge_conversations c
-                   LEFT JOIN knowledge_chat_messages m ON m.user_id = c.user_id AND m.conversation_id = c.id
-                   WHERE c.user_id = %s
-                   GROUP BY c.id, c.title, c.created_at, c.updated_at
-                   ORDER BY c.updated_at DESC, c.id DESC""",
-                (user_id,),
-            )
-            rows = list(cursor.fetchall())
-    for row in rows:
-        for key in ("created_at", "updated_at"):
-            if row.get(key):
-                row[key] = row[key].isoformat()
-    return rows
-
-
-def create_knowledge_conversation(user_id: int) -> dict[str, Any]:
-    conversation_id = uuid.uuid4().hex
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO knowledge_conversations (id, user_id, title) VALUES (%s, %s, 'New conversation')",
-                (conversation_id, user_id),
-            )
-            cursor.execute(
-                "SELECT id, title, created_at, updated_at, 0 AS message_count FROM knowledge_conversations WHERE id = %s AND user_id = %s",
-                (conversation_id, user_id),
-            )
-            row = cursor.fetchone() or {}
-    for key in ("created_at", "updated_at"):
-        if row.get(key):
-            row[key] = row[key].isoformat()
-    return row
-
-
-def delete_knowledge_conversation(user_id: int, conversation_id: str) -> bool:
-    if conversation_id == "shared":
-        return False
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "DELETE FROM knowledge_conversations WHERE id = %s AND user_id = %s",
-                (conversation_id, user_id),
-            )
-            if not cursor.rowcount:
-                return False
-            cursor.execute(
-                "DELETE FROM knowledge_chat_messages WHERE user_id = %s AND conversation_id = %s",
-                (user_id, conversation_id),
-            )
-    return True
-
-
-def get_knowledge_documents_with_data(user_id: int) -> list[dict[str, Any]]:
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """SELECT id, filename, content_type, file_data
-                   FROM knowledge_documents WHERE user_id = %s AND status IN ('ready', 'completed')""",
-                (user_id,),
-            )
-            return list(cursor.fetchall())
-
-
-def fail_knowledge_document(document_id: str, user_id: int, error: str) -> None:
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """UPDATE knowledge_documents SET status = 'failed', error_message = %s
-                   WHERE id = %s AND user_id = %s""",
-                (error[:2000], document_id, user_id),
-            )
-
-
-def list_knowledge_documents(user_id: int) -> list[dict[str, Any]]:
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """SELECT id, filename, content_type, file_size, file_hash, chunk_count AS chunks,
-                          status, error_message, created_at AS uploaded_at
-                   FROM knowledge_documents WHERE user_id = %s
-                   ORDER BY created_at DESC""",
-                (user_id,),
-            )
-            return list(cursor.fetchall())
-
-
-def delete_knowledge_document_record(document_id: str, user_id: int) -> bool:
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "DELETE FROM knowledge_documents WHERE id = %s AND user_id = %s",
-                (document_id, user_id),
-            )
-            return cursor.rowcount > 0
 
 
 def create_session(user_id: int, token: str) -> None:
