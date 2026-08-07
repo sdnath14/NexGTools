@@ -44,6 +44,10 @@ from .database import (
     list_lead_search_history,
     list_outreach_contacts,
     list_outreach_messages,
+    save_csv_export,
+    save_lead_search,
+    save_website_scrape,
+    save_outreach_contacts,
     verify_admin_password,
 )
 from .scraper import CrawlOptions, EMAIL_RE, PHONE_RE, scrape_website
@@ -1828,33 +1832,13 @@ def search_leads(payload: LeadSearchRequest, authorization: str | None = Header(
 
     leads.sort(key=lambda lead: lead["distance_km"] if lead["distance_km"] is not None else 999999)
 
-    # Google Places does not return company email addresses. Enrich every result
-    # that has a website, in parallel, so CSV and outreach records contain the
-    # available public email and phone details.
-    def enrich_lead(lead: dict[str, Any]) -> dict[str, Any]:
+    # Return Google Places results immediately. Crawling every company website
+    # here delayed the whole search by minutes when many leads were found.
+    # Individual website scraping is still available after selecting a lead.
+    for lead in leads:
         lead["email"] = str(lead.get("email") or "")
         lead["emails"] = list(lead.get("emails") or [])
         lead["phones"] = [lead["phone"]] if lead.get("phone") else []
-        if not lead.get("website"):
-            return lead
-        try:
-            scrape = scrape_website(lead["website"], CrawlOptions(max_pages=3, timeout=8))
-            lead["emails"] = scrape.get("emails") or []
-            lead["email"] = lead["emails"][0] if lead["emails"] else ""
-            lead["phones"] = list(dict.fromkeys(
-                ([lead["phone"]] if lead.get("phone") else []) + (scrape.get("phones") or [])
-            ))
-            lead["contact_scrape"] = {
-                "start_url": scrape.get("start_url"),
-                "emails": lead["emails"],
-                "phones": lead["phones"],
-            }
-        except Exception:
-            pass
-        return lead
-
-    with ThreadPoolExecutor(max_workers=min(8, max(1, len(leads)))) as executor:
-        leads = list(executor.map(enrich_lead, leads))
 
     user = get_user_by_token(_bearer_token(authorization)) if authorization else None
     if user:
@@ -2020,20 +2004,14 @@ def lead_ai_chat(payload: LeadAiChatRequest) -> dict[str, Any]:
     ]
 
     answer = _chat_completion(messages)
-    message_id = save_lead_ai_message(
-        question,
-        answer,
-        payload.lead,
-        payload.scrape,
-        settings.openai_model,
-    )
-
-    return {
+    return{
         "answer": answer,
-        "model": settings.openai_model,
-        "database_message_id": message_id,
+    "model": settings.openai_model,
     }
 
+
+
+    
 
 @app.post("/api/business-ai/chat")
 def business_ai_chat(payload: BusinessAiChatRequest) -> dict[str, Any]:
@@ -2100,18 +2078,11 @@ def business_ai_chat(payload: BusinessAiChatRequest) -> dict[str, Any]:
         *recent_history,
         {"role": "user", "content": question},
     ]
-
+    
     answer = _chat_completion(messages)
-    message_id = save_lead_ai_message(
-        question,
-        answer,
-        payload.business,
-        payload.search_context,
-        settings.openai_model,
-    )
 
     return {
         "answer": answer,
         "model": settings.openai_model,
-        "database_message_id": message_id,
-    }
+    }  
+
