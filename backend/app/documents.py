@@ -14,15 +14,120 @@ from pypdf import PdfReader
 
 from .database import db_connection
 
-SUPPORTED_EXTENSIONS = {".csv", ".xls", ".xlsx", ".pdf", ".docx", ".txt", ".md"}
+SUPPORTED_EXTENSIONS = {".xls", ".xlsx"}
+
+TEMPLATE_COLUMNS = (
+    "GSTIN", "LEGAL NAME", "Pincode", "Trade Name", "Authority", "CIRCLE",
+    "CHARGE", "STATUS", "Regn. Dt.", "BUSINESS_CONST", "Mobile No.",
+    "E-Mail", "Address", "Location",
+)
+GSTIN_PATTERN = re.compile(r"^[A-Z\d]{15}$")
+EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
 def validate_upload(filename: str) -> tuple[str, str]:
     safe_name = Path(filename).name.strip() or "document"
     extension = Path(safe_name).suffix.lower()
     if extension not in SUPPORTED_EXTENSIONS:
-        raise ValueError("Supported files: CSV, XLS, XLSX, PDF, DOCX, TXT and Markdown.")
+        raise ValueError("Supported files: XLS and XLSX.")
     return safe_name, extension
+
+
+def _is_empty(value: Any) -> bool:
+    return value is None or (isinstance(value, float) and pd.isna(value)) or (isinstance(value, str) and not value.strip())
+
+
+def _digits(value: Any) -> str:
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return re.sub(r"\D", "", str(value))
+
+
+def validate_workbook(path: Path, extension: str) -> dict[str, int]:
+    """Validate the approved upload schema before it is stored or indexed."""
+    sheets = pd.read_excel(path, sheet_name=None, dtype=object)
+    diagnostics: list[str] = []
+    rows_checked = 0
+
+    if not sheets:
+        raise ValueError("The workbook does not contain a worksheet.")
+
+    for sheet_name, frame in sheets.items():
+        headers = [str(column).strip() for column in frame.columns]
+        missing = [column for column in TEMPLATE_COLUMNS if column not in headers]
+        unexpected = [column for column in headers if column not in TEMPLATE_COLUMNS]
+        if missing or unexpected:
+            details = []
+            if missing:
+                details.append(f"missing columns: {', '.join(missing)}")
+            if unexpected:
+                details.append(f"unexpected columns: {', '.join(unexpected)}")
+            diagnostics.append(f"{sheet_name}: {'; '.join(details)}")
+            continue
+
+        for row_number, (_, row) in enumerate(frame.iterrows(), start=2):
+            values = {column: row[column] for column in TEMPLATE_COLUMNS}
+            if all(_is_empty(value) for value in values.values()):
+                continue
+            rows_checked += 1
+
+    if diagnostics:
+        suffix = " (showing the first 20 issues)" if len(diagnostics) >= 20 else ""
+        raise ValueError("Upload diagnostics failed" + suffix + ": " + " ".join(diagnostics))
+    if rows_checked == 0:
+        raise ValueError("Upload diagnostics failed: the workbook has no data rows.")
+    return {"sheets_checked": len(sheets), "rows_checked": rows_checked}
+
+
+def run_diagnostics(user_id: int, file_id: str) -> dict[str, Any]:
+    """Check an uploaded workbook for values that do not match their column type."""
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT s.name, r.record_number, r.record_json FROM document_records r "
+                "JOIN document_sheets s ON s.id=r.sheet_id "
+                "WHERE r.file_id=%s AND EXISTS (SELECT 1 FROM document_files WHERE id=%s AND user_id=%s) "
+                "ORDER BY s.position, r.record_number",
+                (file_id, file_id, user_id),
+            )
+            records = list(cursor.fetchall())
+            if not records:
+                cursor.execute("SELECT id, status FROM document_files WHERE id=%s AND user_id=%s", (file_id, user_id))
+                file_row = cursor.fetchone()
+                if not file_row:
+                    raise ValueError("Document not found.")
+                if file_row["status"] != "completed":
+                    raise ValueError("Diagnostics are available after processing completes.")
+
+    alphabet_only = ("LEGAL NAME", "Authority", "CIRCLE", "CHARGE", "STATUS", "BUSINESS_CONST", "Location")
+    issues: list[dict[str, Any]] = []
+    for record in records:
+        values = record["record_json"]
+        if isinstance(values, str):
+            values = json.loads(values)
+        def report(column: str, message: str) -> None:
+            if len(issues) < 100:
+                issues.append({"sheet": record["name"], "row": record["record_number"], "column": column, "message": message})
+
+        for column in alphabet_only:
+            value = values.get(column)
+            if not _is_empty(value) and any(char.isdigit() for char in str(value)):
+                report(column, "should contain letters only; a number was found")
+        for column in ("Pincode", "Mobile No."):
+            value = values.get(column)
+            if not _is_empty(value) and not re.fullmatch(r"[0-9 .()+-]+", str(value).strip()):
+                report(column, "should contain numbers only; a letter or invalid character was found")
+        gstin = values.get("GSTIN")
+        if not _is_empty(gstin) and not GSTIN_PATTERN.fullmatch(str(gstin).strip().upper()):
+            report("GSTIN", "must contain exactly 15 letters or digits")
+        date_value = values.get("Regn. Dt.")
+        if not _is_empty(date_value) and pd.isna(pd.to_datetime(date_value, errors="coerce")):
+            report("Regn. Dt.", "must be a valid date")
+        email = values.get("E-Mail")
+        if not _is_empty(email) and not EMAIL_PATTERN.fullmatch(str(email).strip()):
+            report("E-Mail", "must be a valid email address")
+
+    return {"rows_checked": len(records), "issues": issues, "has_more": len(issues) >= 100}
 
 
 def _value(value: Any) -> Any:
@@ -140,6 +245,32 @@ def file_contents(user_id: int, file_id: str) -> list[dict[str, Any]]:
                 for record in sheet["records"]:
                     if isinstance(record["record_json"], str): record["record_json"] = json.loads(record["record_json"])
     return sheets
+
+
+def update_cell(user_id: int, file_id: str, sheet_id: int, record_number: int, column: str, value: Any) -> None:
+    """Update or clear one imported workbook cell and refresh its search text."""
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT r.id, r.record_json FROM document_records r JOIN document_sheets s ON s.id=r.sheet_id "
+                "JOIN document_files f ON f.id=r.file_id WHERE r.file_id=%s AND r.sheet_id=%s "
+                "AND r.record_number=%s AND f.user_id=%s",
+                (file_id, sheet_id, record_number, user_id),
+            )
+            record = cursor.fetchone()
+            if not record:
+                raise ValueError("Workbook cell not found.")
+            record_json = record["record_json"]
+            if isinstance(record_json, str):
+                record_json = json.loads(record_json)
+            if column not in record_json:
+                raise ValueError("Workbook column not found.")
+            record_json[column] = value if value not in (None, "") else None
+            searchable_text = " | ".join(f"{key}: {item}" for key, item in record_json.items() if item not in (None, ""))
+            cursor.execute(
+                "UPDATE document_records SET record_json=CAST(%s AS JSON), searchable_text=%s WHERE id=%s",
+                (json.dumps(record_json, default=str), searchable_text, record["id"]),
+            )
 
 
 def file_download(user_id: int, file_id: str) -> tuple[Path, str, str]:

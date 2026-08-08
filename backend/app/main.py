@@ -5,6 +5,7 @@ from urllib.request import Request, urlopen
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from email.message import EmailMessage
 from email.utils import formataddr
+from io import BytesIO
 import json
 import math
 import re
@@ -16,7 +17,8 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 from fastapi import BackgroundTasks, FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from openpyxl import Workbook
 from pydantic import BaseModel, Field
 import requests
 
@@ -51,7 +53,7 @@ from .database import (
     verify_admin_password,
 )
 from .scraper import CrawlOptions, EMAIL_RE, PHONE_RE, scrape_website
-from .documents import answer as answer_documents, create_file, delete_file, file_contents, file_download, ingest, list_files, search as search_documents, validate_upload
+from .documents import answer as answer_documents, create_file, delete_file, file_contents, file_download, ingest, list_files, run_diagnostics, search as search_documents, update_cell, validate_upload, validate_workbook
 
 
 app = FastAPI(title="NexGTools API", version="0.1.0")
@@ -137,6 +139,13 @@ class OutreachSendRequest(BaseModel):
 class ChatMessage(BaseModel):
     role: str
     content: str
+
+
+class DocumentCellUpdate(BaseModel):
+    sheet_id: int
+    record_number: int
+    column: str
+    value: str | None = None
 
 
 class LeadAiChatRequest(BaseModel):
@@ -1364,6 +1373,34 @@ def _process_document(file_id: str, job_id: str) -> None:
                 cursor.execute("UPDATE document_processing_jobs SET status='failed', error_message=%s WHERE id=%s", (str(exc)[:2000], job_id))
 
 
+@app.get("/api/documents/template")
+def download_document_template(authorization: str | None = Header(default=None)) -> StreamingResponse:
+    _require_user(authorization)
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Data Upload"
+    worksheet.append([
+        "GSTIN", "LEGAL NAME", "Pincode", "Trade Name", "Authority", "CIRCLE",
+        "CHARGE", "STATUS", "Regn. Dt.", "BUSINESS_CONST", "Mobile No.",
+        "E-Mail", "Address", "Location",
+    ])
+    for cell in worksheet[1]:
+        cell.font = cell.font.copy(bold=True)
+    worksheet.freeze_panes = "A2"
+    for column in worksheet.columns:
+        letter = column[0].column_letter
+        worksheet.column_dimensions[letter].width = max(14, len(str(column[0].value)) + 2)
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="data-upload-template.xlsx"'},
+    )
+
+
 @app.get("/api/documents")
 def get_documents(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     user = _require_user(authorization)
@@ -1377,7 +1414,7 @@ async def upload_document(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     user = _require_user(authorization)
-    filename, _ = validate_upload(file.filename or "document")
+    filename, extension = validate_upload(file.filename or "document")
     storage = Path(settings.document_storage_directory) / str(user["id"])
     storage.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkstemp(prefix="upload-", suffix=Path(filename).suffix, dir=storage)[1])
@@ -1389,9 +1426,10 @@ async def upload_document(
                 if total > settings.document_max_upload_mb * 1024 * 1024:
                     raise ValueError(f"File exceeds the {settings.document_max_upload_mb} MB limit.")
                 output.write(chunk)
+        diagnostics = validate_workbook(temporary, extension)
         created = create_file(user["id"], filename, file.content_type or "", temporary)
         background_tasks.add_task(_process_document, created["file_id"], created["job_id"])
-        return {"file": created, "status": "queued"}
+        return {"file": created, "status": "queued", "diagnostics": diagnostics}
     except ValueError as exc:
         temporary.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1414,6 +1452,25 @@ def get_document_contents(file_id: str, authorization: str | None = Header(defau
     user = _require_user(authorization)
     try:
         return {"sheets": file_contents(user["id"], file_id)}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/documents/{file_id}/diagnostics")
+def get_document_diagnostics(file_id: str, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    try:
+        return run_diagnostics(user["id"], file_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/api/documents/{file_id}/cell")
+def update_document_cell(file_id: str, payload: DocumentCellUpdate, authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    user = _require_user(authorization)
+    try:
+        update_cell(user["id"], file_id, payload.sheet_id, payload.record_number, payload.column, payload.value)
+        return {"updated": True}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -2085,4 +2142,3 @@ def business_ai_chat(payload: BusinessAiChatRequest) -> dict[str, Any]:
         "answer": answer,
         "model": settings.openai_model,
     }  
-
