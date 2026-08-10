@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
 import Dashboard from './pages/Dashboard';
 import LeadSearch from './pages/LeadSearch';
+import SearchHistory from './pages/SearchHistory';
 import BusinessSearch from './pages/BusinessSearch';
 import CsvHistory from './pages/CsvHistory';
 import AdminPage from './pages/AdminPage';
@@ -96,22 +97,25 @@ function App() {
     return <AuthPage onAuthenticated={setUser} />;
   }
 
+  const hasPermission = (permission) => user.is_nexg_admin || user.permissions?.includes(permission);
+
   return (
     <Router>
       <div className={`app-layout ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''}`}>
-        <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} isAdmin={isAdmin} />
+        <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} permissions={user.permissions || []} isNexgAdmin={user.is_nexg_admin} />
         <div className="app-main">
           <Topbar user={user} onLogout={logout} />
           <main className="app-content">
             <Routes>
               <Route path="/" element={<Dashboard user={user} />} />
-              <Route path="/lead-search" element={<LeadSearch />} />
-              <Route path="/lead-search/csv" element={<CsvHistory type="lead_search" />} />
-              <Route path="/business-search" element={<BusinessSearch />} />
-              <Route path="/business-search/csv" element={<CsvHistory type="business_search" />} />
-              <Route path="/outreach" element={<Outreach />} />
-              <Route path="/data-library" element={<DataLibrary />} />
-              <Route path="/settings" element={<SettingsPage appearance={appearance} onAppearanceChange={updateAppearance} />} />
+              <Route path="/lead-search" element={hasPermission('lead_search') ? <LeadSearch /> : <Navigate to="/" replace />} />
+              <Route path="/lead-search/history" element={hasPermission('lead_search_history') ? <SearchHistory /> : <Navigate to="/" replace />} />
+              <Route path="/lead-search/csv" element={hasPermission('exports') ? <CsvHistory type="lead_search" /> : <Navigate to="/" replace />} />
+              <Route path="/business-search" element={hasPermission('business_search') ? <BusinessSearch /> : <Navigate to="/" replace />} />
+              <Route path="/business-search/csv" element={hasPermission('exports') ? <CsvHistory type="business_search" /> : <Navigate to="/" replace />} />
+              <Route path="/outreach" element={hasPermission('outreach') ? <Outreach /> : <Navigate to="/" replace />} />
+              <Route path="/data-library" element={hasPermission('data_library') ? <DataLibrary /> : <Navigate to="/" replace />} />
+              <Route path="/settings" element={hasPermission('settings') ? <SettingsPage appearance={appearance} onAppearanceChange={updateAppearance} /> : <Navigate to="/" replace />} />
               <Route path="/admin" element={<AdminPage onAdminUnlocked={setIsAdmin} />} />
             </Routes>
           </main>

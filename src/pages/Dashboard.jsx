@@ -1,23 +1,35 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Building2,
   Database,
   Loader2,
-  Megaphone,
   MoreVertical,
   Search,
+  Send,
+  Users,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { API_BASE_URL, authHeaders } from '../auth';
 import nexgToolLogo from '../assets/nexgtool-removebg-preview.png';
 import './Dashboard.css';
 
 const SOURCE_COLORS = ['#f97316', '#fb923c', '#fdba74', '#ea580c', '#c2410c', '#9a3412'];
-const quickTools = [
-  { title: 'Lead Search', description: 'Find and discover potential leads across multiple sources.', icon: Search, color: '#f97316', bg: '#fff7ed', link: '/lead-search' },
-  { title: 'Business Search', description: 'Search for businesses and access key company information.', icon: Building2, color: '#ea580c', bg: '#fff7ed', link: '/business-search' },
-  { title: 'Company Outreach', description: 'Manage company contacts and outreach activity.', icon: Megaphone, color: '#f97316', bg: '#fff7ed', link: '/outreach' },
-  { title: 'Data Library', description: 'Upload and query Excel, PDF, Word, CSV and text documents.', icon: Database, color: '#ea580c', bg: '#fff7ed', link: '/data-library' },
+const permissionLabels = {
+  lead_search: 'Lead Search',
+  lead_search_history: 'Lead Search History',
+  business_search: 'Business Search',
+  business_search_history: 'Business Search History',
+  outreach: 'Company Outreach',
+  data_library: 'Data Library',
+  exports: 'CSV History',
+  settings: 'Settings',
+};
+
+const adminTools = [
+  { label: 'Lead Search', description: 'Find business leads', path: '/lead-search', icon: Users, color: '#f97316' },
+  { label: 'Business Search', description: 'Discover businesses', path: '/business-search', icon: Building2, color: '#ea580c' },
+  { label: 'Outreach', description: 'Manage company outreach', path: '/outreach', icon: Send, color: '#fb923c' },
+  { label: 'Data Library', description: 'Search uploaded data', path: '/data-library', icon: Database, color: '#c2410c' },
 ];
 
 const dateValue = (item) => new Date(item.created_at).getTime();
@@ -50,13 +62,26 @@ const Dashboard = ({ user }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const firstName = user?.name?.split(' ')[0] || 'there';
+  const userPermissions = user?.permissions || [];
+  const grantedTools = userPermissions
+    .filter((permission) => permissionLabels[permission])
+    .map((permission) => permissionLabels[permission]);
 
   useEffect(() => {
     let active = true;
     const loadDashboard = async () => {
       setIsLoading(true);
       setError('');
-      const endpoints = ['/api/search-history', '/api/business-search/history'];
+      const endpoints = [
+        ...(userPermissions.includes('lead_search_history') ? ['/api/search-history'] : []),
+        ...(userPermissions.includes('business_search_history') ? ['/api/business-search/history'] : []),
+      ];
+      if (!endpoints.length) {
+        setLeadHistory([]);
+        setBusinessHistory([]);
+        setIsLoading(false);
+        return;
+      }
       const results = await Promise.allSettled(endpoints.map(async (endpoint) => {
         const response = await fetch(`${API_BASE_URL}${endpoint}`, { headers: authHeaders() });
         const data = await response.json();
@@ -64,8 +89,10 @@ const Dashboard = ({ user }) => {
         return data.history || [];
       }));
       if (!active) return;
-      if (results[0].status === 'fulfilled') setLeadHistory(results[0].value);
-      if (results[1].status === 'fulfilled') setBusinessHistory(results[1].value);
+      const leadResult = results[endpoints.indexOf('/api/search-history')];
+      const businessResult = results[endpoints.indexOf('/api/business-search/history')];
+      if (leadResult?.status === 'fulfilled') setLeadHistory(leadResult.value);
+      if (businessResult?.status === 'fulfilled') setBusinessHistory(businessResult.value);
       if (results.every((result) => result.status === 'rejected')) {
         setError('Live dashboard data could not be loaded. Please refresh to try again.');
       } else if (results.some((result) => result.status === 'rejected')) {
@@ -75,7 +102,7 @@ const Dashboard = ({ user }) => {
     };
     loadDashboard();
     return () => { active = false; };
-  }, []);
+  }, [userPermissions]);
 
   const dashboard = useMemo(() => {
     const all = [
@@ -112,33 +139,36 @@ const Dashboard = ({ user }) => {
         <img className="dash-brand-logo" src={nexgToolLogo} alt="NexG Tools" />
         <div>
           <h1>Welcome back, {firstName}! <span aria-hidden="true">👋</span></h1>
-          <p>Live activity from the last 7 days and all-time totals.</p>
+          <p>{user?.is_nexg_admin ? 'NexG Admin access is active across the entire workspace.' : 'Your workspace access has been verified by an administrator.'}</p>
         </div>
       </div>
 
-      {error && <div className="dash-notice">{error}</div>}
+      {!user?.is_nexg_admin && <section className="dash-panel dash-access-panel">
+        <h2>You have access to</h2>
+        {grantedTools.length ? <div className="dash-access-list">{grantedTools.map((tool) => <span key={tool}>{tool}</span>)}</div>
+          : <p>No tools have been assigned yet. Please contact an administrator.</p>}
+      </section>}
 
-      <section className="dash-panel dash-quick-panel">
-        <h2>Quick Access Tools</h2>
-        <div className="dash-quick-grid">
-          {quickTools.map((tool) => (
-            <button
+      {user?.is_nexg_admin && <section className="dash-admin-launcher" aria-label="NexG Admin tool launcher">
+        <div className="dash-admin-tool-grid">
+          {adminTools.map((tool, index) => {
+            const Icon = tool.icon;
+            return <button
+              key={tool.path}
               type="button"
-              className={`dash-quick-card ${tool.link ? '' : 'is-disabled'}`}
-              key={tool.title}
-              onClick={() => tool.link && navigate(tool.link)}
-              style={{ '--tool-color': tool.color, '--tool-soft': tool.bg }}
+              className="dash-admin-tool-card"
+              style={{ '--tool-color': tool.color, '--tool-order': index }}
+              onClick={() => navigate(tool.path)}
             >
-              <div className="dash-quick-icon" style={{ color: tool.color, background: tool.bg }}>
-                <tool.icon size={28} />
-              </div>
-              <strong>{tool.title}</strong>
-              <p>{tool.description}</p>
-              {!tool.link && <span>Coming soon</span>}
-            </button>
-          ))}
+              <span className="dash-admin-tool-icon"><Icon size={23} /></span>
+              <strong>{tool.label}</strong>
+              <small>{tool.description}</small>
+            </button>;
+          })}
         </div>
-      </section>
+      </section>}
+
+      {error && <div className="dash-notice">{error}</div>}
 
       <div className="dash-bottom-grid">
         <section className="dash-panel dash-recent">

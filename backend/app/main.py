@@ -32,6 +32,7 @@ from .database import (
     create_user,
     database_status,
     delete_admin_record,
+    delete_role,
     delete_session,
     ensure_default_user,
     get_admin_session,
@@ -46,6 +47,10 @@ from .database import (
     list_lead_search_history,
     list_outreach_contacts,
     list_outreach_messages,
+    list_roles,
+    list_users_with_roles,
+    save_role,
+    set_user_role,
     save_csv_export,
     save_lead_search,
     save_website_scrape,
@@ -173,6 +178,15 @@ class RegisterRequest(AuthRequest):
 
 class AdminCreateUserRequest(RegisterRequest):
     pass
+
+
+class RoleRequest(BaseModel):
+    name: str
+    permissions: list[str] = Field(default_factory=list)
+
+
+class UserRoleRequest(BaseModel):
+    role_id: int
 
 
 class CsvExportRequest(BaseModel):
@@ -332,6 +346,13 @@ def _require_admin(authorization: str | None, admin_token: str | None) -> dict[s
     session = get_admin_session(admin_token or "", user["id"])
     if not session:
         raise HTTPException(status_code=403, detail="Admin access required.")
+    return user
+
+
+def _require_permission(authorization: str | None, permission: str) -> dict[str, Any]:
+    user = _require_user(authorization)
+    if permission not in user.get("permissions", []):
+        raise HTTPException(status_code=403, detail=f"You do not have access to {permission.replace('_', ' ')}.")
     return user
 
 
@@ -1375,7 +1396,7 @@ def _process_document(file_id: str, job_id: str) -> None:
 
 @app.get("/api/documents/template")
 def download_document_template(authorization: str | None = Header(default=None)) -> StreamingResponse:
-    _require_user(authorization)
+    _require_permission(authorization, "data_library")
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "Data Upload"
@@ -1403,7 +1424,7 @@ def download_document_template(authorization: str | None = Header(default=None))
 
 @app.get("/api/documents")
 def get_documents(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "data_library")
     return {"files": list_files(user["id"])}
 
 
@@ -1413,7 +1434,7 @@ async def upload_document(
     file: UploadFile = File(...),
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "data_library")
     temporary: Path | None = None
     try:
         filename, extension = validate_upload(file.filename or "document")
@@ -1441,7 +1462,7 @@ async def upload_document(
 
 @app.delete("/api/documents/{file_id}")
 def delete_document(file_id: str, authorization: str | None = Header(default=None)) -> dict[str, bool]:
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "data_library")
     try:
         delete_file(user["id"], file_id)
         return {"deleted": True}
@@ -1451,7 +1472,7 @@ def delete_document(file_id: str, authorization: str | None = Header(default=Non
 
 @app.get("/api/documents/{file_id}/contents")
 def get_document_contents(file_id: str, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "data_library")
     try:
         return {"sheets": file_contents(user["id"], file_id)}
     except ValueError as exc:
@@ -1460,7 +1481,7 @@ def get_document_contents(file_id: str, authorization: str | None = Header(defau
 
 @app.get("/api/documents/{file_id}/diagnostics")
 def get_document_diagnostics(file_id: str, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "data_library")
     try:
         return run_diagnostics(user["id"], file_id)
     except ValueError as exc:
@@ -1469,7 +1490,7 @@ def get_document_diagnostics(file_id: str, authorization: str | None = Header(de
 
 @app.patch("/api/documents/{file_id}/cell")
 def update_document_cell(file_id: str, payload: DocumentCellUpdate, authorization: str | None = Header(default=None)) -> dict[str, bool]:
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "data_library")
     try:
         update_cell(user["id"], file_id, payload.sheet_id, payload.record_number, payload.column, payload.value)
         return {"updated": True}
@@ -1479,7 +1500,7 @@ def update_document_cell(file_id: str, payload: DocumentCellUpdate, authorizatio
 
 @app.get("/api/documents/{file_id}/download")
 def download_document(file_id: str, authorization: str | None = Header(default=None)) -> FileResponse:
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "data_library")
     try:
         path, filename, content_type = file_download(user["id"], file_id)
         return FileResponse(path, media_type=content_type, filename=filename)
@@ -1489,7 +1510,7 @@ def download_document(file_id: str, authorization: str | None = Header(default=N
 
 @app.post("/api/documents/search")
 def keyword_document_search(payload: DocumentQueryRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "data_library")
     question = payload.query.strip()
     if not question:
         raise HTTPException(status_code=400, detail="A query is required.")
@@ -1510,7 +1531,7 @@ def keyword_document_search(payload: DocumentQueryRequest, authorization: str | 
 
 @app.post("/api/documents/ask")
 def ask_documents(payload: DocumentQueryRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "data_library")
     if not payload.query.strip():
         raise HTTPException(status_code=400, detail="A question is required.")
     try:
@@ -1526,7 +1547,7 @@ def create_csv_export(payload: CsvExportRequest, authorization: str | None = Hea
     if not payload.leads:
         raise HTTPException(status_code=400, detail="Select at least one lead to export.")
 
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "exports")
     unique_leads: list[dict[str, Any]] = []
     seen: set[str] = set()
     for lead in payload.leads:
@@ -1549,13 +1570,13 @@ def csv_exports(
     source: str | None = Query(default=None),
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "exports")
     return {"exports": list_csv_exports(user["id"], source)}
 
 
 @app.get("/api/csv-exports/{export_id}")
 def csv_export_detail(export_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "exports")
     export = get_csv_export(export_id, user["id"])
     if not export:
         raise HTTPException(status_code=404, detail="CSV export not found.")
@@ -1564,13 +1585,13 @@ def csv_export_detail(export_id: int, authorization: str | None = Header(default
 
 @app.get("/api/search-history")
 def search_history(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    _require_user(authorization)
+    _require_permission(authorization, "lead_search_history")
     return {"history": list_lead_search_history()}
 
 
 @app.get("/api/search-history/{search_id}")
 def search_history_detail(search_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    _require_user(authorization)
+    _require_permission(authorization, "lead_search_history")
     search = get_lead_search_history(search_id)
     if not search:
         raise HTTPException(status_code=404, detail="Search history record not found.")
@@ -1625,6 +1646,55 @@ def admin_create_user(
     return {"user": create_user(name, email, salt, password_hash)}
 
 
+@app.get("/api/admin/roles")
+def admin_roles(authorization: str | None = Header(default=None), x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_admin(authorization, x_admin_token)
+    return {"roles": list_roles(), "permissions": ["dashboard", "lead_search", "lead_search_history", "business_search", "business_search_history", "outreach", "data_library", "exports", "settings"]}
+
+
+@app.get("/api/admin/users-with-roles")
+def admin_users_with_roles(authorization: str | None = Header(default=None), x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_admin(authorization, x_admin_token)
+    return {"users": list_users_with_roles()}
+
+
+@app.post("/api/admin/roles")
+def admin_create_role(payload: RoleRequest, authorization: str | None = Header(default=None), x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_admin(authorization, x_admin_token)
+    try:
+        return {"role": save_role(payload.name, payload.permissions)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/admin/roles/{role_id}")
+def admin_update_role(role_id: int, payload: RoleRequest, authorization: str | None = Header(default=None), x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_admin(authorization, x_admin_token)
+    try:
+        return {"role": save_role(payload.name, payload.permissions, role_id)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/admin/roles/{role_id}")
+def admin_delete_role(role_id: int, authorization: str | None = Header(default=None), x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_admin(authorization, x_admin_token)
+    try:
+        delete_role(role_id)
+        return {"deleted": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/admin/users/{user_id}/role")
+def admin_assign_role(user_id: int, payload: UserRoleRequest, authorization: str | None = Header(default=None), x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_admin(authorization, x_admin_token)
+    try:
+        return set_user_role(user_id, payload.role_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/admin/tables/{table_name}")
 def admin_records(
     table_name: str,
@@ -1676,13 +1746,13 @@ def social_profiles(payload: SocialProfileRequest) -> dict[str, Any]:
 
 @app.get("/api/business-search/history")
 def business_search_history(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "business_search_history")
     return {"history": list_business_search_history(user["id"])}
 
 
 @app.get("/api/business-search/history/{search_id}")
 def business_search_history_detail(search_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "business_search_history")
     search = get_business_search_history(search_id, user["id"])
     if not search:
         raise HTTPException(status_code=404, detail="Business search history record not found.")
@@ -1691,7 +1761,7 @@ def business_search_history_detail(search_id: int, authorization: str | None = H
 
 @app.post("/api/business-search")
 def business_search(payload: BusinessSearchRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "business_search")
     query = payload.query.strip()
     location = payload.location.strip()
     if not query:
@@ -1788,6 +1858,7 @@ def business_search(payload: BusinessSearchRequest, authorization: str | None = 
 
 @app.post("/api/leads/search")
 def search_leads(payload: LeadSearchRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "lead_search")
     if not settings.google_places_api_key:
         raise HTTPException(status_code=500, detail="GOOGLE_PLACES_API_KEY is not configured.")
 
@@ -1899,14 +1970,12 @@ def search_leads(payload: LeadSearchRequest, authorization: str | None = Header(
         lead["emails"] = list(lead.get("emails") or [])
         lead["phones"] = [lead["phone"]] if lead.get("phone") else []
 
-    user = get_user_by_token(_bearer_token(authorization)) if authorization else None
-    if user:
-        for lead in leads:
-            save_outreach_contacts(
-                user["id"], lead, lead.get("contact_scrape") or {
-                    "emails": lead.get("emails") or [], "phones": lead.get("phones") or []
-                }, text_query,
-            )
+    for lead in leads:
+        save_outreach_contacts(
+            user["id"], lead, lead.get("contact_scrape") or {
+                "emails": lead.get("emails") or [], "phones": lead.get("phones") or []
+            }, text_query,
+        )
 
     response = {
         "query": text_query,
@@ -1922,11 +1991,11 @@ def search_leads(payload: LeadSearchRequest, authorization: str | None = Header(
 
 @app.post("/api/scrape")
 def scrape(payload: WebsiteScrapeRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "lead_search")
     try:
         response = scrape_website(payload.url, CrawlOptions(max_pages=payload.max_pages))
         response["database_scrape_id"] = save_website_scrape(response)
-        if payload.lead and authorization:
-            user = _require_user(authorization)
+        if payload.lead:
             response["outreach_contacts_saved"] = save_outreach_contacts(
                 user["id"], payload.lead, response, payload.search_name.strip()
             )
@@ -1937,7 +2006,7 @@ def scrape(payload: WebsiteScrapeRequest, authorization: str | None = Header(def
 
 @app.get("/api/outreach")
 def outreach_workspace(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "outreach")
     return {
         "contacts": list_outreach_contacts(user["id"]),
         "history": list_outreach_messages(user["id"]),
@@ -1954,7 +2023,7 @@ def outreach_workspace(authorization: str | None = Header(default=None)) -> dict
 
 @app.post("/api/outreach/send")
 def send_outreach(payload: OutreachSendRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_user(authorization)
+    user = _require_permission(authorization, "outreach")
     channel = payload.channel.strip().lower()
     if channel not in {"email", "whatsapp"}:
         raise HTTPException(status_code=400, detail="Channel must be email or whatsapp.")

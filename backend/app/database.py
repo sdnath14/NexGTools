@@ -15,6 +15,9 @@ from .auth import create_token, hash_password, verify_password
 from .config import settings
 
 
+TOOL_PERMISSIONS = ["dashboard", "lead_search", "lead_search_history", "business_search", "business_search_history", "outreach", "data_library", "exports", "settings"]
+
+
 def _connect(database: str | None = None):
     return pymysql.connect(
         host=settings.mysql_host,
@@ -107,6 +110,39 @@ def initialize_database() -> None:
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS roles (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    name VARCHAR(120) NOT NULL UNIQUE,
+                    permissions_json JSON NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+            cursor.execute("SELECT COLUMN_NAME AS column_name FROM information_schema.columns WHERE table_schema = %s AND table_name = 'users'", (settings.mysql_database,))
+            if "role_id" not in {row["column_name"] for row in cursor.fetchall()}:
+                cursor.execute("ALTER TABLE users ADD COLUMN role_id BIGINT UNSIGNED NULL AFTER password_hash")
+                cursor.execute("ALTER TABLE users ADD INDEX idx_users_role (role_id)")
+            cursor.execute("SELECT id FROM roles WHERE name = 'Member'")
+            member_role = cursor.fetchone()
+            if not member_role:
+                cursor.execute("INSERT INTO roles (name, permissions_json) VALUES (%s, CAST(%s AS JSON))", ("Member", json.dumps(TOOL_PERMISSIONS)))
+                member_role = {"id": cursor.lastrowid}
+            else:
+                # Member is the built-in full-access role. Keep it aligned as new
+                # permissions are introduced on later application versions.
+                cursor.execute("UPDATE roles SET permissions_json = CAST(%s AS JSON) WHERE id = %s", (json.dumps(TOOL_PERMISSIONS), member_role["id"]))
+            cursor.execute("SELECT id FROM roles WHERE name = 'Lead Search Only'")
+            if not cursor.fetchone():
+                cursor.execute("INSERT INTO roles (name, permissions_json) VALUES (%s, CAST(%s AS JSON))", ("Lead Search Only", json.dumps(["lead_search"])))
+            # The configured NexG administrator is deliberately separate from
+            # role-based access control and never needs a role assignment.
+            cursor.execute(
+                "UPDATE users SET role_id = %s WHERE role_id IS NULL AND LOWER(email) != %s",
+                (member_role["id"], settings.default_login_email.strip().lower()),
             )
             cursor.execute(
                 """
@@ -707,13 +743,13 @@ def create_user(name: str, email: str, password_salt: str, password_hash: str) -
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO users (name, email, password_salt, password_hash)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO users (name, email, password_salt, password_hash, role_id)
+                VALUES (%s, %s, %s, %s, (SELECT id FROM roles WHERE name = 'Member' LIMIT 1))
                 """,
                 (name, email, password_salt, password_hash),
             )
             user_id = cursor.lastrowid
-            return {"id": user_id, "name": name, "email": email}
+            return {"id": user_id, "name": name, "email": email, "role": "Member", "permissions": TOOL_PERMISSIONS}
 
 
 def ensure_default_user(name: str, email: str, password: str) -> None:
@@ -727,14 +763,14 @@ def ensure_default_user(name: str, email: str, password: str) -> None:
             existing = cursor.fetchone()
             if existing:
                 cursor.execute(
-                    "UPDATE users SET name = %s, password_salt = %s, password_hash = %s WHERE id = %s",
+                    "UPDATE users SET name = %s, password_salt = %s, password_hash = %s, role_id = NULL WHERE id = %s",
                     (name, salt, password_digest, existing["id"]),
                 )
             else:
                 cursor.execute(
                     """
-                    INSERT INTO users (name, email, password_salt, password_hash)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO users (name, email, password_salt, password_hash, role_id)
+                    VALUES (%s, %s, %s, %s, NULL)
                     """,
                     (name, normalized_email, salt, password_digest),
                 )
@@ -770,14 +806,90 @@ def get_user_by_token(token: str) -> dict[str, Any] | None:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT users.id, users.name, users.email
+                SELECT users.id, users.name, users.email, roles.name AS role, roles.permissions_json
                 FROM user_sessions
                 JOIN users ON users.id = user_sessions.user_id
+                LEFT JOIN roles ON roles.id = users.role_id
                 WHERE user_sessions.token = %s
                 """,
                 (token,),
             )
-            return cursor.fetchone()
+            user = cursor.fetchone()
+    if user:
+        value = user.pop("permissions_json", None)
+        is_nexg_admin = user.get("email", "").strip().lower() == settings.default_login_email.strip().lower()
+        user["is_nexg_admin"] = is_nexg_admin
+        user["permissions"] = TOOL_PERMISSIONS if is_nexg_admin else (json.loads(value) if isinstance(value, str) else (value or TOOL_PERMISSIONS))
+        user["role"] = "NexG Admin" if is_nexg_admin else (user.get("role") or "Member")
+    return user
+
+
+def list_roles() -> list[dict[str, Any]]:
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id, name, permissions_json, created_at, updated_at FROM roles ORDER BY name")
+            roles = cursor.fetchall()
+    for role in roles:
+        value = role.pop("permissions_json", [])
+        role["permissions"] = json.loads(value) if isinstance(value, str) else value
+        role["created_at"] = role["created_at"].isoformat()
+        role["updated_at"] = role["updated_at"].isoformat()
+    return roles
+
+
+def list_users_with_roles() -> list[dict[str, Any]]:
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT users.id, users.name, users.email, users.role_id, roles.name AS role, "
+                "LOWER(users.email) = %s AS is_nexg_admin "
+                "FROM users LEFT JOIN roles ON roles.id = users.role_id ORDER BY users.name, users.id",
+                (settings.default_login_email.strip().lower(),),
+            )
+            return cursor.fetchall()
+
+
+def set_user_role(user_id: int, role_id: int) -> dict[str, Any]:
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT email FROM users WHERE id = %s", (user_id,))
+            user = cursor.fetchone()
+            if not user:
+                raise ValueError("User not found.")
+            if user["email"].strip().lower() == settings.default_login_email.strip().lower():
+                raise ValueError("The NexG Admin account has unrestricted access and does not use roles.")
+            cursor.execute("SELECT id FROM roles WHERE id = %s", (role_id,))
+            if not cursor.fetchone():
+                raise ValueError("Role not found.")
+            cursor.execute("UPDATE users SET role_id = %s WHERE id = %s", (role_id, user_id))
+    return {"updated": True}
+
+
+def save_role(name: str, permissions: list[str], role_id: int | None = None) -> dict[str, Any]:
+    permissions = [item for item in permissions if item in TOOL_PERMISSIONS]
+    if not name.strip():
+        raise ValueError("Role name is required.")
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            if role_id:
+                cursor.execute("UPDATE roles SET name = %s, permissions_json = CAST(%s AS JSON) WHERE id = %s", (name.strip(), json.dumps(permissions), role_id))
+                if cursor.rowcount != 1:
+                    raise ValueError("Role not found.")
+            else:
+                cursor.execute("INSERT INTO roles (name, permissions_json) VALUES (%s, CAST(%s AS JSON))", (name.strip(), json.dumps(permissions)))
+                role_id = cursor.lastrowid
+    return {"id": role_id, "name": name.strip(), "permissions": permissions}
+
+
+def delete_role(role_id: int) -> None:
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            # Clear the role from affected users first so an administrator can
+            # remove a role without having to manually reassign every user.
+            cursor.execute("UPDATE users SET role_id = NULL WHERE role_id = %s", (role_id,))
+            cursor.execute("DELETE FROM roles WHERE id = %s", (role_id,))
+            if cursor.rowcount != 1:
+                raise ValueError("Role not found.")
 
 
 def verify_admin_password(password: str) -> bool:

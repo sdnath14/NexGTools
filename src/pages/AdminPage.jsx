@@ -22,6 +22,11 @@ const AdminPage = ({ onAdminUnlocked }) => {
   const [draftValues, setDraftValues] = useState({});
   const [deletingId, setDeletingId] = useState(null);
   const [newUser, setNewUser] = useState({ name: '', email: '', password: '' });
+  const [roles, setRoles] = useState([]);
+  const [workspaceUsers, setWorkspaceUsers] = useState([]);
+  const [permissions, setPermissions] = useState([]);
+  const [newRole, setNewRole] = useState({ name: '', permissions: [] });
+  const [editingRole, setEditingRole] = useState(null);
 
   const selectedOverview = useMemo(
     () => overview.find((table) => table.name === activeTable),
@@ -58,6 +63,17 @@ const AdminPage = ({ onAdminUnlocked }) => {
     setDraftValues({});
   };
 
+  const loadAccessControl = async () => {
+    const [rolesResponse, usersResponse] = await Promise.all([
+      fetch(`${API_BASE_URL}/api/admin/roles`, { headers: requestHeaders() }),
+      fetch(`${API_BASE_URL}/api/admin/users-with-roles`, { headers: requestHeaders() }),
+    ]);
+    const rolesData = await rolesResponse.json();
+    const usersData = await usersResponse.json();
+    if (!rolesResponse.ok || !usersResponse.ok) throw new Error(rolesData.detail || usersData.detail || 'Could not load access controls.');
+    setRoles(rolesData.roles || []); setPermissions(rolesData.permissions || []); setWorkspaceUsers(usersData.users || []);
+  };
+
   useEffect(() => {
     const checkAdmin = async () => {
       const adminToken = localStorage.getItem(ADMIN_TOKEN_KEY);
@@ -76,6 +92,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
         setIsAdmin(true);
         onAdminUnlocked?.(true);
         await loadOverview();
+        await loadAccessControl();
       } catch {
         localStorage.removeItem(ADMIN_TOKEN_KEY);
         setIsAdmin(false);
@@ -114,6 +131,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
       setIsAdmin(true);
       onAdminUnlocked?.(true);
       await loadOverview();
+      await loadAccessControl();
     } catch (err) {
       setError(err.message || 'Could not unlock admin.');
     } finally {
@@ -205,12 +223,60 @@ const AdminPage = ({ onAdminUnlocked }) => {
       if (!response.ok) throw new Error(data.detail || 'Could not create user.');
       setNewUser({ name: '', email: '', password: '' });
       await loadOverview();
+      await loadAccessControl();
       if (activeTable === 'users') await loadTable('users');
     } catch (err) {
       setError(err.message || 'Could not create user.');
     } finally {
       setBusy(false);
     }
+  };
+
+  const createRole = async (event) => {
+    event.preventDefault(); setBusy(true); setError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/roles`, { method: 'POST', headers: requestHeaders(), body: JSON.stringify(newRole) });
+      const data = await response.json(); if (!response.ok) throw new Error(data.detail || 'Could not create role.');
+      setNewRole({ name: '', permissions: [] }); await loadAccessControl();
+    } catch (err) { setError(err.message || 'Could not create role.'); } finally { setBusy(false); }
+  };
+
+  const saveRole = async (event) => {
+    event.preventDefault();
+    if (!editingRole) return;
+    setBusy(true); setError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/roles/${editingRole.id}`, {
+        method: 'PUT', headers: requestHeaders(), body: JSON.stringify({ name: editingRole.name, permissions: editingRole.permissions }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not update role.');
+      setEditingRole(null);
+      await loadAccessControl();
+    } catch (err) { setError(err.message || 'Could not update role.'); } finally { setBusy(false); }
+  };
+
+  const removeRole = async (role) => {
+    if (!window.confirm(`Delete the “${role.name}” role? This cannot be undone.`)) return;
+    setBusy(true); setError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/roles/${role.id}`, {
+        method: 'DELETE', headers: requestHeaders(),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not delete role.');
+      if (editingRole?.id === role.id) setEditingRole(null);
+      await loadAccessControl();
+    } catch (err) { setError(err.message || 'Could not delete role.'); } finally { setBusy(false); }
+  };
+
+  const assignRole = async (userId, roleId) => {
+    setBusy(true); setError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/role`, { method: 'PUT', headers: requestHeaders(), body: JSON.stringify({ role_id: Number(roleId) }) });
+      const data = await response.json(); if (!response.ok) throw new Error(data.detail || 'Could not assign role.');
+      await loadAccessControl();
+    } catch (err) { setError(err.message || 'Could not assign role.'); } finally { setBusy(false); }
   };
 
   if (loading) {
@@ -279,6 +345,23 @@ const AdminPage = ({ onAdminUnlocked }) => {
         <label>Initial password<input type="password" value={newUser.password} onChange={(event) => setNewUser((current) => ({ ...current, password: event.target.value }))} placeholder="At least 6 characters" minLength="6" required /></label>
         <button type="submit" className="admin-save-btn" disabled={busy}><UserPlus size={17} /> Create user</button>
       </form>
+
+      <section className="admin-access-control">
+        <div><h2>Roles & tool access</h2><p>Choose exactly which tools each role can use. Edit a role to grant or revoke access for every user assigned to it.</p></div>
+        <form onSubmit={createRole} className="admin-role-form">
+          <input value={newRole.name} onChange={(event) => setNewRole((value) => ({ ...value, name: event.target.value }))} placeholder="New role name" required />
+          <div className="admin-permission-list">{permissions.map((permission) => <label key={permission}><input type="checkbox" checked={newRole.permissions.includes(permission)} onChange={() => setNewRole((value) => ({ ...value, permissions: value.permissions.includes(permission) ? value.permissions.filter((item) => item !== permission) : [...value.permissions, permission] }))} /> {permission.replaceAll('_', ' ')}</label>)}</div>
+          <button type="submit" className="admin-save-btn" disabled={busy}>Create role</button>
+        </form>
+        {editingRole && <form onSubmit={saveRole} className="admin-role-form admin-role-edit-form">
+          <input value={editingRole.name} onChange={(event) => setEditingRole((role) => ({ ...role, name: event.target.value }))} placeholder="Role name" required />
+          <div className="admin-permission-list">{permissions.map((permission) => <label key={permission}><input type="checkbox" checked={editingRole.permissions.includes(permission)} onChange={() => setEditingRole((role) => ({ ...role, permissions: role.permissions.includes(permission) ? role.permissions.filter((item) => item !== permission) : [...role.permissions, permission] }))} /> {permission.replaceAll('_', ' ')}</label>)}</div>
+          <button type="submit" className="admin-save-btn" disabled={busy}>Save access</button>
+          <button type="button" className="admin-cancel-btn" onClick={() => setEditingRole(null)} disabled={busy}>Cancel</button>
+        </form>}
+        <div className="admin-role-list">{roles.map((role) => <div key={role.id}><strong>{role.name}</strong><span>{role.permissions.map((item) => item.replaceAll('_', ' ')).join(', ') || 'No tools'}</span><div className="admin-role-actions"><button type="button" className="admin-edit-role-btn" onClick={() => setEditingRole({ id: role.id, name: role.name, permissions: [...role.permissions] })} disabled={busy}>Edit access</button><button type="button" className="admin-delete-role-btn" onClick={() => removeRole(role)} disabled={busy} title={`Delete ${role.name}`}><Trash2 size={15} /> Delete</button></div></div>)}</div>
+        <div className="admin-user-roles">{workspaceUsers.map((workspaceUser) => workspaceUser.is_nexg_admin ? <div key={workspaceUser.id} className="admin-nexg-admin-user"><span><strong>{workspaceUser.name}</strong> <small>({workspaceUser.email})</small></span><em>NexG Admin · full access · no role required</em></div> : <label key={workspaceUser.id}><span>{workspaceUser.name} <small>({workspaceUser.email})</small></span><select value={workspaceUser.role_id || ''} onChange={(event) => assignRole(workspaceUser.id, event.target.value)} disabled={busy}>{roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label>)}</div>
+      </section>
 
       <div className="admin-overview-grid">
         {overview.map((table) => (

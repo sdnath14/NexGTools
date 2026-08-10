@@ -1,10 +1,11 @@
 import React from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LogOut, ArrowLeft, FileSpreadsheet } from 'lucide-react';
+import { LogOut, ArrowLeft, FileSpreadsheet, History } from 'lucide-react';
 
 const pageTitles = {
   '/': 'Dashboard',
   '/lead-search': 'Lead Search',
+  '/lead-search/history': 'Lead Search History',
   '/lead-search/csv': 'CSV History',
   '/business-search': 'Business Search',
   '/business-search/csv': 'Business CSV History',
@@ -37,8 +38,11 @@ const Topbar = ({ user, onLogout }) => {
         <h2 className="topbar-title">{pageTitle}</h2>
         {isLeadSearch && (
           <div className="topbar-context-actions">
-            <button className="topbar-nav-btn" onClick={() => navigate('/lead-search/csv')}>
+            {user?.permissions?.includes('exports') && <button className="topbar-nav-btn" onClick={() => navigate('/lead-search/csv')}>
               <FileSpreadsheet size={15} /> CSV
+            </button>}
+            <button className="topbar-nav-btn" onClick={() => navigate('/lead-search/history')}>
+              <History size={15} /> History
             </button>
           </div>
         )}
