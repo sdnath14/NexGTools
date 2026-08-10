@@ -28,7 +28,7 @@ const SEARCH_SOURCES = [
   { id: 'tofler',      label: 'Tofler',         icon: '🏛️', color: '#475569', desc: 'Company intelligence' },
   { id: 'zaubacorp',   label: 'Zauba Corp',     icon: '🏢', color: '#6366f1', desc: 'Company & director data' },
   { id: 'instagram',   label: 'Instagram',      icon: '📸', color: '#db2777', desc: 'Social business profiles' },
-  { id: 'facebook',    label: 'Facebook',       icon: '👍', color: '#2563eb', desc: 'Social business pages' },
+  { id: 'facebook',    label: 'Facebook',       icon: '👍', color: '#f97316', desc: 'Social business pages' },
   { id: 'justdial',    label: 'JustDial',       icon: '📞', color: '#0ea5e9', desc: 'Local business directory' },
   { id: 'indiamart',   label: 'IndiaMart',      icon: '🏭', color: '#f59e0b', desc: 'B2B marketplace' },
   { id: 'tradeindia',  label: 'TradeIndia',     icon: '📦', color: '#10b981', desc: 'Import & export portal' },

@@ -17,12 +17,12 @@
 .outreach-search input { border:0; outline:0; background:transparent; color:var(--app-text); min-width:150px; }
 .outreach-contact-channel-filter { display:flex; align-items:center; gap:.35rem; margin-left:auto; }
 .outreach-contact-channel-filter button { display:inline-flex; align-items:center; gap:.35rem; border:1px solid #d1d5db; border-radius:.45rem; background:transparent; color:#64748b; padding:.48rem .65rem; font:inherit; font-size:.75rem; font-weight:750; cursor:pointer; }
-.outreach-contact-channel-filter button.active.email { color:#1d4ed8; border-color:#93c5fd; background:#eff6ff; }
+.outreach-contact-channel-filter button.active.email { color:#ea580c; border-color:#fdba74; background:#fff7ed; }
 .outreach-contact-channel-filter button.active.whatsapp { color:#047857; border-color:#6ee7b7; background:#ecfdf5; }
 .outreach-select-all { display:flex; gap:.45rem; align-items:center; margin:.9rem 0 .6rem; font-size:.78rem; color:#475569; }
 .outreach-contact-list { display:flex; flex-direction:column; gap:.45rem; max-height:580px; overflow:auto; }
 .outreach-contact { display:grid; grid-template-columns:20px minmax(150px,1fr) minmax(190px,1fr); gap:.65rem; align-items:center; border:1px solid var(--app-border); border-radius:.55rem; padding:.7rem; cursor:pointer; }
-.outreach-contact.selected { border-color:#60a5fa; background:#eff6ff; }
+.outreach-contact.selected { border-color:#60a5fa; background:#fff7ed; }
 .outreach-contact.disabled { opacity:.58; cursor:not-allowed; }
 .outreach-contact.missing-channel:not(.selected) { border-style:dashed; }
 .outreach-contact.missing-channel .outreach-contact-values>small { color:#b45309; }
@@ -38,7 +38,7 @@
 .composer-card.whatsapp .outreach-compose-title { background:linear-gradient(135deg,#15803d,#047857); }
 .outreach-channel-picker { display:grid; grid-template-columns:1fr 1fr; gap:.5rem; }
 .outreach-channel-picker button { border:1px solid #d1d5db; background:transparent; color:#475569; padding:.6rem; }
-.outreach-channel-picker button.active { color:#1d4ed8; border-color:#93c5fd; background:#eff6ff; }
+.outreach-channel-picker button.active { color:#ea580c; border-color:#fdba74; background:#fff7ed; }
 .outreach-channel-picker button.active.whatsapp { color:#047857; border-color:#6ee7b7; background:#ecfdf5; }
 .outreach-provider { font-size:.74rem; color:#b45309; background:#fffbeb; border-radius:.4rem; padding:.45rem .6rem; }
 .outreach-provider.ready { color:#047857; background:#ecfdf5; }
@@ -68,17 +68,17 @@
 .outreach-field input,.outreach-field textarea { border:1px solid #d1d5db; border-radius:.5rem; background:var(--app-surface); color:var(--app-text); padding:.7rem; font:inherit; outline:none; }
 .outreach-field textarea { resize:vertical; line-height:1.5; }
 .outreach-token-help { color:#64748b; }
-.outreach-send { border:0; color:white; background:#2563eb; padding:.7rem 1rem; }
-.composer-card.whatsapp .outreach-send { background:#059669; }
+.outreach-send { border:0; color:white; background:#f97316; padding:.7rem 1rem; }
+.composer-card.whatsapp .outreach-send { background:#ea580c; }
 .outreach-send:disabled,.outreach-secondary:disabled { opacity:.55; cursor:not-allowed; }
 .outreach-empty { color:#94a3b8; text-align:center; padding:2.5rem 1rem; font-size:.85rem; }
 .outreach-history-list { display:flex; flex-direction:column; margin-top:1rem; }
 .outreach-history-row { display:grid; grid-template-columns:34px minmax(150px,.8fr) minmax(180px,1.5fr) 75px 150px; gap:.7rem; align-items:center; padding:.7rem 0; border-top:1px solid var(--app-border); font-size:.78rem; }
 .outreach-history-row>span:nth-child(2) { display:flex; flex-direction:column; gap:.2rem; }
 .outreach-history-row small,.outreach-history-row time,.outreach-history-message { color:#64748b; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.outreach-history-icon { width:30px; height:30px; display:grid; place-items:center; border-radius:50%; background:#eff6ff; color:#2563eb; }
-.outreach-history-icon.whatsapp { background:#ecfdf5; color:#059669; }
+.outreach-history-icon { width:30px; height:30px; display:grid; place-items:center; border-radius:50%; background:#fff7ed; color:#f97316; }
+.outreach-history-icon.whatsapp { background:#fff7ed; color:#ea580c; }
 .outreach-status { text-transform:capitalize; font-weight:700; }
-.outreach-status.sent { color:#059669; }.outreach-status.failed { color:#dc2626; }
+.outreach-status.sent { color:#ea580c; }.outreach-status.failed { color:#dc2626; }
 @media(max-width:950px){.outreach-grid{grid-template-columns:1fr}.composer-card{position:static}.outreach-history-row{grid-template-columns:34px 1fr 80px}.outreach-history-message,.outreach-history-row time{display:none}}
 @media(max-width:620px){.outreach-header,.outreach-card-head{flex-direction:column}.outreach-contact{grid-template-columns:20px 1fr}.outreach-contact-values{grid-column:2}.outreach-channel-picker{grid-template-columns:1fr}.outreach-contact-channel-filter{margin-left:0;width:100%}.outreach-contact-channel-filter button{flex:1}.outreach-search{width:100%;box-sizing:border-box}.outreach-search input{width:100%}}

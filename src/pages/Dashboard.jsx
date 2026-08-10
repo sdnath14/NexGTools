@@ -1,68 +1,26 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  BarChart3,
   Building2,
   Database,
   Loader2,
   Megaphone,
   MoreVertical,
   Search,
-  TrendingDown,
-  TrendingUp,
 } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
+import nexgToolLogo from '../assets/nexgtool-removebg-preview.png';
 import './Dashboard.css';
 
-const DAY = 24 * 60 * 60 * 1000;
-const SOURCE_COLORS = ['#7047eb', '#2478e5', '#18b981', '#ff9f1c', '#e43d91', '#708097'];
+const SOURCE_COLORS = ['#f97316', '#fb923c', '#fdba74', '#ea580c', '#c2410c', '#9a3412'];
 const quickTools = [
-  { title: 'Lead Search', description: 'Find and discover potential leads across multiple sources.', icon: Search, color: '#6c47ff', bg: '#eee9ff', link: '/lead-search' },
-  { title: 'Business Search', description: 'Search for businesses and access key company information.', icon: Building2, color: '#287be0', bg: '#e8f2ff', link: '/business-search' },
-  { title: 'Company Outreach', description: 'Manage company contacts and outreach activity.', icon: Megaphone, color: '#ec4899', bg: '#fceaf4', link: '/outreach' },
-  { title: 'Data Library', description: 'Upload and query Excel, PDF, Word, CSV and text documents.', icon: Database, color: '#0f766e', bg: '#e6fffb', link: '/data-library' },
+  { title: 'Lead Search', description: 'Find and discover potential leads across multiple sources.', icon: Search, color: '#f97316', bg: '#fff7ed', link: '/lead-search' },
+  { title: 'Business Search', description: 'Search for businesses and access key company information.', icon: Building2, color: '#ea580c', bg: '#fff7ed', link: '/business-search' },
+  { title: 'Company Outreach', description: 'Manage company contacts and outreach activity.', icon: Megaphone, color: '#f97316', bg: '#fff7ed', link: '/outreach' },
+  { title: 'Data Library', description: 'Upload and query Excel, PDF, Word, CSV and text documents.', icon: Database, color: '#ea580c', bg: '#fff7ed', link: '/data-library' },
 ];
 
-const startOfDay = (date) => {
-  const value = new Date(date);
-  value.setHours(0, 0, 0, 0);
-  return value;
-};
-
 const dateValue = (item) => new Date(item.created_at).getTime();
-
-const makeSeries = (records) => {
-  const today = startOfDay(new Date());
-  return Array.from({ length: 7 }, (_, index) => {
-    const start = today.getTime() - (6 - index) * DAY;
-    const end = start + DAY;
-    return records.filter((item) => {
-      const value = dateValue(item);
-      return value >= start && value < end;
-    }).length;
-  });
-};
-
-const percentChange = (current, previous) => {
-  if (!previous) return current ? 100 : 0;
-  return Math.round(((current - previous) / previous) * 100);
-};
-
-const Sparkline = ({ values, color }) => {
-  const width = 118;
-  const height = 32;
-  const max = Math.max(...values, 1);
-  const points = values.map((value, index) => {
-    const x = 2 + index * ((width - 4) / Math.max(values.length - 1, 1));
-    const y = height - 3 - (value / max) * (height - 8);
-    return `${x},${y}`;
-  }).join(' ');
-  return (
-    <svg className="dash-sparkline" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Last seven days activity">
-      <polyline points={points} fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-};
 
 const formatDate = (value) => new Intl.DateTimeFormat(undefined, {
   day: '2-digit',
@@ -120,9 +78,6 @@ const Dashboard = ({ user }) => {
   }, []);
 
   const dashboard = useMemo(() => {
-    const now = Date.now();
-    const weekStart = startOfDay(new Date()).getTime() - 6 * DAY;
-    const previousStart = weekStart - 7 * DAY;
     const all = [
       ...leadHistory.map((item) => ({ ...item, type: 'lead', sourceLabel: 'Google Maps' })),
       ...businessHistory.map((item) => ({
@@ -131,18 +86,6 @@ const Dashboard = ({ user }) => {
         sourceLabel: labelSource(item.source || item.sources?.[0] || 'Business Search'),
       })),
     ].sort((a, b) => dateValue(b) - dateValue(a));
-    const current = (records) => records.filter((item) => dateValue(item) >= weekStart && dateValue(item) <= now);
-    const previous = (records) => records.filter((item) => dateValue(item) >= previousStart && dateValue(item) < weekStart);
-    const metric = (label, records, icon, color, bg, total = records.length) => ({
-      label, total, icon, color, bg,
-      series: makeSeries(records),
-      change: percentChange(current(records).length, previous(records).length),
-    });
-    const metrics = [
-      metric('Lead Searches', leadHistory, Search, '#6c47ff', '#eee9ff'),
-      metric('Business Searches', businessHistory, Building2, '#287be0', '#e8f2ff'),
-      metric('Total Searches', all, BarChart3, '#6c47ff', '#eee9ff'),
-    ];
     const sourceCounts = new Map();
     leadHistory.forEach(() => sourceCounts.set('Google Maps', (sourceCounts.get('Google Maps') || 0) + 1));
     businessHistory.forEach((item) => {
@@ -160,45 +103,20 @@ const Dashboard = ({ user }) => {
       .sort((a, b) => b.count - a.count)
       .slice(0, 6);
     const sourceTotal = sources.reduce((sum, item) => sum + item.count, 0);
-    return { metrics, recent: all.slice(0, 7), sources, sourceTotal };
+    return { recent: all.slice(0, 7), sources, sourceTotal };
   }, [leadHistory, businessHistory]);
 
   return (
     <div className="dash-page dash-live">
       <div className="dash-heading">
-        <h1>Welcome back, {firstName}! <span aria-hidden="true">👋</span></h1>
-        <p>Live activity from the last 7 days and all-time totals.</p>
+        <img className="dash-brand-logo" src={nexgToolLogo} alt="NexG Tools" />
+        <div>
+          <h1>Welcome back, {firstName}! <span aria-hidden="true">👋</span></h1>
+          <p>Live activity from the last 7 days and all-time totals.</p>
+        </div>
       </div>
 
       {error && <div className="dash-notice">{error}</div>}
-
-      <section className="dash-metrics" aria-label="Search activity">
-        {dashboard.metrics.map((metric) => {
-          const TrendIcon = metric.change < 0 ? TrendingDown : TrendingUp;
-          return (
-            <article
-              className="dash-metric-card"
-              key={metric.label}
-              style={{ '--metric-color': metric.color, '--metric-soft': metric.bg }}
-            >
-              <div className="dash-metric-top">
-                <div className="dash-metric-icon" style={{ color: metric.color, background: metric.bg }}>
-                  <metric.icon size={23} />
-                </div>
-                <div>
-                  <span>{metric.label}</span>
-                  <strong>{isLoading ? '—' : metric.total.toLocaleString()}</strong>
-                </div>
-              </div>
-              <div className={`dash-change ${metric.change < 0 ? 'is-down' : ''}`}>
-                <TrendIcon size={12} />
-                <b>{Math.abs(metric.change)}%</b>
-                <span>vs previous 7 days</span>
-              </div>
-            </article>
-          );
-        })}
-      </section>
 
       <section className="dash-panel dash-quick-panel">
         <h2>Quick Access Tools</h2>

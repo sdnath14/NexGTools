@@ -28,8 +28,8 @@
   width: 58px;
   height: 58px;
   border-radius: 0.75rem;
-  background: #eff6ff;
-  color: #2563eb;
+  background: #fff7ed;
+  color: #f97316;
   margin-bottom: 1rem;
 }
 
@@ -76,7 +76,7 @@
   width: 100%;
   height: 46px;
   margin-top: 1rem;
-  background: #2563eb;
+  background: #f97316;
   color: white;
 }
 
@@ -122,13 +122,13 @@
   justify-content: space-between;
   gap: 1.5rem;
   padding: 1.5rem;
-  border: 1px solid #dbeafe;
+  border: 1px solid #ffedd5;
   border-radius: 0.75rem;
-  background: linear-gradient(135deg, #eff6ff, #f8fafc);
+  background: linear-gradient(135deg, #fff7ed, #f8fafc);
 }
 
 .admin-hero span {
-  color: #2563eb;
+  color: #f97316;
   font-size: 0.76rem;
   font-weight: 900;
   text-transform: uppercase;
@@ -150,7 +150,7 @@
 .admin-save-btn {
   min-height: 40px;
   padding: 0 0.9rem;
-  background: #2563eb;
+  background: #f97316;
   color: white;
   white-space: nowrap;
 }
@@ -167,7 +167,7 @@
   align-items: end;
   gap: .8rem;
   padding: 1rem 1.25rem;
-  border: 1px solid #dbeafe;
+  border: 1px solid #ffedd5;
   border-radius: .75rem;
   background: #f8fbff;
 }
@@ -195,7 +195,7 @@
 
 .admin-stat-card svg {
   grid-row: span 3;
-  color: #2563eb;
+  color: #f97316;
 }
 
 .admin-stat-card span {
@@ -215,7 +215,7 @@
 }
 
 .admin-stat-card-active {
-  border-color: #2563eb;
+  border-color: #f97316;
   box-shadow: 0 10px 28px rgba(37, 99, 235, 0.12);
 }
 
@@ -299,7 +299,7 @@
   width: 260px;
   min-height: 92px;
   resize: vertical;
-  border: 1px solid #93c5fd;
+  border: 1px solid #fdba74;
   border-radius: 0.4rem;
   padding: 0.45rem;
   font-family: var(--app-font-family);
@@ -310,8 +310,8 @@
 .admin-cancel-btn {
   min-height: 32px;
   padding: 0 0.65rem;
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: #fff7ed;
+  color: #ea580c;
 }
 
 .admin-row-actions { display:flex; align-items:center; gap:.4rem; }

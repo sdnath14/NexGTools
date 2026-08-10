@@ -135,7 +135,7 @@
 }
 
 .bs-source-option input {
-  accent-color: #2563eb;
+  accent-color: #f97316;
 }
 
 .bs-source-option-icon {
@@ -166,18 +166,18 @@
   padding: 0.6rem;
   border: none;
   border-radius: 0.5rem;
-  background: #2563eb;
+  background: #f97316;
   color: #fff;
   font: 700 0.78rem var(--app-font-family);
   cursor: pointer;
 }
 
 .bs-source-done:hover {
-  background: #1d4ed8;
+  background: #ea580c;
 }
 
 .bs-search-bar:focus-within {
-  border-color: #2563eb;
+  border-color: #f97316;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
@@ -239,7 +239,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  background: #2563eb;
+  background: #f97316;
   color: white;
   font-weight: 700;
   font-size: 0.88rem;
@@ -255,7 +255,7 @@
 }
 
 .bs-search-btn:hover:not(:disabled) {
-  background: #1d4ed8;
+  background: #ea580c;
 }
 
 .bs-search-btn:active:not(:disabled) {
@@ -268,7 +268,7 @@
 }
 
 .bs-searching {
-  background: #1d4ed8;
+  background: #ea580c;
 }
 
 .bs-spinner {
@@ -323,9 +323,9 @@
 }
 
 .bs-popular-tag:hover {
-  background: #eff6ff;
-  border-color: #bfdbfe;
-  color: #1d4ed8;
+  background: #fff7ed;
+  border-color: #fed7aa;
+  color: #ea580c;
 }
 
 /* ── Empty / Results State ───────────────────────────────── */
@@ -362,7 +362,7 @@
   gap: 0.35rem;
   min-height: 34px;
   padding: 0 0.65rem;
-  border: 1px solid #dbeafe;
+  border: 1px solid #ffedd5;
   border-radius: 0.55rem;
   background: white;
   color: #1e40af;
@@ -375,7 +375,7 @@
 .bs-result-checkbox {
   width: 16px;
   height: 16px;
-  accent-color: #2563eb;
+  accent-color: #f97316;
   cursor: pointer;
 }
 
@@ -388,7 +388,7 @@
   padding: 0 0.75rem;
   border: none;
   border-radius: 0.55rem;
-  background: #2563eb;
+  background: #f97316;
   color: white;
   font-size: 0.78rem;
   font-weight: 800;
@@ -426,10 +426,10 @@
   gap: 0.45rem;
   min-height: 28px;
   padding: 0.25rem 0.55rem;
-  border: 1px solid #bfdbfe;
+  border: 1px solid #fed7aa;
   border-radius: 999px;
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: #fff7ed;
+  color: #ea580c;
   text-decoration: none;
   font-size: 0.7rem;
   font-weight: 700;
@@ -481,8 +481,8 @@
 .bs-spinner-blue {
   width: 28px;
   height: 28px;
-  border-color: #bfdbfe;
-  border-top-color: #2563eb;
+  border-color: #fed7aa;
+  border-top-color: #f97316;
 }
 
 .bs-empty-state {
@@ -498,7 +498,7 @@
   width: 80px;
   height: 80px;
   border-radius: 1.25rem;
-  background: linear-gradient(135deg, #eff6ff, #e0e7ff);
+  background: linear-gradient(135deg, #fff7ed, #e0e7ff);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -571,14 +571,14 @@
 
 .bs-result-card:hover,
 .bs-result-card-active {
-  border-color: #93c5fd;
+  border-color: #fdba74;
   box-shadow: 0 8px 24px rgba(37, 99, 235, 0.12);
   transform: translateY(-1px);
 }
 
 .bs-result-card-checked {
-  border-color: #2563eb;
-  background: #eff6ff;
+  border-color: #f97316;
+  background: #fff7ed;
 }
 
 .bs-result-top {
@@ -691,8 +691,8 @@
   min-height: 36px;
   padding: 0.45rem 0.7rem;
   border-radius: 0.6rem;
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: #fff7ed;
+  color: #ea580c;
   text-decoration: none;
   font-weight: 800;
   font-size: 0.8rem;
@@ -715,7 +715,7 @@
   padding: 0.45rem 0.7rem;
   border: none;
   border-radius: 0.6rem;
-  background: #2563eb;
+  background: #f97316;
   color: white;
   font-family: var(--app-font-family);
   font-size: 0.8rem;
@@ -725,7 +725,7 @@
 }
 
 .bs-scrape-source-btn:hover:not(:disabled) {
-  background: #1d4ed8;
+  background: #ea580c;
 }
 
 .bs-scrape-source-btn:disabled {
@@ -788,7 +788,7 @@
 .bs-source-scrape-result {
   margin-top: 0.25rem;
   padding: 1rem;
-  border: 1px solid #bfdbfe;
+  border: 1px solid #fed7aa;
   border-radius: 0.75rem;
   background: #f8fbff;
 }
@@ -803,7 +803,7 @@
 .bs-scrape-stats strong {
   padding: 0.3rem 0.55rem;
   border-radius: 999px;
-  background: #dbeafe;
+  background: #ffedd5;
   color: #1e40af;
   font-size: 0.72rem;
 }
@@ -816,7 +816,7 @@
 }
 
 .bs-link-list a {
-  color: #2563eb;
+  color: #f97316;
   font-size: 0.8rem;
   font-weight: 700;
   text-decoration: none;
@@ -985,10 +985,10 @@
 .bs-ai-suggestions button {
   min-height: 28px;
   padding: 0.2rem 0.65rem;
-  border: 1px solid #bfdbfe;
+  border: 1px solid #fed7aa;
   border-radius: 999px;
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: #fff7ed;
+  color: #ea580c;
   font-size: 0.72rem;
   font-weight: 800;
   cursor: pointer;
@@ -1010,7 +1010,7 @@
 }
 
 .bs-ai-form input:focus {
-  border-color: #93c5fd;
+  border-color: #fdba74;
   box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.24);
 }
 
@@ -1023,7 +1023,7 @@
   padding: 0 0.9rem;
   border: none;
   border-radius: 0.65rem;
-  background: #2563eb;
+  background: #f97316;
   color: white;
   font-weight: 800;
   cursor: pointer;

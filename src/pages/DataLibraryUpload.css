@@ -35,8 +35,8 @@
   overflow: hidden;
   padding: 0.25rem 0.5rem;
   border-radius: 999px;
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: #fff7ed;
+  color: #ea580c;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

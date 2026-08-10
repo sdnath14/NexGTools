@@ -9,9 +9,7 @@ const THEMES = [
 ];
 
 const ACCENTS = [
-  { id: 'blue', label: 'Blue', color: '#2563eb' },
-  { id: 'emerald', label: 'Emerald', color: '#059669' },
-  { id: 'violet', label: 'Violet', color: '#7c3aed' },
+  { id: 'orange', label: 'Orange', color: '#f97316' },
 ];
 
 const SettingsPage = ({ appearance, onAppearanceChange }) => {

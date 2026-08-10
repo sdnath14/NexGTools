@@ -1,15 +1,13 @@
 import React, { useState } from 'react';
 import {
-  Building2,
-  Check,
   Eye,
   EyeOff,
   LockKeyhole,
   LogIn,
   Mail,
-  Search,
 } from 'lucide-react';
 import { API_BASE_URL, AUTH_TOKEN_KEY } from '../auth';
+import nexgToolLogo from '../assets/nexgtool-removebg-preview.png';
 import './AuthPage.css';
 
 const AuthPage = ({ onAuthenticated }) => {
@@ -49,29 +47,10 @@ const AuthPage = ({ onAuthenticated }) => {
   return (
     <div className="auth-page">
       <div className="auth-shell">
-        <aside className="auth-brand-panel">
-          <div className="auth-brand">
-            <div className="auth-brand-mark">N</div>
-            <span>NexG <strong>Tools</strong></span>
-          </div>
-          <div className="auth-brand-copy">
-            <span className="auth-eyebrow">Business intelligence workspace</span>
-            <h1>Search, qualify, and understand businesses faster.</h1>
-            <p>One focused workspace for lead discovery, source scraping, exports, and AI-powered research.</p>
-          </div>
-          <div className="auth-feature-list">
-            <div><Search size={18} /><span><strong>Find leads</strong><small>Search live business sources</small></span><Check size={15} /></div>
-            <div><Building2 size={18} /><span><strong>Scrape sources</strong><small>Extract useful company information</small></span><Check size={15} /></div>
-            <div><LockKeyhole size={18} /><span><strong>Keep history</strong><small>Return to searches and CSV exports</small></span><Check size={15} /></div>
-          </div>
-          <p className="auth-brand-footer">NexG Tools · Internal workspace</p>
-        </aside>
-
         <main className="auth-form-panel">
           <form className="auth-card" onSubmit={submit}>
-            <div className="auth-mobile-brand">
-              <div className="auth-brand-mark">N</div>
-              <span>NexG <strong>Tools</strong></span>
+            <div className="auth-login-brand">
+              <img className="auth-logo" src={nexgToolLogo} alt="NexG Tools" />
             </div>
 
             <div className="auth-form-heading">

@@ -27,8 +27,8 @@
   cursor: pointer;
 }
 
-.library-sort-controls button:hover { border-color: #93b4ff; color: #1d4ed8; }
-.library-sort-controls button.active { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; }
+.library-sort-controls button:hover { border-color: #93b4ff; color: #ea580c; }
+.library-sort-controls button.active { border-color: #f97316; background: #fff7ed; color: #ea580c; }
 .library-sort-controls small { font-size: .66rem; font-weight: 800; }
 
 @media (max-width: 600px) {

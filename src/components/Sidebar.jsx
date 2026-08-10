@@ -1,6 +1,7 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { LayoutDashboard, Users, Building2, Database, Settings, ChevronLeft, ChevronRight, ShieldCheck, FileSpreadsheet, Send } from 'lucide-react';
+import nexgToolLogo from '../assets/nexgtool-removebg-preview.png';
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -20,8 +21,19 @@ const Sidebar = ({ collapsed, onToggle, isAdmin }) => {
   return (
     <aside className={`sidebar ${collapsed ? 'sidebar-collapsed' : ''}`}>
       <div className="sidebar-brand">
-        {!collapsed && <span className="sidebar-logo-text">NexG <span>Tools</span></span>}
-        {collapsed && <span className="sidebar-logo-mini">N</span>}
+        {collapsed ? (
+          <div className="sidebar-logo-mini" title="NexG Tools">
+            <img className="sidebar-logo sidebar-logo-collapsed" src={nexgToolLogo} alt="NexG Tools" />
+          </div>
+        ) : (
+          <div className="sidebar-brand-lockup">
+            <img className="sidebar-logo" src={nexgToolLogo} alt="NexG" />
+            <span className="sidebar-logo-e" aria-hidden="true">
+              <img src={nexgToolLogo} alt="" />
+            </span>
+            <span className="sidebar-logo-text">Tools</span>
+          </div>
+        )}
       </div>
 
       <nav className="sidebar-nav">
