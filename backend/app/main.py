@@ -1414,12 +1414,13 @@ async def upload_document(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     user = _require_user(authorization)
-    filename, extension = validate_upload(file.filename or "document")
-    storage = Path(settings.document_storage_directory) / str(user["id"])
-    storage.mkdir(parents=True, exist_ok=True)
-    temporary = Path(tempfile.mkstemp(prefix="upload-", suffix=Path(filename).suffix, dir=storage)[1])
-    total = 0
+    temporary: Path | None = None
     try:
+        filename, extension = validate_upload(file.filename or "document")
+        storage = Path(settings.document_storage_directory) / str(user["id"])
+        storage.mkdir(parents=True, exist_ok=True)
+        temporary = Path(tempfile.mkstemp(prefix="upload-", suffix=Path(filename).suffix, dir=storage)[1])
+        total = 0
         with temporary.open("wb") as output:
             while chunk := await file.read(1024 * 1024):
                 total += len(chunk)
@@ -1431,7 +1432,8 @@ async def upload_document(
         background_tasks.add_task(_process_document, created["file_id"], created["job_id"])
         return {"file": created, "status": "queued", "diagnostics": diagnostics}
     except ValueError as exc:
-        temporary.unlink(missing_ok=True)
+        if temporary:
+            temporary.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         await file.close()

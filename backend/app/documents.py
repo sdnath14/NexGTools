@@ -14,7 +14,7 @@ from pypdf import PdfReader
 
 from .database import db_connection
 
-SUPPORTED_EXTENSIONS = {".xls", ".xlsx"}
+SUPPORTED_EXTENSIONS = {".csv", ".xls", ".xlsx"}
 
 TEMPLATE_COLUMNS = (
     "GSTIN", "LEGAL NAME", "Pincode", "Trade Name", "Authority", "CIRCLE",
@@ -29,7 +29,7 @@ def validate_upload(filename: str) -> tuple[str, str]:
     safe_name = Path(filename).name.strip() or "document"
     extension = Path(safe_name).suffix.lower()
     if extension not in SUPPORTED_EXTENSIONS:
-        raise ValueError("Supported files: XLS and XLSX.")
+        raise ValueError("Only CSV, XLS, and XLSX files can be uploaded.")
     return safe_name, extension
 
 
@@ -45,7 +45,14 @@ def _digits(value: Any) -> str:
 
 def validate_workbook(path: Path, extension: str) -> dict[str, int]:
     """Validate the approved upload schema before it is stored or indexed."""
-    sheets = pd.read_excel(path, sheet_name=None, dtype=object)
+    try:
+        sheets = (
+            {"CSV": pd.read_csv(path, dtype=object)}
+            if extension == ".csv"
+            else pd.read_excel(path, sheet_name=None, dtype=object)
+        )
+    except Exception as exc:
+        raise ValueError("The file could not be read. Upload a valid CSV, XLS, or XLSX file.") from exc
     diagnostics: list[str] = []
     rows_checked = 0
 
@@ -62,7 +69,7 @@ def validate_workbook(path: Path, extension: str) -> dict[str, int]:
                 details.append(f"missing columns: {', '.join(missing)}")
             if unexpected:
                 details.append(f"unexpected columns: {', '.join(unexpected)}")
-            diagnostics.append(f"{sheet_name}: {'; '.join(details)}")
+            diagnostics.append(f"{sheet_name}: template columns do not match ({'; '.join(details)})")
             continue
 
         for row_number, (_, row) in enumerate(frame.iterrows(), start=2):
@@ -73,7 +80,7 @@ def validate_workbook(path: Path, extension: str) -> dict[str, int]:
 
     if diagnostics:
         suffix = " (showing the first 20 issues)" if len(diagnostics) >= 20 else ""
-        raise ValueError("Upload diagnostics failed" + suffix + ": " + " ".join(diagnostics))
+        raise ValueError("Upload rejected: the file does not match the Data Library template" + suffix + ": " + " ".join(diagnostics))
     if rows_checked == 0:
         raise ValueError("Upload diagnostics failed: the workbook has no data rows.")
     return {"sheets_checked": len(sheets), "rows_checked": rows_checked}

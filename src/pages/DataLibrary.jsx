@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertCircle, ArrowDownAZ, ArrowUpAZ, CheckCircle2, Database, Download, FileUp, Loader2, Search, Trash2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Database, Download, FileUp, Loader2, Search, Trash2 } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './DataLibrary.css';
 import './DataLibraryUpload.css';
@@ -8,15 +8,22 @@ import './DataLibrarySort.css';
 
 
 
-const ACCEPTED = '.xls,.xlsx';
+const ACCEPTED = '.csv,.xls,.xlsx';
 const formatBytes = (value) => `${(Number(value || 0) / 1024 / 1024).toFixed(1)} MB`;
 const tableColumns = (records) => [...new Set(records.flatMap((record) => Object.keys(record.record_json || {})))];
 const displayValue = (value) => value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
-const SORTABLE_COLUMNS = ['Authority', 'Circle', 'Charge'];
+const FILTER_OPTIONS = {
+  Authority: ['CENTER', 'STATE'],
+  Circle: ['24 PARGANAS', 'ASANSOL', 'BAHARAMPUR', 'BALLY', 'BEHALA', 'BURRABAZAR', 'CHOWRANGHEE', 'CORPORATE DIVISION', 'DHARMATOLA', 'DURGAPORE', 'HAORA', 'JALPAIGURI', 'KOLKATA NORTH', 'KOLKATA SOUTH', 'MEDINIPUR', 'RAIGANJ', 'SILIGURI'],
+  Charge: ['ALIPORE', 'AMRATALA', 'ARMENIAN STREET', 'ASANSOL', 'BAHARAMPUR', 'BALLY', 'BALLYGUNGE', 'BALURGHAT', 'BANKURA', 'BARASAT', 'BARDHAMAN', 'BARRACKPORE', 'BARUIPUR', 'BEADON STREET', 'BEHALA', 'BELGACHHIA', 'BELIAGHATA', 'BHABANIPUR', 'BOWBAZAR', 'BUDGE BUDGE', 'BURTOLA', 'CHANDNI CHAWK', 'CHINABAZAR', 'COLLEGE STREET', 'COLOOTOLA', 'COOCH BEHAR', 'COSSIPUR', 'DARJEELING', 'DIAMOND HARBOUR', 'DURGAPORE', 'ESPLANADE', 'EZRA STREET', 'FAIRLEY PLACE', 'HOWRAH', 'JALPAIGURI', 'JORABAGAN', 'JORASANKO', 'KADAMTALA', 'KRISHNANAGAR', 'LALBAZAR', 'LARGE TAXPAYER UNIT', 'LYONS RANGE', 'MALDAH', 'MANICKTOLA', 'MIDNAPORE', 'MONOHARKATRA', 'N.D.SARANI', 'N.S.ROAD', 'NEW MARKET', 'PARK STREET', 'POSTABAZAR', 'PRINCEP STREET', 'PURULIA', 'RADHABAZAR', 'RAIGANJ', 'RAJAKATRA', 'SALKIA', 'SALT LAKE', 'SEALDAH', 'SHIBPUR', 'SHYAMBAZAR', 'SILIGURI', 'SRIRAMPUR', 'STRAND ROAD', 'SURI', 'TALTALA', 'TAMLUK', 'ULTADANGA'],
+};
 
 
 const normalizedColumn = (value) =>
   String(value).trim().toLocaleLowerCase();
+
+const normalizedFilterValue = (value) =>
+  String(value ?? '').trim().toLocaleUpperCase().replace(/[^A-Z0-9]/g, '');
 
 
 
@@ -38,7 +45,7 @@ export default function DataLibrary() {
   const [loadingMoreIndex, setLoadingMoreIndex] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const [deletingFileId, setDeletingFileId] = useState(null);
-  const [sort, setSort] = useState({ column: '', direction: 'asc' });
+  const [filters, setFilters] = useState({ Authority: '', Circle: '', Charge: '' });
   const [error, setError] = useState('');
   const [uploadDiagnostics, setUploadDiagnostics] = useState('');
   const [diagnosingFileId, setDiagnosingFileId] = useState(null);
@@ -60,14 +67,14 @@ export default function DataLibrary() {
   const toggleSource = (fileId) => {
     setSelectedFileIds((current) => current.includes(fileId) ? current.filter((id) => id !== fileId) : [...current, fileId]);
     setSearchResult(null);
-    setSort({ column: '', direction: 'asc' });
+    setFilters({ Authority: '', Circle: '', Charge: '' });
     setError('');
   };
 
   const clearSearch = () => {
     setSearchResult(null);
     setQuestion('');
-    setSort({ column: '', direction: 'asc' });
+    setFilters({ Authority: '', Circle: '', Charge: '' });
     setError('');
   };
 
@@ -78,8 +85,13 @@ export default function DataLibrary() {
       for (const file of selected) {
         const body = new FormData(); body.append('file', file);
         const response = await fetch(`${API_BASE_URL}/api/documents`, { method: 'POST', headers: authHeaders(), body });
-        const data = await response.json();
-        if (!response.ok) throw new Error(`${file.name}: ${data.detail || 'Upload failed.'}`);
+        const payload = await response.text();
+        let data = {};
+        try { data = payload ? JSON.parse(payload) : {}; } catch { /* Use the user-friendly fallback below. */ }
+        if (!response.ok) {
+          const message = data.detail || 'Please upload CSV, XLS, or XLSX files only.';
+          throw new Error(`${file.name}: ${message}`);
+        }
         if (data.diagnostics) setUploadDiagnostics(`${file.name}: ${data.diagnostics.rows_checked} data rows validated across ${data.diagnostics.sheets_checked} sheet(s).`);
       }
       await loadFiles();
@@ -188,7 +200,7 @@ export default function DataLibrary() {
         hasMore: Boolean(data.has_more),
         fileIds: selectedFileIds,
       });
-      setSort({ column: '', direction: 'asc' });
+      setFilters({ Authority: '', Circle: '', Charge: '' });
       setQuestion('');
     } catch (askError) { setError(askError.message); } finally { setSearching(false); }
   };
@@ -230,7 +242,7 @@ export default function DataLibrary() {
   const downloadSearchResults = () => {
     if (!searchResult?.records.length) return;
     const columns = tableColumns(searchResult.records);
-    const records = sortedRecords(searchResult.records);
+    const records = filteredRecords(searchResult.records);
     const csvCell = (value) => `"${displayValue(value).replaceAll('"', '""')}"`;
     const csv = [columns.map(csvCell).join(','), ...records.map((record) => columns.map((column) => csvCell(record.record_json?.[column])).join(','))].join('\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
@@ -239,21 +251,15 @@ export default function DataLibrary() {
     URL.revokeObjectURL(url);
   };
 
-  const sortedRecords = (records) => {
-    if (!sort.column) return records;
-    return [...records].sort((left, right) => {
-      const leftValue = displayValue(left.record_json?.[sort.column]);
-      const rightValue = displayValue(right.record_json?.[sort.column]);
-      const comparison = leftValue.localeCompare(rightValue, undefined, { numeric: true, sensitivity: 'base' });
-      return sort.direction === 'asc' ? comparison : -comparison;
-    });
-  };
-
-  const toggleSort = (column) => {
-    setSort((current) => current.column === column
-      ? { column, direction: current.direction === 'asc' ? 'desc' : 'asc' }
-      : { column, direction: 'asc' });
-  };
+  const filteredRecords = (records) => records.filter((record) =>
+    Object.entries(filters).every(([filterName, selectedValue]) => {
+      if (!selectedValue) return true;
+      const column = Object.keys(record.record_json || {}).find(
+        (key) => normalizedColumn(key) === normalizedColumn(filterName),
+      );
+      return column && normalizedFilterValue(record.record_json?.[column]) === normalizedFilterValue(selectedValue);
+    }),
+  );
 
   const selectedFiles = files.filter((file) => selectedFileIds.includes(file.id));
 
@@ -426,14 +432,7 @@ return (
             (() => {
               const columns = tableColumns(searchResult.records);
 
-              const sortableColumns = SORTABLE_COLUMNS.map((name) =>
-                columns.find(
-                  (column) =>
-                    normalizedColumn(column) === normalizedColumn(name)
-                )
-              ).filter(Boolean);
-
-              const records = sortedRecords(searchResult.records);
+              const records = filteredRecords(searchResult.records);
 
               return (
                 <div className="library-results">
@@ -461,48 +460,20 @@ return (
                     </button>
                   </div>
 
-                  {sortableColumns.length > 0 && (
-                    <div
-                      className="library-sort-controls"
-                      aria-label="Sort search results"
-                    >
-                      <span>Sort by</span>
-
-                      {sortableColumns.map((column) => {
-                        const isActive = sort.column === column;
-
-                        const SortIcon =
-                          isActive && sort.direction === 'desc'
-                            ? ArrowUpAZ
-                            : ArrowDownAZ;
-
-                        return (
-                          <button
-                            type="button"
-                            key={column}
-                            className={isActive ? 'active' : ''}
-                            onClick={() => toggleSort(column)}
-                            aria-label={`Sort by ${column} ${
-                              isActive && sort.direction === 'asc'
-                                ? 'descending'
-                                : 'ascending'
-                            }`}
-                            aria-pressed={isActive}
-                          >
-                            <SortIcon size={15} />
-
-                            {column}
-
-                            {isActive && (
-                              <small>
-                                {sort.direction === 'asc' ? 'A–Z' : 'Z–A'}
-                              </small>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
+                  <div className="library-filter-controls" aria-label="Filter search results">
+                    {Object.entries(FILTER_OPTIONS).map(([filterName, options]) => (
+                      <label key={filterName}>
+                        <span>{filterName}</span>
+                        <select
+                          value={filters[filterName]}
+                          onChange={(event) => setFilters((current) => ({ ...current, [filterName]: event.target.value }))}
+                        >
+                          <option value="">All {filterName === 'Authority' ? 'authorities' : `${filterName.toLowerCase()}s`}</option>
+                          {options.map((option) => <option key={option} value={option}>{option}</option>)}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
 
                   {columns.length ? (
                     <div className="library-table-wrap">
