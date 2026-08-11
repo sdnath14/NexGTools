@@ -14,7 +14,8 @@
   font-weight: 700;
 }
 
-.library-filter-controls select {
+.library-filter-controls select,
+.library-filter-search {
   width: 100%;
   border: 1px solid #cbd5e1;
   border-radius: .45rem;
@@ -26,10 +27,19 @@
   cursor: pointer;
 }
 
-.library-filter-controls select:focus {
+.library-filter-search {
+  cursor: text;
+}
+
+.library-filter-controls select:focus,
+.library-filter-search:focus {
   outline: 2px solid #fed7aa;
   outline-offset: 1px;
   border-color: #f97316;
+}
+
+.library-filter-search::-webkit-search-cancel-button {
+  cursor: pointer;
 }
 
 @media (max-width: 600px) {

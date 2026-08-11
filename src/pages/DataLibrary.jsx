@@ -257,9 +257,22 @@ export default function DataLibrary() {
       const column = Object.keys(record.record_json || {}).find(
         (key) => normalizedColumn(key) === normalizedColumn(filterName),
       );
-      return column && normalizedFilterValue(record.record_json?.[column]) === normalizedFilterValue(selectedValue);
+      return column && normalizedFilterValue(record.record_json?.[column]).includes(normalizedFilterValue(selectedValue));
     }),
   );
+
+  const filterOptions = (filterName) => {
+    const valuesInResults = (searchResult?.records || []).flatMap((record) => {
+      const column = Object.keys(record.record_json || {}).find(
+        (key) => normalizedColumn(key) === normalizedColumn(filterName),
+      );
+      const value = column ? displayValue(record.record_json?.[column]).trim() : '';
+      return value && value !== '—' ? [value] : [];
+    });
+
+    return [...new Set([...(FILTER_OPTIONS[filterName] || []), ...valuesInResults])]
+      .sort((first, second) => first.localeCompare(second));
+  };
 
   const selectedFiles = files.filter((file) => selectedFileIds.includes(file.id));
 
@@ -461,16 +474,21 @@ return (
                   </div>
 
                   <div className="library-filter-controls" aria-label="Filter search results">
-                    {Object.entries(FILTER_OPTIONS).map(([filterName, options]) => (
+                    {Object.keys(FILTER_OPTIONS).map((filterName) => (
                       <label key={filterName}>
                         <span>{filterName}</span>
-                        <select
+                        <input
+                          className="library-filter-search"
+                          type="search"
+                          list={`${filterName.toLowerCase()}-filter-options`}
                           value={filters[filterName]}
+                          placeholder={`Search ${filterName.toLowerCase()}…`}
                           onChange={(event) => setFilters((current) => ({ ...current, [filterName]: event.target.value }))}
-                        >
-                          <option value="">All {filterName === 'Authority' ? 'authorities' : `${filterName.toLowerCase()}s`}</option>
-                          {options.map((option) => <option key={option} value={option}>{option}</option>)}
-                        </select>
+                          aria-label={`Search ${filterName} options`}
+                        />
+                        <datalist id={`${filterName.toLowerCase()}-filter-options`}>
+                          {filterOptions(filterName).map((option) => <option key={option} value={option} />)}
+                        </datalist>
                       </label>
                     ))}
                   </div>
