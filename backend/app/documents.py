@@ -17,9 +17,8 @@ from .database import db_connection
 SUPPORTED_EXTENSIONS = {".csv", ".xls", ".xlsx"}
 
 TEMPLATE_COLUMNS = (
-    "GSTIN", "LEGAL NAME", "Pincode", "Trade Name", "Authority", "CIRCLE",
-    "CHARGE", "STATUS", "Regn. Dt.", "BUSINESS_CONST", "Mobile No.",
-    "E-Mail", "Address", "Location",
+    "GSTIN", "LEGAL NAME", "Pincode", "Trade Name", "BUSINESS_CONST",
+    "Mobile No.", "E-Mail", "Address", "Location",
 )
 GSTIN_PATTERN = re.compile(r"^[A-Z\d]{15}$")
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -37,57 +36,76 @@ def _is_empty(value: Any) -> bool:
     return value is None or (isinstance(value, float) and pd.isna(value)) or (isinstance(value, str) and not value.strip())
 
 
-def _digits(value: Any) -> str:
-    if isinstance(value, float) and value.is_integer():
-        value = int(value)
-    return re.sub(r"\D", "", str(value))
+def _validate_contact_values(values: dict[str, Any], sheet_name: str, row_number: int) -> list[str]:
+    """Validate populated values whose column has a defined input type."""
+    errors: list[str] = []
+    gstin = values.get("GSTIN")
+    if not _is_empty(gstin) and not GSTIN_PATTERN.fullmatch(str(gstin).strip().upper()):
+        errors.append(f"{sheet_name} row {row_number}: GSTIN must contain exactly 15 letters or digits")
+
+    for column in ("Pincode", "Mobile No."):
+        value = values.get(column)
+        if not _is_empty(value) and not re.fullmatch(r"\d+", str(value).strip()):
+            errors.append(f"{sheet_name} row {row_number}: {column} must contain numbers only")
+
+    email = values.get("E-Mail")
+    if not _is_empty(email) and not EMAIL_PATTERN.fullmatch(str(email).strip()):
+        errors.append(f"{sheet_name} row {row_number}: E-Mail must be a valid email address")
+    return errors
 
 
 def validate_workbook(path: Path, extension: str) -> dict[str, int]:
-    """Validate the approved upload schema before it is stored or indexed."""
+    """Validate column names before accepting an upload."""
     try:
         sheets = (
-            {"CSV": pd.read_csv(path, dtype=object)}
+            # Read without a header so duplicate spreadsheet headers are retained
+            # instead of silently being renamed by pandas.
+            {"CSV": pd.read_csv(path, header=None, dtype=object)}
             if extension == ".csv"
-            else pd.read_excel(path, sheet_name=None, dtype=object)
+            else pd.read_excel(path, sheet_name=None, header=None, dtype=object)
         )
     except Exception as exc:
         raise ValueError("The file could not be read. Upload a valid CSV, XLS, or XLSX file.") from exc
-    diagnostics: list[str] = []
-    rows_checked = 0
+    errors: list[str] = []
 
     if not sheets:
         raise ValueError("The workbook does not contain a worksheet.")
 
     for sheet_name, frame in sheets.items():
-        headers = [str(column).strip() for column in frame.columns]
+        if frame.empty:
+            errors.append(f"{sheet_name}: the worksheet is empty")
+            continue
+
+        headers = ["" if _is_empty(value) else str(value).strip() for value in frame.iloc[0].tolist()]
+        duplicate_headers = sorted({header for header in headers if header and headers.count(header) > 1})
         missing = [column for column in TEMPLATE_COLUMNS if column not in headers]
         unexpected = [column for column in headers if column not in TEMPLATE_COLUMNS]
-        if missing or unexpected:
+        if duplicate_headers or missing or unexpected:
             details = []
+            if duplicate_headers:
+                details.append(f"duplicate columns: {', '.join(duplicate_headers)}")
             if missing:
                 details.append(f"missing columns: {', '.join(missing)}")
             if unexpected:
                 details.append(f"unexpected columns: {', '.join(unexpected)}")
-            diagnostics.append(f"{sheet_name}: template columns do not match ({'; '.join(details)})")
+            errors.append(f"{sheet_name}: template columns do not match ({'; '.join(details)})")
             continue
 
-        for row_number, (_, row) in enumerate(frame.iterrows(), start=2):
-            values = {column: row[column] for column in TEMPLATE_COLUMNS}
-            if all(_is_empty(value) for value in values.values()):
-                continue
-            rows_checked += 1
+    if errors:
+        preview = errors[:20]
+        suffix = " (showing the first 20 issues)" if len(errors) > len(preview) else ""
+        raise ValueError("Upload rejected: " + " ".join(preview) + suffix)
+    return {"sheets_checked": len(sheets)}
 
-    if diagnostics:
-        suffix = " (showing the first 20 issues)" if len(diagnostics) >= 20 else ""
-        raise ValueError("Upload rejected: the file does not match the Data Library template" + suffix + ": " + " ".join(diagnostics))
-    if rows_checked == 0:
-        raise ValueError("Upload diagnostics failed: the workbook has no data rows.")
-    return {"sheets_checked": len(sheets), "rows_checked": rows_checked}
+
+def _value(value: Any) -> Any:
+    if _is_empty(value):
+        return None
+    return str(value).strip()
 
 
 def run_diagnostics(user_id: int, file_id: str) -> dict[str, Any]:
-    """Check an uploaded workbook for values that do not match their column type."""
+    """Report type errors and duplicate rows after an upload completes."""
     with db_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -106,43 +124,38 @@ def run_diagnostics(user_id: int, file_id: str) -> dict[str, Any]:
                 if file_row["status"] != "completed":
                     raise ValueError("Diagnostics are available after processing completes.")
 
-    alphabet_only = ("LEGAL NAME", "Authority", "CIRCLE", "CHARGE", "STATUS", "BUSINESS_CONST", "Location")
     issues: list[dict[str, Any]] = []
+    seen_rows: dict[tuple[str, tuple[str, ...]], int] = {}
     for record in records:
         values = record["record_json"]
         if isinstance(values, str):
             values = json.loads(values)
-        def report(column: str, message: str) -> None:
+        for error in _validate_contact_values(values, record["name"], record["record_number"]):
+            column = error.rsplit(": ", 1)[-1].split(" must ", 1)[0]
             if len(issues) < 100:
-                issues.append({"sheet": record["name"], "row": record["record_number"], "column": column, "message": message})
-
-        for column in alphabet_only:
-            value = values.get(column)
-            if not _is_empty(value) and any(char.isdigit() for char in str(value)):
-                report(column, "should contain letters only; a number was found")
-        for column in ("Pincode", "Mobile No."):
-            value = values.get(column)
-            if not _is_empty(value) and not re.fullmatch(r"[0-9 .()+-]+", str(value).strip()):
-                report(column, "should contain numbers only; a letter or invalid character was found")
-        gstin = values.get("GSTIN")
-        if not _is_empty(gstin) and not GSTIN_PATTERN.fullmatch(str(gstin).strip().upper()):
-            report("GSTIN", "must contain exactly 15 letters or digits")
-        date_value = values.get("Regn. Dt.")
-        if not _is_empty(date_value) and pd.isna(pd.to_datetime(date_value, errors="coerce")):
-            report("Regn. Dt.", "must be a valid date")
-        email = values.get("E-Mail")
-        if not _is_empty(email) and not EMAIL_PATTERN.fullmatch(str(email).strip()):
-            report("E-Mail", "must be a valid email address")
-
+                issues.append({
+                    "sheet": record["name"],
+                    "row": record["record_number"],
+                    "column": column,
+                    "message": error.rsplit(": ", 1)[-1],
+                    "value": values.get(column),
+                    "fixable": True,
+                })
+        row_key = tuple("" if _is_empty(values.get(column)) else str(values.get(column)).strip() for column in TEMPLATE_COLUMNS)
+        identity = (record["name"], row_key)
+        if identity in seen_rows and len(issues) < 100:
+            issues.append({
+                "sheet": record["name"],
+                "row": record["record_number"],
+                "column": "Row",
+                "message": f"Duplicate of row {seen_rows[identity]}",
+                "value": None,
+                "fixable": True,
+                "target_column": "GSTIN",
+            })
+        else:
+            seen_rows[identity] = record["record_number"]
     return {"rows_checked": len(records), "issues": issues, "has_more": len(issues) >= 100}
-
-
-def _value(value: Any) -> Any:
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return None
-    if hasattr(value, "isoformat"):
-        return value.isoformat()
-    return str(value).strip() if isinstance(value, str) else value
 
 
 def _clean_headers(columns: list[Any]) -> list[str]:
@@ -278,6 +291,23 @@ def update_cell(user_id: int, file_id: str, sheet_id: int, record_number: int, c
                 "UPDATE document_records SET record_json=CAST(%s AS JSON), searchable_text=%s WHERE id=%s",
                 (json.dumps(record_json, default=str), searchable_text, record["id"]),
             )
+
+
+def delete_record(user_id: int, file_id: str, sheet_name: str, record_number: int) -> None:
+    """Delete one authorized imported record and keep its sheet count accurate."""
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT r.id, s.id AS sheet_id FROM document_records r "
+                "JOIN document_sheets s ON s.id=r.sheet_id JOIN document_files f ON f.id=r.file_id "
+                "WHERE r.file_id=%s AND s.name=%s AND r.record_number=%s AND f.user_id=%s",
+                (file_id, sheet_name, record_number, user_id),
+            )
+            record = cursor.fetchone()
+            if not record:
+                raise ValueError("Workbook row not found.")
+            cursor.execute("DELETE FROM document_records WHERE id=%s", (record["id"],))
+            cursor.execute("UPDATE document_sheets SET row_count=GREATEST(row_count - 1, 0) WHERE id=%s", (record["sheet_id"],))
 
 
 def file_download(user_id: int, file_id: str) -> tuple[Path, str, str]:

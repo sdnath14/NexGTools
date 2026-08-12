@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Database, Download, FileUp, Loader2, Search, Trash2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Database, Download, FileUp, Loader2, RotateCcw, Search, Trash2 } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './DataLibrary.css';
 import './DataLibraryUpload.css';
 import './DataLibraryWorkbook.css';
-import './DataLibrarySort.css';
+import './DataLibraryUndo.css';
 
 
 
@@ -12,24 +12,9 @@ const ACCEPTED = '.csv,.xls,.xlsx';
 const formatBytes = (value) => `${(Number(value || 0) / 1024 / 1024).toFixed(1)} MB`;
 const tableColumns = (records) => [...new Set(records.flatMap((record) => Object.keys(record.record_json || {})))];
 const displayValue = (value) => value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
-const FILTER_OPTIONS = {
-  Authority: ['CENTER', 'STATE'],
-  Circle: ['24 PARGANAS', 'ASANSOL', 'BAHARAMPUR', 'BALLY', 'BEHALA', 'BURRABAZAR', 'CHOWRANGHEE', 'CORPORATE DIVISION', 'DHARMATOLA', 'DURGAPORE', 'HAORA', 'JALPAIGURI', 'KOLKATA NORTH', 'KOLKATA SOUTH', 'MEDINIPUR', 'RAIGANJ', 'SILIGURI'],
-  Charge: ['ALIPORE', 'AMRATALA', 'ARMENIAN STREET', 'ASANSOL', 'BAHARAMPUR', 'BALLY', 'BALLYGUNGE', 'BALURGHAT', 'BANKURA', 'BARASAT', 'BARDHAMAN', 'BARRACKPORE', 'BARUIPUR', 'BEADON STREET', 'BEHALA', 'BELGACHHIA', 'BELIAGHATA', 'BHABANIPUR', 'BOWBAZAR', 'BUDGE BUDGE', 'BURTOLA', 'CHANDNI CHAWK', 'CHINABAZAR', 'COLLEGE STREET', 'COLOOTOLA', 'COOCH BEHAR', 'COSSIPUR', 'DARJEELING', 'DIAMOND HARBOUR', 'DURGAPORE', 'ESPLANADE', 'EZRA STREET', 'FAIRLEY PLACE', 'HOWRAH', 'JALPAIGURI', 'JORABAGAN', 'JORASANKO', 'KADAMTALA', 'KRISHNANAGAR', 'LALBAZAR', 'LARGE TAXPAYER UNIT', 'LYONS RANGE', 'MALDAH', 'MANICKTOLA', 'MIDNAPORE', 'MONOHARKATRA', 'N.D.SARANI', 'N.S.ROAD', 'NEW MARKET', 'PARK STREET', 'POSTABAZAR', 'PRINCEP STREET', 'PURULIA', 'RADHABAZAR', 'RAIGANJ', 'RAJAKATRA', 'SALKIA', 'SALT LAKE', 'SEALDAH', 'SHIBPUR', 'SHYAMBAZAR', 'SILIGURI', 'SRIRAMPUR', 'STRAND ROAD', 'SURI', 'TALTALA', 'TAMLUK', 'ULTADANGA'],
-};
-
-
-const normalizedColumn = (value) =>
-  String(value).trim().toLocaleLowerCase();
-
-const normalizedFilterValue = (value) =>
-  String(value ?? '').trim().toLocaleUpperCase().replace(/[^A-Z0-9]/g, '');
-
-
-
-
 export default function DataLibrary() {
   const picker = useRef(null);
+  const workbookTableRef = useRef(null);
   const [files, setFiles] = useState([]);
   const [selectedFileIds, setSelectedFileIds] = useState([]);
   const [workbook, setWorkbook] = useState(null);
@@ -45,14 +30,14 @@ export default function DataLibrary() {
   const [loadingMoreIndex, setLoadingMoreIndex] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const [deletingFileId, setDeletingFileId] = useState(null);
-  const [filters, setFilters] = useState({ Authority: '', Circle: '', Charge: '' });
   const [error, setError] = useState('');
-  const [uploadDiagnostics, setUploadDiagnostics] = useState('');
   const [diagnosingFileId, setDiagnosingFileId] = useState(null);
   const [diagnosticResult, setDiagnosticResult] = useState(null);
   const [editingCell, setEditingCell] = useState(null);
   const [cellValue, setCellValue] = useState('');
   const [savingCell, setSavingCell] = useState(false);
+  const [undoStack, setUndoStack] = useState([]);
+  const [undoing, setUndoing] = useState(false);
 
   const loadFiles = async () => {
     try {
@@ -67,20 +52,18 @@ export default function DataLibrary() {
   const toggleSource = (fileId) => {
     setSelectedFileIds((current) => current.includes(fileId) ? current.filter((id) => id !== fileId) : [...current, fileId]);
     setSearchResult(null);
-    setFilters({ Authority: '', Circle: '', Charge: '' });
     setError('');
   };
 
   const clearSearch = () => {
     setSearchResult(null);
     setQuestion('');
-    setFilters({ Authority: '', Circle: '', Charge: '' });
     setError('');
   };
 
   const upload = async (selected) => {
     if (!selected?.length) return;
-    setUploading(true); setError(''); setUploadDiagnostics('');
+    setUploading(true); setError('');
     try {
       for (const file of selected) {
         const body = new FormData(); body.append('file', file);
@@ -92,7 +75,6 @@ export default function DataLibrary() {
           const message = data.detail || 'Please upload CSV, XLS, or XLSX files only.';
           throw new Error(`${file.name}: ${message}`);
         }
-        if (data.diagnostics) setUploadDiagnostics(`${file.name}: ${data.diagnostics.rows_checked} data rows validated across ${data.diagnostics.sheets_checked} sheet(s).`);
       }
       await loadFiles();
     } catch (uploadError) { setError(uploadError.message); } finally { setUploading(false); if (picker.current) picker.current.value = ''; }
@@ -107,7 +89,7 @@ export default function DataLibrary() {
       if (!response.ok) throw new Error(data.detail || 'Could not delete the uploaded file.');
       setSelectedFileIds((current) => current.filter((id) => id !== file.id));
       setSearchResult(null);
-      if (workbook?.file.id === file.id) { setWorkbook(null); setActiveSheetId(null); }
+      if (workbook?.file.id === file.id) { setWorkbook(null); setActiveSheetId(null); setUndoStack([]); }
       await loadFiles();
     } catch (deleteError) { setError(deleteError.message); } finally { setDeletingFileId(null); }
   };
@@ -124,30 +106,82 @@ export default function DataLibrary() {
   };
 
   const fixDiagnostic = async (issue) => {
-    const file = files.find((item) => item.id === diagnosticResult.fileId);
+    const file = files.find((item) => item.id === diagnosticResult?.fileId);
     if (!file) return;
     const sheets = await openWorkbook(file);
     const sheet = sheets?.find((item) => item.name === issue.sheet);
     const record = sheet?.records.find((item) => item.record_number === issue.row);
     if (!sheet || !record) return;
+    const column = issue.target_column || issue.column;
     setActiveSheetId(sheet.id);
-    setEditingCell({ sheet: issue.sheet, recordNumber: issue.row, column: issue.column });
-    setCellValue(record.record_json?.[issue.column] ?? '');
+    setWorkbookScrollTop(Math.max(0, sheet.records.findIndex((item) => item.record_number === issue.row) * 31));
+    setEditingCell({ sheet: issue.sheet, recordNumber: issue.row, column });
+    setCellValue(record.record_json?.[column] ?? '');
+  };
+
+  useEffect(() => {
+    if (!editingCell || activePanel !== 'workbook') return;
+    const timer = window.setTimeout(() => {
+      workbookTableRef.current?.querySelector('.library-cell-needs-attention')?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+    }, 50);
+    return () => window.clearTimeout(timer);
+  }, [activePanel, activeSheetId, editingCell, workbookScrollTop]);
+
+  const deleteDuplicateDiagnostic = async (issue) => {
+    if (!diagnosticResult || !window.confirm(`Delete duplicate row ${issue.row} from ${issue.sheet}?`)) return;
+    setError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/documents/${diagnosticResult.fileId}/records/${encodeURIComponent(issue.sheet)}/${issue.row}`, { method: 'DELETE', headers: authHeaders() });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not delete the duplicate row.');
+      setDiagnosticResult((current) => current && ({ ...current, rows_checked: Math.max(0, current.rows_checked - 1), issues: current.issues.filter((item) => !(item.sheet === issue.sheet && item.row === issue.row && item.column === 'Row')) }));
+      setWorkbook((current) => current && current.file.id === diagnosticResult.fileId ? ({ ...current, sheets: current.sheets.map((sheet) => sheet.name !== issue.sheet ? sheet : ({ ...sheet, records: sheet.records.filter((record) => record.record_number !== issue.row), row_count: Math.max(0, sheet.row_count - 1) })) }) : current);
+      await loadFiles();
+    } catch (deleteError) { setError(deleteError.message); }
   };
 
   const saveCell = async (clear = false) => {
     if (!editingCell || !workbook || savingCell) return;
     const sheet = workbook.sheets.find((item) => item.name === editingCell.sheet);
     if (!sheet) return;
+    const previousValue = sheet.records.find((record) => record.record_number === editingCell.recordNumber)?.record_json?.[editingCell.column] ?? null;
+    const nextValue = clear || cellValue === '' ? null : cellValue;
+    if (previousValue === nextValue) { setEditingCell(null); return; }
     setSavingCell(true); setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/documents/${workbook.file.id}/cell`, { method: 'PATCH', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ sheet_id: sheet.id, record_number: editingCell.recordNumber, column: editingCell.column, value: clear ? null : cellValue }) });
+      const response = await fetch(`${API_BASE_URL}/api/documents/${workbook.file.id}/cell`, { method: 'PATCH', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ sheet_id: sheet.id, record_number: editingCell.recordNumber, column: editingCell.column, value: nextValue }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not update the cell.');
-      setWorkbook((current) => current && ({ ...current, sheets: current.sheets.map((item) => item.id !== sheet.id ? item : ({ ...item, records: item.records.map((record) => record.record_number !== editingCell.recordNumber ? record : ({ ...record, record_json: { ...record.record_json, [editingCell.column]: clear ? null : cellValue } })) })) }));
+      setWorkbook((current) => current && ({ ...current, sheets: current.sheets.map((item) => item.id !== sheet.id ? item : ({ ...item, records: item.records.map((record) => record.record_number !== editingCell.recordNumber ? record : ({ ...record, record_json: { ...record.record_json, [editingCell.column]: nextValue } })) })) }));
+      setUndoStack((current) => [...current, { sheetId: sheet.id, sheetName: sheet.name, recordNumber: editingCell.recordNumber, column: editingCell.column, previousValue }]);
       setEditingCell(null);
     } catch (cellError) { setError(cellError.message); } finally { setSavingCell(false); }
   };
+
+  const undoLastCellChange = async () => {
+    if (!workbook || !undoStack.length || undoing || savingCell) return;
+    const change = undoStack[undoStack.length - 1];
+    setUndoing(true); setError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/documents/${workbook.file.id}/cell`, { method: 'PATCH', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ sheet_id: change.sheetId, record_number: change.recordNumber, column: change.column, value: change.previousValue }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not undo the cell change.');
+      setWorkbook((current) => current && ({ ...current, sheets: current.sheets.map((sheet) => sheet.id !== change.sheetId ? sheet : ({ ...sheet, records: sheet.records.map((record) => record.record_number !== change.recordNumber ? record : ({ ...record, record_json: { ...record.record_json, [change.column]: change.previousValue } })) })) }));
+      setUndoStack((current) => current.slice(0, -1));
+      setEditingCell(null);
+    } catch (undoError) { setError(undoError.message); } finally { setUndoing(false); }
+  };
+
+  useEffect(() => {
+    const handleUndoShortcut = (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && activePanel === 'workbook' && !editingCell) {
+        event.preventDefault();
+        undoLastCellChange();
+      }
+    };
+    window.addEventListener('keydown', handleUndoShortcut);
+    return () => window.removeEventListener('keydown', handleUndoShortcut);
+  }, [activePanel, editingCell, undoStack, undoing, savingCell, workbook]);
 
   const openWorkbook = async (file) => {
     if (file.status !== 'completed') return;
@@ -158,7 +192,7 @@ export default function DataLibrary() {
       if (!response.ok) throw new Error(data.detail || 'Could not load document contents.');
       const sheets = data.sheets || [];
       setWorkbook({ file, loading: false, sheets });
-      setActiveSheetId(sheets[0]?.id || null); setWorkbookScrollTop(0);
+      setActiveSheetId(sheets[0]?.id || null); setWorkbookScrollTop(0); setUndoStack([]);
       return sheets;
     } catch (viewError) { setWorkbook(null); setError(viewError.message); return null; }
   };
@@ -200,7 +234,6 @@ export default function DataLibrary() {
         hasMore: Boolean(data.has_more),
         fileIds: selectedFileIds,
       });
-      setFilters({ Authority: '', Circle: '', Charge: '' });
       setQuestion('');
     } catch (askError) { setError(askError.message); } finally { setSearching(false); }
   };
@@ -242,36 +275,13 @@ export default function DataLibrary() {
   const downloadSearchResults = () => {
     if (!searchResult?.records.length) return;
     const columns = tableColumns(searchResult.records);
-    const records = filteredRecords(searchResult.records);
+    const records = searchResult.records;
     const csvCell = (value) => `"${displayValue(value).replaceAll('"', '""')}"`;
     const csv = [columns.map(csvCell).join(','), ...records.map((record) => columns.map((column) => csvCell(record.record_json?.[column])).join(','))].join('\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement('a');
     link.href = url; link.download = `data-library-search-${new Date().toISOString().slice(0, 10)}.csv`; link.click();
     URL.revokeObjectURL(url);
-  };
-
-  const filteredRecords = (records) => records.filter((record) =>
-    Object.entries(filters).every(([filterName, selectedValue]) => {
-      if (!selectedValue) return true;
-      const column = Object.keys(record.record_json || {}).find(
-        (key) => normalizedColumn(key) === normalizedColumn(filterName),
-      );
-      return column && normalizedFilterValue(record.record_json?.[column]).includes(normalizedFilterValue(selectedValue));
-    }),
-  );
-
-  const filterOptions = (filterName) => {
-    const valuesInResults = (searchResult?.records || []).flatMap((record) => {
-      const column = Object.keys(record.record_json || {}).find(
-        (key) => normalizedColumn(key) === normalizedColumn(filterName),
-      );
-      const value = column ? displayValue(record.record_json?.[column]).trim() : '';
-      return value && value !== '—' ? [value] : [];
-    });
-
-    return [...new Set([...(FILTER_OPTIONS[filterName] || []), ...valuesInResults])]
-      .sort((first, second) => first.localeCompare(second));
   };
 
   const selectedFiles = files.filter((file) => selectedFileIds.includes(file.id));
@@ -339,16 +349,6 @@ return (
       </div>
     )}
 
-    {uploadDiagnostics && (
-      <div
-        className="library-alert"
-        style={{ background: '#ecfdf5', borderColor: '#a7f3d0', color: '#047857' }}
-      >
-        <CheckCircle2 size={17} />
-        {uploadDiagnostics}
-      </div>
-    )}
-
     {activePanel === 'upload' && documentsPanel}
 
     {activePanel === 'upload' && diagnosticResult && (
@@ -362,13 +362,13 @@ return (
         {diagnosticResult.issues.length ? (
           <div className="library-table-wrap">
             <table>
-              <thead><tr><th>Sheet</th><th>Row</th><th>Column</th><th>Issue</th><th>Action</th></tr></thead>
+              <thead><tr><th>Sheet</th><th>Row</th><th>Column</th><th>Value</th><th>Issue</th><th>Action</th></tr></thead>
               <tbody>{diagnosticResult.issues.map((issue, index) => (
-                <tr key={`${issue.sheet}-${issue.row}-${issue.column}-${index}`}><td>{issue.sheet}</td><td>{issue.row}</td><td>{issue.column}</td><td>{issue.message}</td><td><button type="button" className="library-refresh" onClick={() => fixDiagnostic(issue)}>Fix</button></td></tr>
+                <tr key={`${issue.sheet}-${issue.row}-${issue.column}-${index}`}><td>{issue.sheet}</td><td>{issue.row}</td><td>{issue.column}</td><td>{displayValue(issue.value)}</td><td>{issue.message}</td><td>{issue.target_column ? <button type="button" className="library-diagnostic-delete" onClick={() => deleteDuplicateDiagnostic(issue)}><Trash2 size={14} /> Delete</button> : <button type="button" className="library-refresh" onClick={() => fixDiagnostic(issue)}>Fix</button>}</td></tr>
               ))}</tbody>
             </table>
           </div>
-        ) : <div className="library-search-state"><CheckCircle2 size={18} /> No consistency issues found.</div>}
+        ) : <div className="library-search-state"><CheckCircle2 size={18} /> No type or duplicate-row issues found.</div>}
       </section>
     )}
 
@@ -445,7 +445,7 @@ return (
             (() => {
               const columns = tableColumns(searchResult.records);
 
-              const records = filteredRecords(searchResult.records);
+              const records = searchResult.records;
 
               return (
                 <div className="library-results">
@@ -471,26 +471,6 @@ return (
                       <Download size={16} />
                       Download CSV
                     </button>
-                  </div>
-
-                  <div className="library-filter-controls" aria-label="Filter search results">
-                    {Object.keys(FILTER_OPTIONS).map((filterName) => (
-                      <label key={filterName}>
-                        <span>{filterName}</span>
-                        <input
-                          className="library-filter-search"
-                          type="search"
-                          list={`${filterName.toLowerCase()}-filter-options`}
-                          value={filters[filterName]}
-                          placeholder={`Search ${filterName.toLowerCase()}…`}
-                          onChange={(event) => setFilters((current) => ({ ...current, [filterName]: event.target.value }))}
-                          aria-label={`Search ${filterName} options`}
-                        />
-                        <datalist id={`${filterName.toLowerCase()}-filter-options`}>
-                          {filterOptions(filterName).map((option) => <option key={option} value={option} />)}
-                        </datalist>
-                      </label>
-                    ))}
                   </div>
 
                   {columns.length ? (
@@ -584,6 +564,19 @@ return (
               <button
                 type="button"
                 className="library-refresh"
+                onClick={undoLastCellChange}
+                disabled={!undoStack.length || undoing || savingCell}
+                title="Undo last cell change (Ctrl/Cmd + Z)"
+              >
+                {undoing ? <Loader2 className="spin" size={15} /> : <RotateCcw size={15} />}
+                Undo
+              </button>
+            )}
+
+            {workbook && (
+              <button
+                type="button"
+                className="library-refresh"
                 onClick={downloadWorkbook}
                 disabled={downloading}
               >
@@ -648,6 +641,7 @@ return (
                     </div>
 
                     <div
+                      ref={workbookTableRef}
                       className="library-workbook-table"
                       onScroll={(event) =>
                         setWorkbookScrollTop(
@@ -683,14 +677,22 @@ return (
                               <td>{record.record_number}</td>
 
                               {columns.map((column) => (
-                                <td key={column}>
+                                <td
+                                  key={column}
+                                  className={`library-editable-cell ${editingCell?.sheet === sheet.name && editingCell.recordNumber === record.record_number && editingCell.column === column ? 'library-cell-needs-attention' : ''}`}
+                                  title="Click to edit"
+                                  onClick={() => {
+                                    setEditingCell({ sheet: sheet.name, recordNumber: record.record_number, column });
+                                    setCellValue(record.record_json?.[column] ?? '');
+                                  }}
+                                >
                                   {editingCell?.sheet === sheet.name &&
                                   editingCell.recordNumber === record.record_number &&
                                   editingCell.column === column ? (
                                     <span className="library-cell-editor">
                                       <input value={cellValue} onChange={(event) => setCellValue(event.target.value)} autoFocus />
-                                      <button type="button" onClick={() => saveCell()} disabled={savingCell}>Save</button>
-                                      <button type="button" onClick={() => saveCell(true)} disabled={savingCell}>Clear</button>
+                                      <button type="button" onClick={(event) => { event.stopPropagation(); saveCell(); }} disabled={savingCell}>Save</button>
+                                      <button type="button" onClick={(event) => { event.stopPropagation(); saveCell(true); }} disabled={savingCell}>Clear</button>
                                     </span>
                                   ) : displayValue(record.record_json?.[column])}
                                 </td>

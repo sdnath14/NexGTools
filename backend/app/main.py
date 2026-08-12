@@ -58,7 +58,7 @@ from .database import (
     verify_admin_password,
 )
 from .scraper import CrawlOptions, EMAIL_RE, PHONE_RE, scrape_website
-from .documents import answer as answer_documents, create_file, delete_file, file_contents, file_download, ingest, list_files, run_diagnostics, search as search_documents, update_cell, validate_upload, validate_workbook
+from .documents import answer as answer_documents, create_file, delete_file, delete_record, file_contents, file_download, ingest, list_files, run_diagnostics, search as search_documents, update_cell, validate_upload, validate_workbook
 
 
 app = FastAPI(title="NexGTools API", version="0.1.0")
@@ -1401,9 +1401,8 @@ def download_document_template(authorization: str | None = Header(default=None))
     worksheet = workbook.active
     worksheet.title = "Data Upload"
     worksheet.append([
-        "GSTIN", "LEGAL NAME", "Pincode", "Trade Name", "Authority", "CIRCLE",
-        "CHARGE", "STATUS", "Regn. Dt.", "BUSINESS_CONST", "Mobile No.",
-        "E-Mail", "Address", "Location",
+        "GSTIN", "LEGAL NAME", "Pincode", "Trade Name", "BUSINESS_CONST",
+        "Mobile No.", "E-Mail", "Address", "Location",
     ])
     for cell in worksheet[1]:
         cell.font = cell.font.copy(bold=True)
@@ -1448,10 +1447,10 @@ async def upload_document(
                 if total > settings.document_max_upload_mb * 1024 * 1024:
                     raise ValueError(f"File exceeds the {settings.document_max_upload_mb} MB limit.")
                 output.write(chunk)
-        diagnostics = validate_workbook(temporary, extension)
+        validate_workbook(temporary, extension)
         created = create_file(user["id"], filename, file.content_type or "", temporary)
         background_tasks.add_task(_process_document, created["file_id"], created["job_id"])
-        return {"file": created, "status": "queued", "diagnostics": diagnostics}
+        return {"file": created, "status": "queued"}
     except ValueError as exc:
         if temporary:
             temporary.unlink(missing_ok=True)
@@ -1494,6 +1493,16 @@ def update_document_cell(file_id: str, payload: DocumentCellUpdate, authorizatio
     try:
         update_cell(user["id"], file_id, payload.sheet_id, payload.record_number, payload.column, payload.value)
         return {"updated": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.delete("/api/documents/{file_id}/records/{sheet_name}/{record_number}")
+def delete_document_record(file_id: str, sheet_name: str, record_number: int, authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    user = _require_permission(authorization, "data_library")
+    try:
+        delete_record(user["id"], file_id, sheet_name, record_number)
+        return {"deleted": True}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

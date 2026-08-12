@@ -46,6 +46,41 @@
   font-style: normal;
 }
 
+.library-diagnostic-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-width: 76px;
+  min-height: 32px;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid #fecaca;
+  border-radius: 0.45rem;
+  background: #fff;
+  color: #dc2626;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.library-diagnostic-delete:hover {
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+
+.library-cell-needs-attention {
+  background: #fef3c7 !important;
+  box-shadow: inset 0 0 0 2px #f59e0b;
+  animation: library-cell-pulse 1.3s ease-in-out 2;
+}
+
+@keyframes library-cell-pulse {
+  50% { background: #fde68a !important; }
+}
+
 @media (max-width: 600px) {
   .library-documents-panel .library-card-head {
     align-items: flex-start;
