@@ -638,7 +638,6 @@ export default function BusinessOutreach() {
             {generating ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
             {generating ? 'Generating...' : 'Generate Content'}
           </button>
-          <small className="bo-helper">Uses OpenAI with selected workbook/manual leads and your inputs.</small>
         </section>
       )}
 

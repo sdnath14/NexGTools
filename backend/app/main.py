@@ -2264,8 +2264,9 @@ def send_outreach(payload: OutreachSendRequest, authorization: str | None = Head
         if channel == "email":
             if not settings.smtp_host or not settings.smtp_from_email:
                 raise HTTPException(status_code=503, detail="SMTP is not configured on the server.")
-            smtp = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20)
-            if settings.smtp_use_tls:
+            use_ssl = settings.smtp_port == 465
+            smtp = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=20) if use_ssl else smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20)
+            if settings.smtp_use_tls and not use_ssl:
                 smtp.starttls()
             if settings.smtp_username:
                 smtp.login(settings.smtp_username, settings.smtp_password)
