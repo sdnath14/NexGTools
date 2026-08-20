@@ -112,6 +112,7 @@
 
 .sidebar-logo-text {
   color: #ffffff;
+  font-family: var(--app-display-font-family);
   font-size: 1.12rem;
   font-style: italic;
   font-weight: 500;

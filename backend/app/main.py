@@ -46,6 +46,7 @@ from .database import (
     list_business_search_history,
     list_lead_search_history,
     list_outreach_contacts,
+    list_outreach_drafts,
     list_outreach_messages,
     list_roles,
     list_users_with_roles,
@@ -54,6 +55,7 @@ from .database import (
     save_csv_export,
     save_lead_search,
     save_manual_outreach_contact,
+    save_outreach_draft,
     save_website_scrape,
     verify_admin_password,
 )
@@ -150,6 +152,13 @@ class OutreachContactRequest(BaseModel):
     phone: str = ""
     website: str = ""
     category: str = "manual"
+
+
+class OutreachDraftRequest(BaseModel):
+    contact_ids: list[int] = Field(default_factory=list)
+    channel: str = "email"
+    subject: str = "Business invitation"
+    message: str
 
 
 class OutreachGenerateRequest(BaseModel):
@@ -2057,6 +2066,7 @@ def outreach_workspace(authorization: str | None = Header(default=None)) -> dict
     return {
         "contacts": list_outreach_contacts(user["id"]),
         "history": list_outreach_messages(user["id"]),
+        "drafts": list_outreach_drafts(user["id"]),
         "providers": {
             "smtp": bool(settings.smtp_host and settings.smtp_from_email),
             "whatsapp": bool(settings.whatsapp_api_url and settings.whatsapp_access_token),
@@ -2084,6 +2094,21 @@ def create_outreach_contact(payload: OutreachContactRequest, authorization: str 
         return {"contact": contact}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/outreach/drafts", status_code=201)
+def create_outreach_draft(payload: OutreachDraftRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "outreach")
+    channel = payload.channel.strip().lower()
+    if channel not in {"email", "whatsapp"}:
+        raise HTTPException(status_code=400, detail="Channel must be email or whatsapp.")
+    if not payload.message.strip():
+        raise HTTPException(status_code=400, detail="Write a draft before saving.")
+    contacts = {contact["id"] for contact in list_outreach_contacts(user["id"])}
+    contact_ids = [contact_id for contact_id in payload.contact_ids if contact_id in contacts]
+    draft_id = save_outreach_draft(user["id"], channel, payload.subject.strip(), payload.message.strip(), contact_ids)
+    draft = next((item for item in list_outreach_drafts(user["id"]) if item["id"] == draft_id), None)
+    return {"draft": draft}
 
 
 @app.post("/api/outreach/generate")

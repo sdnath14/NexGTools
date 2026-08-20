@@ -274,6 +274,22 @@ def initialize_database() -> None:
             )
             cursor.execute(
                 """
+                CREATE TABLE IF NOT EXISTS outreach_drafts (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT UNSIGNED NOT NULL,
+                    channel VARCHAR(32) NOT NULL,
+                    subject VARCHAR(500),
+                    message TEXT NOT NULL,
+                    contact_ids_json JSON NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_outreach_drafts_user (user_id),
+                    CONSTRAINT fk_outreach_draft_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS user_sessions (
                     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
                     user_id BIGINT UNSIGNED NOT NULL,
@@ -769,6 +785,45 @@ def list_outreach_messages(user_id: int) -> list[dict[str, Any]]:
             rows = cursor.fetchall()
     for row in rows:
         if row.get("created_at"): row["created_at"] = row["created_at"].isoformat()
+    return rows
+
+
+def save_outreach_draft(user_id: int, channel: str, subject: str, message: str, contact_ids: list[int]) -> int:
+    clean_contact_ids = [int(contact_id) for contact_id in contact_ids if str(contact_id).isdigit()]
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO outreach_drafts (user_id, channel, subject, message, contact_ids_json)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (user_id, channel, subject, message, json.dumps(clean_contact_ids)),
+            )
+            return cursor.lastrowid
+
+
+def list_outreach_drafts(user_id: int) -> list[dict[str, Any]]:
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, channel, subject, message, contact_ids_json, created_at, updated_at
+                FROM outreach_drafts
+                WHERE user_id = %s
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 100
+                """,
+                (user_id,),
+            )
+            rows = cursor.fetchall()
+    for row in rows:
+        contact_ids = row.pop("contact_ids_json", None)
+        try:
+            row["contact_ids"] = json.loads(contact_ids) if contact_ids else []
+        except (TypeError, json.JSONDecodeError):
+            row["contact_ids"] = []
+        if row.get("created_at"): row["created_at"] = row["created_at"].isoformat()
+        if row.get("updated_at"): row["updated_at"] = row["updated_at"].isoformat()
     return rows
 
 

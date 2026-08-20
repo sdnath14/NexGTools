@@ -30,7 +30,7 @@ const allDashboardPermissions = Object.keys(permissionLabels);
 const adminTools = [
   { label: 'Lead Search', description: 'Find business leads', path: '/lead-search', icon: Users, color: '#f97316' },
   { label: 'Business Search', description: 'Discover businesses', path: '/business-search', icon: Building2, color: '#ea580c' },
-  { label: 'Business Outreach', description: 'Generate and send outreach', path: '/business-outreach', icon: Send, color: '#2563eb' },
+  { label: 'Business Outreach', description: 'Generate and send outreach', path: '/business-outreach', icon: Send, color: '#f97316' },
   { label: 'Data Library', description: 'Search uploaded data', path: '/data-library', icon: Database, color: '#c2410c' },
 ];
 

@@ -17,7 +17,6 @@ import {
   Save,
   Search,
   Send,
-  Settings,
   Sparkles,
   UserRound,
   X,
@@ -37,7 +36,6 @@ const tabs = [
   { id: 'leads', label: 'Leads', icon: Database },
   { id: 'generate', label: 'Generate', icon: Sparkles },
   { id: 'editor', label: 'Editor', icon: Edit3 },
-  { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
 const emptyLead = { company_name: '', contact_person: '', email: '', phone: '', website: '', category: 'manual' };
@@ -59,6 +57,7 @@ export default function BusinessOutreach() {
   const [activeTab, setActiveTab] = useState('leads');
   const [contacts, setContacts] = useState([]);
   const [history, setHistory] = useState([]);
+  const [draftHistory, setDraftHistory] = useState([]);
   const [providers, setProviders] = useState({ smtp: false, whatsapp: false });
   const [sender, setSender] = useState({ name: '', email: '' });
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
@@ -84,6 +83,7 @@ export default function BusinessOutreach() {
   const [savingLead, setSavingLead] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [rewriting, setRewriting] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -96,6 +96,7 @@ export default function BusinessOutreach() {
       if (!response.ok) throw new Error(data.detail || 'Could not load business outreach.');
       setContacts(data.contacts || []);
       setHistory(data.history || []);
+      setDraftHistory(data.drafts || []);
       setProviders(data.providers || { smtp: false, whatsapp: false });
       setSender(data.sender || { name: '', email: '' });
     } catch (loadError) {
@@ -142,6 +143,7 @@ export default function BusinessOutreach() {
 
   const selectedLeads = leads.filter((lead) => selectedLeadIds.includes(lead.id));
   const selectedChannelLeads = selectedLeads.filter((lead) => channel === 'email' ? lead.email : lead.phone);
+  const selectedMissingChannelLeads = selectedLeads.filter((lead) => channel === 'email' ? !lead.email : !lead.phone);
   const providerReady = channel === 'email' ? providers.smtp : providers.whatsapp;
   const importRows = useMemo(() => importSheets.flatMap((sheet) => (sheet.records || []).map((record) => {
     const company = fieldValue(record, ['LEGAL NAME', 'Trade Name', 'Company', 'Company Name', 'Business Name']);
@@ -293,6 +295,11 @@ export default function BusinessOutreach() {
       setActiveTab('leads');
       return;
     }
+    if (!selectedChannelLeads.length) {
+      setError(`Select at least one lead with ${channel === 'email' ? 'a business email' : 'a WhatsApp phone number'}.`);
+      setActiveTab('leads');
+      return;
+    }
     if (rewrite && (!rewritePrompt.trim() || !draft.trim())) return;
     const setBusy = rewrite ? setRewriting : setGenerating;
     setBusy(true);
@@ -303,7 +310,7 @@ export default function BusinessOutreach() {
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contact_ids: selectedLeadIds,
+          contact_ids: selectedChannelLeads.map((lead) => lead.id),
           channel,
           tone,
           campaign_goal: campaignGoal,
@@ -334,9 +341,44 @@ export default function BusinessOutreach() {
     setNotice('Draft copied.');
   };
 
-  const saveDraft = () => {
-    localStorage.setItem('nexgtools_business_outreach_draft', draft);
-    setNotice('Draft saved on this device.');
+  const saveDraft = async () => {
+    if (!draft.trim()) {
+      setError('Write or generate a draft before saving.');
+      return;
+    }
+    setSavingDraft(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/outreach/drafts`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contact_ids: selectedChannelLeads.map((lead) => lead.id),
+          channel,
+          subject,
+          message: draft,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not save draft.');
+      localStorage.setItem('nexgtools_business_outreach_draft', draft);
+      setDraftHistory((current) => [data.draft, ...current.filter((item) => item.id !== data.draft?.id)].filter(Boolean));
+      setNotice('Draft saved to history.');
+    } catch (saveError) {
+      setError(saveError.message || 'Could not save draft.');
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
+  const loadDraftFromHistory = (item) => {
+    setChannel(item.channel || 'email');
+    setSubject(item.subject || 'Business invitation');
+    setDraft(item.message || '');
+    localStorage.setItem('nexgtools_business_outreach_draft', item.message || '');
+    setSelectedLeadIds((item.contact_ids || []).filter((id) => leads.some((lead) => lead.id === id)));
+    setNotice('Draft loaded.');
   };
 
   const rewriteDraft = () => requestGeneratedDraft({ rewrite: true });
@@ -344,7 +386,6 @@ export default function BusinessOutreach() {
   const sendNow = async () => {
     if (!providerReady) {
       setError(channel === 'email' ? 'Company email is not configured yet.' : 'WhatsApp API is not configured yet.');
-      setActiveTab('settings');
       return;
     }
     if (!selectedChannelLeads.length) {
@@ -387,13 +428,6 @@ export default function BusinessOutreach() {
 
   return (
     <div className="bo-page">
-      <div className="bo-top-strip">
-        <h1>{tabs.find((tab) => tab.id === activeTab)?.label}</h1>
-        <button type="button" className="bo-profile-btn" title={sender.email || 'Workspace user'}>
-          <UserRound size={15} />
-        </button>
-      </div>
-
       {(error || notice) && (
         <div className={`bo-alert ${error ? 'error' : 'success'}`}>
           {error ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
@@ -516,6 +550,29 @@ export default function BusinessOutreach() {
             <button type="button" className={channel === 'whatsapp' ? 'active' : ''} onClick={() => setChannel('whatsapp')}><MessageSquare size={14} /> WhatsApp</button>
           </div>
 
+          <div className="bo-recipients-card">
+            <div className="bo-recipients-head">
+              <strong>To</strong>
+              <span>{selectedChannelLeads.length} selected {channel === 'email' ? 'email' : 'WhatsApp number'}{selectedChannelLeads.length === 1 ? '' : 's'}</span>
+              <button type="button" onClick={() => setActiveTab('leads')}><Edit3 size={14} /> Select Leads</button>
+            </div>
+            {selectedChannelLeads.length ? (
+              <div className="bo-recipient-list">
+                {selectedChannelLeads.map((lead) => (
+                  <span key={lead.id}>
+                    <b>{lead.company_name}</b>
+                    <em>{channel === 'email' ? lead.email : lead.phone}</em>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p>Select leads with {channel === 'email' ? 'business emails' : 'WhatsApp phone numbers'} from the Leads tab.</p>
+            )}
+            {selectedMissingChannelLeads.length > 0 && (
+              <small>{selectedMissingChannelLeads.length} selected lead{selectedMissingChannelLeads.length === 1 ? '' : 's'} skipped because {channel === 'email' ? 'email is' : 'WhatsApp number is'} missing.</small>
+            )}
+          </div>
+
           <div className="bo-draft-card">
             <div className="bo-draft-head">
               <span><Bot size={18} /></span>
@@ -533,23 +590,36 @@ export default function BusinessOutreach() {
           </div>
 
           <div className="bo-editor-actions">
-            <button type="button" className="bo-soft-btn" onClick={saveDraft}><Save size={15} /> Save Draft</button>
+            <button type="button" className="bo-soft-btn" onClick={saveDraft} disabled={savingDraft || !draft.trim()}>
+              {savingDraft ? <Loader2 className="spin" size={15} /> : <Save size={15} />}
+              Save Draft
+            </button>
             <button type="button" className="bo-dark-btn" onClick={sendNow} disabled={sending || !draft.trim()}>
               {sending ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
               Send Now
             </button>
           </div>
-        </section>
-      )}
 
-      {activeTab === 'settings' && (
-        <section className="bo-settings">
-          <div>
-            <h2>Sending Preferences</h2>
-            <label><span>Default channel</span><select value={channel} onChange={(event) => setChannel(event.target.value)}><option value="email">Email</option><option value="whatsapp">WhatsApp</option></select></label>
-            <label><span>Company email status</span><input value={providers.smtp ? `Configured: ${sender.email || 'SMTP ready'}` : 'Not configured yet'} readOnly /></label>
-            <label><span>WhatsApp API status</span><input value={providers.whatsapp ? 'Configured' : 'Not configured yet'} readOnly /></label>
-            <label><span>Setup note</span><textarea rows="4" readOnly value={'Provide SMTP and WhatsApp API credentials for the backend .env. Once configured, this page will send through /api/outreach/send.'} /></label>
+          <div className="bo-draft-history">
+            <div className="bo-section-head">
+              <h2>Draft History</h2>
+              <span>{draftHistory.length} saved</span>
+            </div>
+            {draftHistory.length ? (
+              <div className="bo-draft-history-list">
+                {draftHistory.map((item) => (
+                  <button type="button" key={item.id} onClick={() => loadDraftFromHistory(item)}>
+                    <span>
+                      <strong>{item.subject || (item.channel === 'whatsapp' ? 'WhatsApp draft' : 'Business invitation')}</strong>
+                      <small>{item.channel === 'email' ? 'Email' : 'WhatsApp'} · {(item.contact_ids || []).length} lead{(item.contact_ids || []).length === 1 ? '' : 's'} · {item.updated_at ? new Date(item.updated_at).toLocaleString() : 'Saved'}</small>
+                    </span>
+                    <em>{(item.message || '').slice(0, 120)}{(item.message || '').length > 120 ? '...' : ''}</em>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="bo-empty-inline">Saved drafts will appear here.</p>
+            )}
           </div>
         </section>
       )}
