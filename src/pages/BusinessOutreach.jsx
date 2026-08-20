@@ -494,9 +494,20 @@ export default function BusinessOutreach() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not send outreach.');
-      const sent = (data.results || []).filter((result) => result.status === 'sent').length;
-      const failed = (data.results || []).filter((result) => result.status === 'failed').length;
-      setNotice(`${sent} sent${failed ? `, ${failed} failed` : ''}.`);
+      const results = data.results || [];
+      const sent = results.filter((result) => result.status === 'sent').length;
+      const failedResults = results.filter((result) => result.status === 'failed');
+      const skippedResults = results.filter((result) => result.status === 'skipped');
+      if (failedResults.length || skippedResults.length) {
+        const problemResults = [...failedResults, ...skippedResults].slice(0, 3);
+        const details = problemResults.map((result) => {
+          const target = result.company_name || result.recipient || `Lead ${result.contact_id}`;
+          return `${target}: ${result.detail || result.status}`;
+        }).join(' | ');
+        setError(`${sent} sent, ${failedResults.length} failed${skippedResults.length ? `, ${skippedResults.length} skipped` : ''}. ${details}`);
+      } else {
+        setNotice(`${sent} sent.`);
+      }
       await loadWorkspace();
     } catch (sendError) {
       setError(sendError.message || 'Could not send outreach.');

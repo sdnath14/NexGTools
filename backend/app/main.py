@@ -57,6 +57,7 @@ from .database import (
     save_csv_export,
     save_lead_search,
     save_manual_outreach_contact,
+    save_outreach_message,
     save_outreach_draft,
     save_website_scrape,
     update_outreach_contact,
@@ -2273,8 +2274,13 @@ def send_outreach(payload: OutreachSendRequest, authorization: str | None = Head
 
         for contact in selected:
             recipient = (contact.get("email") if channel == "email" else contact.get("phone")) or ""
+            result_base = {
+                "contact_id": contact["id"],
+                "company_name": contact.get("company_name", ""),
+                "recipient": recipient,
+            }
             if not recipient:
-                results.append({"contact_id": contact["id"], "status": "skipped", "detail": f"No {channel} address"})
+                results.append({**result_base, "status": "skipped", "detail": f"No {channel} address"})
                 continue
             personalized = payload.message.replace("{{company_name}}", contact["company_name"])
             try:
@@ -2301,10 +2307,10 @@ def send_outreach(payload: OutreachSendRequest, authorization: str | None = Head
                     api_response.raise_for_status()
                     provider_response = api_response.text
                 save_outreach_message(user["id"], contact["id"], channel, recipient, payload.subject, personalized, "sent", provider_response)
-                results.append({"contact_id": contact["id"], "status": "sent"})
+                results.append({**result_base, "status": "sent"})
             except Exception as exc:
                 save_outreach_message(user["id"], contact["id"], channel, recipient, payload.subject, personalized, "failed", str(exc))
-                results.append({"contact_id": contact["id"], "status": "failed", "detail": str(exc)})
+                results.append({**result_base, "status": "failed", "detail": str(exc)})
     finally:
         if smtp:
             smtp.quit()
