@@ -170,6 +170,7 @@ class OutreachGenerateRequest(BaseModel):
     channel: str = "email"
     tone: str = "professional"
     campaign_goal: str = ""
+    brand_name: str = ""
     key_points: list[str] = Field(default_factory=list)
     existing_draft: str = ""
     rewrite_prompt: str = ""
@@ -2178,12 +2179,15 @@ def generate_outreach(payload: OutreachGenerateRequest, authorization: str | Non
     primary = reachable[0]
     key_points = [point.strip() for point in payload.key_points if point.strip()]
     goal = payload.campaign_goal.strip() or "start a short business conversation"
+    brand_name = payload.brand_name.strip()
+    sender_identity = brand_name or payload.sender_name.strip() or user.get("name") or "our team"
     context = {
         "channel": channel,
         "tone": payload.tone.strip() or "professional",
         "campaign_goal": goal,
+        "brand_name": brand_name,
         "key_points": key_points,
-        "sender_name": payload.sender_name.strip() or user.get("name") or "",
+        "sender_name": sender_identity,
         "primary_lead": primary,
         "target_leads": reachable[:20],
         "business_search_context_fields": [
@@ -2207,7 +2211,10 @@ def generate_outreach(payload: OutreachGenerateRequest, authorization: str | Non
                 "If a fact is not present, keep it generic. Write a message that is ready to send. "
                 "For email, include a concise subject and body. For WhatsApp, return an empty subject and a short body. "
                 "Keep the body under 130 words, personalize the greeting with the contact person when present, "
-                "and include one clear call to action. Return strict JSON with keys subject and message only."
+                "and include one clear call to action. If brand_name is provided, write from that company/team "
+                "using natural wording such as 'we are from the {brand_name} team' when appropriate. "
+                "End the message with a sign-off using 'Best regards,' followed by the brand_name/team name when provided. "
+                "Return strict JSON with keys subject and message only."
             ),
         },
         {

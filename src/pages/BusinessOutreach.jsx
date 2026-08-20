@@ -66,6 +66,7 @@ export default function BusinessOutreach() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [tone, setTone] = useState('professional');
   const [campaignGoal, setCampaignGoal] = useState('');
+  const [brandName, setBrandName] = useState('');
   const [keyPoints, setKeyPoints] = useState(['']);
   const [channel, setChannel] = useState('email');
   const [subject, setSubject] = useState('Business invitation');
@@ -371,6 +372,7 @@ export default function BusinessOutreach() {
           channel,
           tone,
           campaign_goal: campaignGoal,
+          brand_name: brandName,
           key_points: keyPoints,
           existing_draft: rewrite ? draft : '',
           rewrite_prompt: rewrite ? rewritePrompt : '',
@@ -618,6 +620,11 @@ export default function BusinessOutreach() {
             <span className="bo-required">Required</span>
             <h2>Campaign Goal</h2>
             <input value={campaignGoal} onChange={(event) => setCampaignGoal(event.target.value)} placeholder="e.g., Follow up and schedule a 10-minute discovery call..." />
+          </label>
+
+          <label className="bo-field-group">
+            <h2>Brand / Company Name</h2>
+            <input value={brandName} onChange={(event) => setBrandName(event.target.value)} placeholder="e.g., Usedoil India" />
           </label>
 
           <div className="bo-field-group">
