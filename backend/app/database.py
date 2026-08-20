@@ -754,6 +754,67 @@ def save_manual_outreach_contact(
     return next((contact for contact in list_outreach_contacts(user_id) if contact.get("email") == normalized_email or contact.get("phone") == normalized_phone), {})
 
 
+def update_outreach_contact(
+    user_id: int,
+    contact_id: int,
+    company_name: str,
+    contact_person: str = "",
+    email: str = "",
+    phone: str = "",
+    website: str = "",
+    category: str = "manual",
+) -> dict[str, Any]:
+    company = company_name.strip()
+    if not company:
+        raise ValueError("Company name is required.")
+    normalized_email = email.strip().lower()
+    normalized_phone = phone.strip()
+    if not normalized_email and not normalized_phone:
+        raise ValueError("Enter a business email or WhatsApp phone number.")
+    identity = normalized_email or re.sub(r"\D", "", normalized_phone) or company.lower()
+    contact_key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    try:
+        with db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE outreach_contacts
+                    SET company_name = %s, contact_person = %s, category = %s, contact_key = %s,
+                        website = %s, email = %s, phone = %s, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s AND user_id = %s AND search_name = 'Manual'
+                    """,
+                    (
+                        company,
+                        contact_person.strip(),
+                        category.strip() or "manual",
+                        contact_key,
+                        website.strip(),
+                        normalized_email,
+                        normalized_phone,
+                        contact_id,
+                        user_id,
+                    ),
+                )
+                if cursor.rowcount == 0:
+                    raise ValueError("Lead not found.")
+    except pymysql.err.IntegrityError as exc:
+        raise ValueError("Another lead already uses this email or phone.") from exc
+    return next((contact for contact in list_outreach_contacts(user_id) if contact.get("id") == contact_id), {})
+
+
+def delete_outreach_contact(user_id: int, contact_id: int) -> bool:
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM outreach_contacts
+                WHERE id = %s AND user_id = %s AND search_name = 'Manual'
+                """,
+                (contact_id, user_id),
+            )
+            return cursor.rowcount > 0
+
+
 def save_outreach_message(user_id: int, contact_id: int, channel: str, recipient: str, subject: str, message: str, status: str, provider_response: str = "") -> int:
     with db_connection() as connection:
         with connection.cursor() as cursor:
@@ -825,6 +886,16 @@ def list_outreach_drafts(user_id: int) -> list[dict[str, Any]]:
         if row.get("created_at"): row["created_at"] = row["created_at"].isoformat()
         if row.get("updated_at"): row["updated_at"] = row["updated_at"].isoformat()
     return rows
+
+
+def delete_outreach_draft(user_id: int, draft_id: int) -> bool:
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM outreach_drafts WHERE id = %s AND user_id = %s",
+                (draft_id, user_id),
+            )
+            return cursor.rowcount > 0
 
 
 def save_lead_ai_message(

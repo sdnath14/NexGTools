@@ -18,6 +18,7 @@ import {
   Search,
   Send,
   Sparkles,
+  Trash2,
   UserRound,
   X,
   Zap,
@@ -72,6 +73,9 @@ export default function BusinessOutreach() {
   const [rewritePrompt, setRewritePrompt] = useState('');
   const [newLead, setNewLead] = useState(emptyLead);
   const [leadModalOpen, setLeadModalOpen] = useState(false);
+  const [editLead, setEditLead] = useState(null);
+  const [deleteLead, setDeleteLead] = useState(null);
+  const [deleteDraft, setDeleteDraft] = useState(null);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [documents, setDocuments] = useState([]);
   const [importFileId, setImportFileId] = useState('');
@@ -81,6 +85,8 @@ export default function BusinessOutreach() {
   const [importSaving, setImportSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingLead, setSavingLead] = useState(false);
+  const [deletingLead, setDeletingLead] = useState(false);
+  const [deletingDraft, setDeletingDraft] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [rewriting, setRewriting] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
@@ -165,6 +171,10 @@ export default function BusinessOutreach() {
     setSelectedLeadIds((current) => current.includes(leadId) ? current.filter((id) => id !== leadId) : [...current, leadId]);
   };
 
+  const removeSelectedLead = (leadId) => {
+    setSelectedLeadIds((current) => current.filter((id) => id !== leadId));
+  };
+
   const toggleAllVisible = () => {
     const visibleIds = filteredLeads.map((lead) => lead.id);
     const everyVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedLeadIds.includes(id));
@@ -177,28 +187,75 @@ export default function BusinessOutreach() {
 
   const addKeyPoint = () => setKeyPoints((current) => [...current, '']);
 
+  const openNewLeadModal = () => {
+    setEditLead(null);
+    setNewLead(emptyLead);
+    setLeadModalOpen(true);
+  };
+
+  const openEditLeadModal = (lead) => {
+    setEditLead(lead);
+    setNewLead({
+      company_name: lead.company_name || '',
+      contact_person: lead.contact_person || '',
+      email: lead.email || '',
+      phone: lead.phone || '',
+      website: lead.website || '',
+      category: lead.category || 'manual',
+    });
+    setLeadModalOpen(true);
+  };
+
+  const closeLeadModal = () => {
+    setLeadModalOpen(false);
+    setEditLead(null);
+    setNewLead(emptyLead);
+  };
+
   const saveLead = async (event) => {
     event.preventDefault();
     setSavingLead(true);
     setError('');
     setNotice('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/outreach/contacts`, {
-        method: 'POST',
+      const response = await fetch(`${API_BASE_URL}/api/outreach/contacts${editLead ? `/${editLead.id}` : ''}`, {
+        method: editLead ? 'PATCH' : 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify(newLead),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not save lead.');
-      setNotice('Lead saved.');
-      setLeadModalOpen(false);
-      setNewLead(emptyLead);
+      setNotice(editLead ? 'Lead updated.' : 'Lead saved.');
+      closeLeadModal();
       await loadWorkspace();
       if (data.contact?.id) setSelectedLeadIds((current) => [...new Set([...current, data.contact.id])]);
     } catch (saveError) {
       setError(saveError.message || 'Could not save lead.');
     } finally {
       setSavingLead(false);
+    }
+  };
+
+  const confirmDeleteLead = async () => {
+    if (!deleteLead || deletingLead) return;
+    setDeletingLead(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/outreach/contacts/${deleteLead.id}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not delete lead.');
+      setContacts((current) => current.filter((lead) => lead.id !== deleteLead.id));
+      removeSelectedLead(deleteLead.id);
+      setDeleteLead(null);
+      setNotice('Lead deleted.');
+    } catch (deleteError) {
+      setError(deleteError.message || 'Could not delete lead.');
+    } finally {
+      setDeletingLead(false);
     }
   };
 
@@ -381,6 +438,28 @@ export default function BusinessOutreach() {
     setNotice('Draft loaded.');
   };
 
+  const confirmDeleteDraft = async () => {
+    if (!deleteDraft || deletingDraft) return;
+    setDeletingDraft(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/outreach/drafts/${deleteDraft.id}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not delete draft.');
+      setDraftHistory((current) => current.filter((item) => item.id !== deleteDraft.id));
+      setDeleteDraft(null);
+      setNotice('Draft deleted.');
+    } catch (deleteError) {
+      setError(deleteError.message || 'Could not delete draft.');
+    } finally {
+      setDeletingDraft(false);
+    }
+  };
+
   const rewriteDraft = () => requestGeneratedDraft({ rewrite: true });
 
   const sendNow = async () => {
@@ -428,6 +507,13 @@ export default function BusinessOutreach() {
 
   return (
     <div className="bo-page">
+      <nav className="bo-top-tabs">
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          return <button key={tab.id} type="button" className={activeTab === tab.id ? 'active' : ''} onClick={() => setActiveTab(tab.id)}><Icon size={17} /><span>{tab.label}</span></button>;
+        })}
+      </nav>
+
       {(error || notice) && (
         <div className={`bo-alert ${error ? 'error' : 'success'}`}>
           {error ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
@@ -448,7 +534,7 @@ export default function BusinessOutreach() {
             <div>
               <button type="button" className="bo-soft-btn" onClick={() => setStatusFilter((current) => current === 'all' ? 'new' : current === 'new' ? 'contacted' : current === 'contacted' ? 'failed' : 'all')}><Filter size={14} /> {statusFilter === 'all' ? 'Filter' : statusFilter}</button>
               <button type="button" className="bo-soft-btn" onClick={openImportModal}><Database size={14} /> Import Workbook</button>
-              <button type="button" className="bo-dark-btn" onClick={() => setLeadModalOpen(true)}><Plus size={14} /> New Lead</button>
+              <button type="button" className="bo-dark-btn" onClick={openNewLeadModal}><Plus size={14} /> New Lead</button>
               <button type="button" className="bo-soft-btn" onClick={loadWorkspace} disabled={loading}><RefreshCw size={14} /> Refresh</button>
             </div>
           </div>
@@ -463,11 +549,12 @@ export default function BusinessOutreach() {
                   <th>Business Email</th>
                   <th>Phone (WA)</th>
                   <th>Status</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan="6"><span className="bo-empty-inline"><Loader2 className="spin" size={16} /> Loading leads...</span></td></tr>
+                  <tr><td colSpan="7"><span className="bo-empty-inline"><Loader2 className="spin" size={16} /> Loading leads...</span></td></tr>
                 ) : filteredLeads.length ? filteredLeads.map((lead) => (
                   <tr key={lead.id} onDoubleClick={() => toggleLead(lead.id)}>
                     <td><input type="checkbox" checked={selectedLeadIds.includes(lead.id)} onChange={() => toggleLead(lead.id)} /></td>
@@ -476,9 +563,21 @@ export default function BusinessOutreach() {
                     <td>{lead.email || 'Not set'}</td>
                     <td>{lead.phone || 'Not set'}</td>
                     <td><span className={`bo-status bo-status-${statusClass(lead.status)}`}>{lead.status}</span></td>
+                    <td>
+                      <div className="bo-row-actions">
+                        <button type="button" className="bo-row-edit" onClick={() => openEditLeadModal(lead)} title="Edit lead">
+                          <Edit3 size={14} />
+                          Edit
+                        </button>
+                        <button type="button" className="bo-row-delete" onClick={() => setDeleteLead(lead)} title="Delete lead">
+                          <Trash2 size={14} />
+                          Delete
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 )) : (
-                  <tr><td colSpan="6"><span className="bo-empty-inline">No real leads found. Import from Data Library workbook or add one manually.</span></td></tr>
+                  <tr><td colSpan="7"><span className="bo-empty-inline">No real leads found. Import from Data Library workbook or add one manually.</span></td></tr>
                 )}
               </tbody>
             </table>
@@ -562,6 +661,7 @@ export default function BusinessOutreach() {
                   <span key={lead.id}>
                     <b>{lead.company_name}</b>
                     <em>{channel === 'email' ? lead.email : lead.phone}</em>
+                    <button type="button" onClick={() => removeSelectedLead(lead.id)} title="Remove recipient"><X size={12} /></button>
                   </span>
                 ))}
               </div>
@@ -608,13 +708,18 @@ export default function BusinessOutreach() {
             {draftHistory.length ? (
               <div className="bo-draft-history-list">
                 {draftHistory.map((item) => (
-                  <button type="button" key={item.id} onClick={() => loadDraftFromHistory(item)}>
+                  <div className="bo-draft-history-item" key={item.id}>
+                  <button type="button" onClick={() => loadDraftFromHistory(item)}>
                     <span>
                       <strong>{item.subject || (item.channel === 'whatsapp' ? 'WhatsApp draft' : 'Business invitation')}</strong>
                       <small>{item.channel === 'email' ? 'Email' : 'WhatsApp'} · {(item.contact_ids || []).length} lead{(item.contact_ids || []).length === 1 ? '' : 's'} · {item.updated_at ? new Date(item.updated_at).toLocaleString() : 'Saved'}</small>
                     </span>
                     <em>{(item.message || '').slice(0, 120)}{(item.message || '').length > 120 ? '...' : ''}</em>
                   </button>
+                  <button type="button" className="bo-draft-delete" onClick={() => setDeleteDraft(item)} title="Delete draft">
+                    <X size={14} />
+                  </button>
+                  </div>
                 ))}
               </div>
             ) : (
@@ -625,16 +730,54 @@ export default function BusinessOutreach() {
       )}
 
       {leadModalOpen && (
-        <div className="bo-modal-backdrop" role="presentation" onMouseDown={() => setLeadModalOpen(false)}>
+        <div className="bo-modal-backdrop" role="presentation" onMouseDown={closeLeadModal}>
           <form className="bo-modal" onSubmit={saveLead} onMouseDown={(event) => event.stopPropagation()}>
-            <div className="bo-section-head"><h2>New Lead</h2><button type="button" onClick={() => setLeadModalOpen(false)}><X size={16} /></button></div>
+            <div className="bo-section-head"><h2>{editLead ? 'Edit Lead' : 'New Lead'}</h2><button type="button" onClick={closeLeadModal}><X size={16} /></button></div>
             <label><span>Company</span><input value={newLead.company_name} onChange={(event) => setNewLead((current) => ({ ...current, company_name: event.target.value }))} required /></label>
             <label><span>Contact person</span><input value={newLead.contact_person} onChange={(event) => setNewLead((current) => ({ ...current, contact_person: event.target.value }))} /></label>
             <label><span>Business email</span><input type="email" value={newLead.email} onChange={(event) => setNewLead((current) => ({ ...current, email: event.target.value }))} /></label>
             <label><span>Phone (WA)</span><input value={newLead.phone} onChange={(event) => setNewLead((current) => ({ ...current, phone: event.target.value }))} /></label>
             <label><span>Website</span><input value={newLead.website} onChange={(event) => setNewLead((current) => ({ ...current, website: event.target.value }))} /></label>
-            <button className="bo-dark-btn" disabled={savingLead}>{savingLead ? 'Saving...' : 'Save Lead'}</button>
+            <button className="bo-dark-btn" disabled={savingLead}>{savingLead ? 'Saving...' : editLead ? 'Update Lead' : 'Save Lead'}</button>
           </form>
+        </div>
+      )}
+
+      {deleteLead && (
+        <div className="bo-modal-backdrop" role="presentation" onMouseDown={() => setDeleteLead(null)}>
+          <div className="bo-modal bo-confirm-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="bo-section-head">
+              <h2>Delete Lead</h2>
+              <button type="button" onClick={() => setDeleteLead(null)}><X size={16} /></button>
+            </div>
+            <p>Delete <strong>{deleteLead.company_name}</strong> from Business Outreach leads?</p>
+            <div className="bo-confirm-actions">
+              <button type="button" className="bo-soft-btn" onClick={() => setDeleteLead(null)} disabled={deletingLead}>Cancel</button>
+              <button type="button" className="bo-danger-btn" onClick={confirmDeleteLead} disabled={deletingLead}>
+                {deletingLead ? <Loader2 className="spin" size={15} /> : <Trash2 size={15} />}
+                Delete Lead
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteDraft && (
+        <div className="bo-modal-backdrop" role="presentation" onMouseDown={() => setDeleteDraft(null)}>
+          <div className="bo-modal bo-confirm-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="bo-section-head">
+              <h2>Delete Draft</h2>
+              <button type="button" onClick={() => setDeleteDraft(null)}><X size={16} /></button>
+            </div>
+            <p>Delete this saved draft?</p>
+            <div className="bo-confirm-actions">
+              <button type="button" className="bo-soft-btn" onClick={() => setDeleteDraft(null)} disabled={deletingDraft}>Cancel</button>
+              <button type="button" className="bo-danger-btn" onClick={confirmDeleteDraft} disabled={deletingDraft}>
+                {deletingDraft ? <Loader2 className="spin" size={15} /> : <Trash2 size={15} />}
+                Delete Draft
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -701,12 +844,6 @@ export default function BusinessOutreach() {
         </div>
       )}
 
-      <nav className="bo-bottom-tabs">
-        {tabs.map((tab) => {
-          const Icon = tab.icon;
-          return <button key={tab.id} type="button" className={activeTab === tab.id ? 'active' : ''} onClick={() => setActiveTab(tab.id)}><Icon size={17} /><span>{tab.label}</span></button>;
-        })}
-      </nav>
     </div>
   );
 }

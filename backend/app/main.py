@@ -32,6 +32,8 @@ from .database import (
     create_user,
     database_status,
     delete_admin_record,
+    delete_outreach_contact,
+    delete_outreach_draft,
     delete_role,
     delete_session,
     ensure_default_user,
@@ -57,6 +59,7 @@ from .database import (
     save_manual_outreach_contact,
     save_outreach_draft,
     save_website_scrape,
+    update_outreach_contact,
     verify_admin_password,
 )
 from .scraper import CrawlOptions, EMAIL_RE, PHONE_RE, scrape_website
@@ -2096,6 +2099,34 @@ def create_outreach_contact(payload: OutreachContactRequest, authorization: str 
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.patch("/api/outreach/contacts/{contact_id}")
+def update_outreach_contact_endpoint(contact_id: int, payload: OutreachContactRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "outreach")
+    try:
+        contact = update_outreach_contact(
+            user["id"],
+            contact_id,
+            payload.company_name,
+            payload.contact_person,
+            payload.email,
+            payload.phone,
+            payload.website,
+            payload.category,
+        )
+        return {"contact": contact}
+    except ValueError as exc:
+        status_code = 404 if str(exc) == "Lead not found." else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+
+@app.delete("/api/outreach/contacts/{contact_id}")
+def remove_outreach_contact(contact_id: int, authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    user = _require_permission(authorization, "outreach")
+    if not delete_outreach_contact(user["id"], contact_id):
+        raise HTTPException(status_code=404, detail="Lead not found.")
+    return {"deleted": True}
+
+
 @app.post("/api/outreach/drafts", status_code=201)
 def create_outreach_draft(payload: OutreachDraftRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     user = _require_permission(authorization, "outreach")
@@ -2109,6 +2140,14 @@ def create_outreach_draft(payload: OutreachDraftRequest, authorization: str | No
     draft_id = save_outreach_draft(user["id"], channel, payload.subject.strip(), payload.message.strip(), contact_ids)
     draft = next((item for item in list_outreach_drafts(user["id"]) if item["id"] == draft_id), None)
     return {"draft": draft}
+
+
+@app.delete("/api/outreach/drafts/{draft_id}")
+def remove_outreach_draft(draft_id: int, authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    user = _require_permission(authorization, "outreach")
+    if not delete_outreach_draft(user["id"], draft_id):
+        raise HTTPException(status_code=404, detail="Draft not found.")
+    return {"deleted": True}
 
 
 @app.post("/api/outreach/generate")
