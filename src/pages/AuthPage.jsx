@@ -36,6 +36,7 @@ const AuthPage = ({ onAuthenticated }) => {
         throw new Error(data.detail || 'Authentication failed.');
       }
       localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+      window.history.replaceState(null, '', '/');
       onAuthenticated(data.user);
     } catch (authError) {
       setError(authError.message || 'Authentication failed.');

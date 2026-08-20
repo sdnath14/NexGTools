@@ -3,6 +3,10 @@ import { AlertCircle, Database, KeyRound, RefreshCcw, Save, ShieldCheck, Table2,
 import '../AdminPage.css';
 import { ADMIN_TOKEN_KEY, API_BASE_URL, adminHeaders, authHeaders } from '../auth';
 
+const permissionLabel = (permission) => ({
+  outreach: 'Business Outreach',
+}[permission] || permission.replaceAll('_', ' '));
+
 const compactValue = (value) => {
   if (value === null || value === undefined || value === '') return 'Not set';
   if (typeof value === 'object') return JSON.stringify(value);
@@ -350,16 +354,16 @@ const AdminPage = ({ onAdminUnlocked }) => {
         <div><h2>Roles & tool access</h2><p>Choose exactly which tools each role can use. Edit a role to grant or revoke access for every user assigned to it.</p></div>
         <form onSubmit={createRole} className="admin-role-form">
           <input value={newRole.name} onChange={(event) => setNewRole((value) => ({ ...value, name: event.target.value }))} placeholder="New role name" required />
-          <div className="admin-permission-list">{permissions.map((permission) => <label key={permission}><input type="checkbox" checked={newRole.permissions.includes(permission)} onChange={() => setNewRole((value) => ({ ...value, permissions: value.permissions.includes(permission) ? value.permissions.filter((item) => item !== permission) : [...value.permissions, permission] }))} /> {permission.replaceAll('_', ' ')}</label>)}</div>
+          <div className="admin-permission-list">{permissions.map((permission) => <label key={permission}><input type="checkbox" checked={newRole.permissions.includes(permission)} onChange={() => setNewRole((value) => ({ ...value, permissions: value.permissions.includes(permission) ? value.permissions.filter((item) => item !== permission) : [...value.permissions, permission] }))} /> {permissionLabel(permission)}</label>)}</div>
           <button type="submit" className="admin-save-btn" disabled={busy}>Create role</button>
         </form>
         {editingRole && <form onSubmit={saveRole} className="admin-role-form admin-role-edit-form">
           <input value={editingRole.name} onChange={(event) => setEditingRole((role) => ({ ...role, name: event.target.value }))} placeholder="Role name" required />
-          <div className="admin-permission-list">{permissions.map((permission) => <label key={permission}><input type="checkbox" checked={editingRole.permissions.includes(permission)} onChange={() => setEditingRole((role) => ({ ...role, permissions: role.permissions.includes(permission) ? role.permissions.filter((item) => item !== permission) : [...role.permissions, permission] }))} /> {permission.replaceAll('_', ' ')}</label>)}</div>
+          <div className="admin-permission-list">{permissions.map((permission) => <label key={permission}><input type="checkbox" checked={editingRole.permissions.includes(permission)} onChange={() => setEditingRole((role) => ({ ...role, permissions: role.permissions.includes(permission) ? role.permissions.filter((item) => item !== permission) : [...role.permissions, permission] }))} /> {permissionLabel(permission)}</label>)}</div>
           <button type="submit" className="admin-save-btn" disabled={busy}>Save access</button>
           <button type="button" className="admin-cancel-btn" onClick={() => setEditingRole(null)} disabled={busy}>Cancel</button>
         </form>}
-        <div className="admin-role-list">{roles.map((role) => <div key={role.id}><strong>{role.name}</strong><span>{role.permissions.map((item) => item.replaceAll('_', ' ')).join(', ') || 'No tools'}</span><div className="admin-role-actions"><button type="button" className="admin-edit-role-btn" onClick={() => setEditingRole({ id: role.id, name: role.name, permissions: [...role.permissions] })} disabled={busy}>Edit access</button><button type="button" className="admin-delete-role-btn" onClick={() => removeRole(role)} disabled={busy} title={`Delete ${role.name}`}><Trash2 size={15} /> Delete</button></div></div>)}</div>
+        <div className="admin-role-list">{roles.map((role) => <div key={role.id}><strong>{role.name}</strong><span>{role.permissions.map(permissionLabel).join(', ') || 'No tools'}</span><div className="admin-role-actions"><button type="button" className="admin-edit-role-btn" onClick={() => setEditingRole({ id: role.id, name: role.name, permissions: [...role.permissions] })} disabled={busy}>Edit access</button><button type="button" className="admin-delete-role-btn" onClick={() => removeRole(role)} disabled={busy} title={`Delete ${role.name}`}><Trash2 size={15} /> Delete</button></div></div>)}</div>
         <div className="admin-user-roles">{workspaceUsers.map((workspaceUser) => workspaceUser.is_nexg_admin ? <div key={workspaceUser.id} className="admin-nexg-admin-user"><span><strong>{workspaceUser.name}</strong> <small>({workspaceUser.email})</small></span><em>NexG Admin · full access · no role required</em></div> : <label key={workspaceUser.id}><span>{workspaceUser.name} <small>({workspaceUser.email})</small></span><select value={workspaceUser.role_id || ''} onChange={(event) => assignRole(workspaceUser.id, event.target.value)} disabled={busy}>{roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label>)}</div>
       </section>
 

@@ -1,0 +1,67 @@
+.library-workbook-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .65rem;
+  flex-wrap: wrap;
+}
+
+.library-workbook-picker {
+  min-width: 220px;
+  max-width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: .45rem;
+  background: #fff;
+  color: var(--app-text);
+  font: inherit;
+  font-size: .8rem;
+  padding: .48rem .6rem;
+}
+
+.library-workbook-actions .library-refresh {
+  min-height: 34px;
+}
+
+.library-bpcl-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+}
+
+.library-bpcl-remove {
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+  border: 1px solid #fecaca;
+  border-radius: .35rem;
+  background: #fff;
+  color: #b91c1c;
+  padding: .16rem .4rem;
+  font: inherit;
+  font-size: .65rem;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.library-bpcl-remove:hover {
+  border-color: #ef4444;
+  background: #fef2f2;
+}
+
+.library-bpcl-remove:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .library-workbook-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .library-workbook-picker,
+  .library-workbook-actions .library-refresh {
+    width: 100%;
+  }
+}

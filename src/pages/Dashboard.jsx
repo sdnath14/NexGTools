@@ -19,16 +19,18 @@ const permissionLabels = {
   lead_search_history: 'Lead Search History',
   business_search: 'Business Search',
   business_search_history: 'Business Search History',
-  outreach: 'Company Outreach',
+  outreach: 'Business Outreach',
   data_library: 'Data Library',
   exports: 'CSV History',
   settings: 'Settings',
 };
 
+const allDashboardPermissions = Object.keys(permissionLabels);
+
 const adminTools = [
   { label: 'Lead Search', description: 'Find business leads', path: '/lead-search', icon: Users, color: '#f97316' },
   { label: 'Business Search', description: 'Discover businesses', path: '/business-search', icon: Building2, color: '#ea580c' },
-  { label: 'Outreach', description: 'Manage company outreach', path: '/outreach', icon: Send, color: '#fb923c' },
+  { label: 'Business Outreach', description: 'Generate and send outreach', path: '/business-outreach', icon: Send, color: '#2563eb' },
   { label: 'Data Library', description: 'Search uploaded data', path: '/data-library', icon: Database, color: '#c2410c' },
 ];
 
@@ -62,7 +64,7 @@ const Dashboard = ({ user }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const firstName = user?.name?.split(' ')[0] || 'there';
-  const userPermissions = user?.permissions || [];
+  const userPermissions = user?.is_nexg_admin ? allDashboardPermissions : (user?.permissions || []);
   const grantedTools = userPermissions
     .filter((permission) => permissionLabels[permission])
     .map((permission) => permissionLabels[permission]);

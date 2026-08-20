@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Database, Download, FileUp, Loader2, RotateCcw, Search, Trash2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Database, Download, FileUp, Loader2, RotateCcw, Search, Tag, Trash2 } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './DataLibrary.css';
 import './DataLibraryUpload.css';
@@ -36,6 +36,9 @@ export default function DataLibrary() {
   const [editingCell, setEditingCell] = useState(null);
   const [cellValue, setCellValue] = useState('');
   const [savingCell, setSavingCell] = useState(false);
+  const [savingTag, setSavingTag] = useState(false);
+  const [removingSearchTagId, setRemovingSearchTagId] = useState(null);
+  const [bpclOnly, setBpclOnly] = useState(false);
   const [undoStack, setUndoStack] = useState([]);
   const [undoing, setUndoing] = useState(false);
 
@@ -58,6 +61,7 @@ export default function DataLibrary() {
   const clearSearch = () => {
     setSearchResult(null);
     setQuestion('');
+    setBpclOnly(false);
     setError('');
   };
 
@@ -158,6 +162,60 @@ export default function DataLibrary() {
     } catch (cellError) { setError(cellError.message); } finally { setSavingCell(false); }
   };
 
+  const activeSheet = workbook?.sheets.find((item) => item.id === activeSheetId) || workbook?.sheets[0] || null;
+  const selectedWorkbookRecord = activeSheet && editingCell
+    ? activeSheet.records.find((record) => record.record_number === editingCell.recordNumber)
+    : null;
+  const selectedRowIsBpcl = Boolean(selectedWorkbookRecord?.tags?.includes('BPCL'));
+
+  const toggleSelectedRowBpcl = async () => {
+    if (!workbook || !activeSheet || !editingCell || savingTag) return;
+    setSavingTag(true); setError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/documents/${workbook.file.id}/records/tag`, { method: 'PATCH', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ sheet_id: activeSheet.id, record_number: editingCell.recordNumber, tag: 'BPCL', enabled: !selectedRowIsBpcl }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not update BPCL tag.');
+      setWorkbook((current) => current && ({ ...current, sheets: current.sheets.map((sheet) => sheet.id !== activeSheet.id ? sheet : ({ ...sheet, records: sheet.records.map((record) => record.record_number !== editingCell.recordNumber ? record : ({ ...record, tags: data.tags || [] })) })) }));
+    } catch (tagError) { setError(tagError.message); } finally { setSavingTag(false); }
+  };
+
+  const removeSearchResultBpcl = async (record) => {
+    if (!record?.file_id || !record?.sheet_id || removingSearchTagId) return;
+    setRemovingSearchTagId(record.id);
+    setError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/documents/${record.file_id}/records/tag`, {
+        method: 'PATCH',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheet_id: record.sheet_id, record_number: record.record_number, tag: 'BPCL', enabled: false }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not remove the BPCL tag.');
+      setSearchResult((current) => {
+        if (!current) return current;
+        const nextRecords = current.records
+          .map((item) => item.id !== record.id ? item : ({ ...item, tags: data.tags || [] }))
+          .filter((item) => current.tag !== 'BPCL' || item.id !== record.id);
+        return {
+          ...current,
+          records: nextRecords,
+          total: current.tag === 'BPCL' ? Math.max(0, current.total - 1) : current.total,
+        };
+      });
+      setWorkbook((current) => current && current.file.id === record.file_id ? ({
+        ...current,
+        sheets: current.sheets.map((sheet) => sheet.id !== record.sheet_id ? sheet : ({
+          ...sheet,
+          records: sheet.records.map((item) => item.record_number !== record.record_number ? item : ({ ...item, tags: data.tags || [] })),
+        })),
+      }) : current);
+    } catch (tagError) {
+      setError(tagError.message || 'Could not remove the BPCL tag.');
+    } finally {
+      setRemovingSearchTagId(null);
+    }
+  };
+
   const undoLastCellChange = async () => {
     if (!workbook || !undoStack.length || undoing || savingCell) return;
     const change = undoStack[undoStack.length - 1];
@@ -219,30 +277,44 @@ export default function DataLibrary() {
     } catch (downloadError) { setError(downloadError.message); } finally { setDownloading(false); }
   };
 
-  const ask = async (event) => {
-    event.preventDefault(); if (!question.trim() || searching) return;
+  const runDocumentSearch = async ({ query, tag, offset = 0, append = false }) => {
+    if ((!query.trim() && !tag) || searching || loadingMoreIndex !== null) return;
     setSearching(true); setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/documents/search`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ query: question, limit: 50, file_ids: selectedFileIds }) });
+      const response = await fetch(`${API_BASE_URL}/api/documents/search`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ query, limit: 50, offset, file_ids: selectedFileIds, tag }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not search the uploaded data.');
       const records = data.records || [];
-      setSearchResult({
-        query: question,
+      setSearchResult((current) => ({
+        query,
+        tag,
         records,
+        ...(append && current ? { records: [...current.records, ...records] } : {}),
         total: data.total || 0,
         hasMore: Boolean(data.has_more),
         fileIds: selectedFileIds,
-      });
-      setQuestion('');
+      }));
+      if (!tag) setQuestion('');
     } catch (askError) { setError(askError.message); } finally { setSearching(false); }
+  };
+
+  const ask = async (event) => {
+    event.preventDefault();
+    await runDocumentSearch({ query: question, tag: bpclOnly ? 'BPCL' : null });
+  };
+
+  const showBpclRows = async () => {
+    const nextBpclOnly = !bpclOnly;
+    setBpclOnly(nextBpclOnly);
+    setSearchResult(null);
+    if (nextBpclOnly) await runDocumentSearch({ query: question, tag: 'BPCL' });
   };
 
   const loadMore = async () => {
     if (!searchResult || loadingMoreIndex !== null) return;
     setLoadingMoreIndex(true); setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/documents/search`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ query: searchResult.query, limit: 50, offset: searchResult.records.length, file_ids: searchResult.fileIds || [] }) });
+      const response = await fetch(`${API_BASE_URL}/api/documents/search`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ query: searchResult.query, limit: 50, offset: searchResult.records.length, file_ids: searchResult.fileIds || [], tag: searchResult.tag || null }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not load more results.');
       setSearchResult((current) => current && {
@@ -405,7 +477,18 @@ return (
               aria-label="Search uploaded data"
             />
 
-            <button disabled={!question.trim() || searching}>
+            <button
+              type="button"
+              className={`library-bpcl-filter ${bpclOnly ? 'active' : ''}`}
+              onClick={showBpclRows}
+              disabled={searching}
+              title="Show rows tagged BPCL"
+            >
+              <Tag size={16} />
+              BPCL
+            </button>
+
+            <button disabled={(!question.trim() && !bpclOnly) || searching}>
               {searching ? (
                 <Loader2 className="spin" size={17} />
               ) : (
@@ -478,6 +561,7 @@ return (
                       <table>
                         <thead>
                           <tr>
+                            <th>Tag</th>
                             {columns.map((column) => (
                               <th key={column}>{column}</th>
                             ))}
@@ -487,6 +571,23 @@ return (
                         <tbody>
                           {records.map((record) => (
                             <tr key={record.id}>
+                              <td>
+                                {record.tags?.includes('BPCL') ? (
+                                  <span className="library-bpcl-cell">
+                                    <span className="library-bpcl-badge">BPCL</span>
+                                    <button
+                                      type="button"
+                                      className="library-bpcl-remove"
+                                      onClick={() => removeSearchResultBpcl(record)}
+                                      disabled={removingSearchTagId === record.id}
+                                      title="Remove BPCL tag"
+                                    >
+                                      {removingSearchTagId === record.id ? <Loader2 className="spin" size={13} /> : <Trash2 size={13} />}
+                                      Remove
+                                    </button>
+                                  </span>
+                                ) : ''}
+                              </td>
                               {columns.map((column) => (
                                 <td key={column}>
                                   {displayValue(record.record_json?.[column])}
@@ -576,6 +677,19 @@ return (
             {workbook && (
               <button
                 type="button"
+                className={`library-bpcl-action ${selectedRowIsBpcl ? 'active' : ''}`}
+                onClick={toggleSelectedRowBpcl}
+                disabled={!editingCell || savingTag}
+                title="Tag the selected row as BPCL"
+              >
+                {savingTag ? <Loader2 className="spin" size={15} /> : <Tag size={15} />}
+                {selectedRowIsBpcl ? 'BPCL tagged' : 'Tag BPCL'}
+              </button>
+            )}
+
+            {workbook && (
+              <button
+                type="button"
                 className="library-refresh"
                 onClick={downloadWorkbook}
                 disabled={downloading}
@@ -653,6 +767,7 @@ return (
                         <thead>
                           <tr>
                             <th>#</th>
+                            <th>Tag</th>
 
                             {columns.map((column) => (
                               <th key={column}>{column}</th>
@@ -664,7 +779,7 @@ return (
                           {start > 0 && (
                             <tr className="library-spacer-row">
                               <td
-                                colSpan={columns.length + 1}
+                                colSpan={columns.length + 2}
                                 style={{
                                   height: start * rowHeight,
                                 }}
@@ -673,8 +788,9 @@ return (
                           )}
 
                           {visibleRows.map((record) => (
-                            <tr key={record.record_number}>
+                            <tr key={record.record_number} className={record.tags?.includes('BPCL') ? 'library-bpcl-row' : ''}>
                               <td>{record.record_number}</td>
+                              <td>{record.tags?.includes('BPCL') ? <span className="library-bpcl-badge">BPCL</span> : ''}</td>
 
                               {columns.map((column) => (
                                 <td
@@ -703,7 +819,7 @@ return (
                           {end < sheet.records.length && (
                             <tr className="library-spacer-row">
                               <td
-                                colSpan={columns.length + 1}
+                                colSpan={columns.length + 2}
                                 style={{
                                   height:
                                     (sheet.records.length - end) *

@@ -9,7 +9,7 @@ const pageTitles = {
   '/lead-search/csv': 'CSV History',
   '/business-search': 'Business Search',
   '/business-search/csv': 'Business CSV History',
-  '/outreach': 'Company Outreach',
+  '/business-outreach': 'Business Outreach',
   '/data-library': 'Data Library',
   '/admin': 'Admin',
   '/tender-ai': 'TenderAI',

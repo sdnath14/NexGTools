@@ -10,8 +10,8 @@ import CsvHistory from './pages/CsvHistory';
 import AdminPage from './pages/AdminPage';
 import AuthPage from './pages/AuthPage';
 import SettingsPage from './pages/SettingsPage';
-import Outreach from './pages/Outreach';
 import DataLibrary from './pages/DataLibrary';
+import BusinessOutreach from './pages/BusinessOutreach';
 import { ADMIN_TOKEN_KEY, API_BASE_URL, AUTH_TOKEN_KEY, adminHeaders, authHeaders } from './auth';
 import { applyAppearance, loadAppearance, saveAppearance } from './appearance';
 import './App.css';
@@ -113,7 +113,7 @@ function App() {
               <Route path="/lead-search/csv" element={hasPermission('exports') ? <CsvHistory type="lead_search" /> : <Navigate to="/" replace />} />
               <Route path="/business-search" element={hasPermission('business_search') ? <BusinessSearch /> : <Navigate to="/" replace />} />
               <Route path="/business-search/csv" element={hasPermission('exports') ? <CsvHistory type="business_search" /> : <Navigate to="/" replace />} />
-              <Route path="/outreach" element={hasPermission('outreach') ? <Outreach /> : <Navigate to="/" replace />} />
+              <Route path="/business-outreach" element={hasPermission('outreach') ? <BusinessOutreach /> : <Navigate to="/" replace />} />
               <Route path="/data-library" element={hasPermission('data_library') ? <DataLibrary /> : <Navigate to="/" replace />} />
               <Route path="/settings" element={hasPermission('settings') ? <SettingsPage appearance={appearance} onAppearanceChange={updateAppearance} /> : <Navigate to="/" replace />} />
               <Route path="/admin" element={<AdminPage onAdminUnlocked={setIsAdmin} />} />

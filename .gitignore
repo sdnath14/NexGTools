@@ -11,7 +11,9 @@ node_modules
 .venv
 .mysql-data/
 .mysql-data.failed-*/
+.mysql-runtime/
 .mysql-run/
+.data/
 .knowledge-uploads/
 backend/app/Data/
 *.cleaned.json

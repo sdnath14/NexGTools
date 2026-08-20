@@ -72,18 +72,22 @@ def validate_workbook(path: Path, extension: str) -> dict[str, int]:
         raise ValueError("The workbook does not contain a worksheet.")
 
     for sheet_name, frame in sheets.items():
+        frame = frame.dropna(how="all").dropna(axis=1, how="all")
         if frame.empty:
             errors.append(f"{sheet_name}: the worksheet is empty")
             continue
 
         headers = ["" if _is_empty(value) else str(value).strip() for value in frame.iloc[0].tolist()]
         duplicate_headers = sorted({header for header in headers if header and headers.count(header) > 1})
+        blank_headers = [str(index + 1) for index, header in enumerate(headers) if not header]
         missing = [column for column in TEMPLATE_COLUMNS if column not in headers]
         unexpected = [column for column in headers if column not in TEMPLATE_COLUMNS]
-        if duplicate_headers or missing or unexpected:
+        if duplicate_headers or blank_headers or missing or unexpected:
             details = []
             if duplicate_headers:
                 details.append(f"duplicate columns: {', '.join(duplicate_headers)}")
+            if blank_headers:
+                details.append(f"blank column headers at positions: {', '.join(blank_headers)}")
             if missing:
                 details.append(f"missing columns: {', '.join(missing)}")
             if unexpected:
@@ -246,7 +250,10 @@ def delete_file(user_id: int, file_id: str) -> None:
             if not file_row:
                 raise ValueError("Document not found.")
             cursor.execute("DELETE FROM document_files WHERE id=%s AND user_id=%s", (file_id, user_id))
-    Path(file_row["storage_path"]).unlink(missing_ok=True)
+    try:
+        Path(file_row["storage_path"]).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def file_contents(user_id: int, file_id: str) -> list[dict[str, Any]]:
@@ -260,10 +267,12 @@ def file_contents(user_id: int, file_id: str) -> list[dict[str, Any]]:
                 if not cursor.fetchone(): raise ValueError("Document not found.")
             for sheet in sheets:
                 if isinstance(sheet["headers_json"], str): sheet["headers_json"] = json.loads(sheet["headers_json"])
-                cursor.execute("SELECT record_number, record_json FROM document_records WHERE sheet_id=%s ORDER BY record_number", (sheet["id"],))
+                cursor.execute("SELECT record_number, record_json, tags_json FROM document_records WHERE sheet_id=%s ORDER BY record_number", (sheet["id"],))
                 sheet["records"] = list(cursor.fetchall())
                 for record in sheet["records"]:
                     if isinstance(record["record_json"], str): record["record_json"] = json.loads(record["record_json"])
+                    if isinstance(record.get("tags_json"), str): record["tags_json"] = json.loads(record["tags_json"] or "[]")
+                    record["tags"] = record.pop("tags_json", None) or []
     return sheets
 
 
@@ -291,6 +300,36 @@ def update_cell(user_id: int, file_id: str, sheet_id: int, record_number: int, c
                 "UPDATE document_records SET record_json=CAST(%s AS JSON), searchable_text=%s WHERE id=%s",
                 (json.dumps(record_json, default=str), searchable_text, record["id"]),
             )
+
+
+def update_record_tag(user_id: int, file_id: str, sheet_id: int, record_number: int, tag: str, enabled: bool) -> list[str]:
+    """Add or remove a workbook row tag for an authorized record."""
+    normalized_tag = tag.strip().upper()
+    if normalized_tag != "BPCL":
+        raise ValueError("Only BPCL can be used as a row tag.")
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT r.id, r.tags_json FROM document_records r JOIN document_files f ON f.id=r.file_id "
+                "WHERE r.file_id=%s AND r.sheet_id=%s AND r.record_number=%s AND f.user_id=%s",
+                (file_id, sheet_id, record_number, user_id),
+            )
+            record = cursor.fetchone()
+            if not record:
+                raise ValueError("Workbook row not found.")
+            tags = record.get("tags_json") or []
+            if isinstance(tags, str):
+                tags = json.loads(tags or "[]")
+            tags = [str(item).upper() for item in tags if str(item).strip()]
+            if enabled and normalized_tag not in tags:
+                tags.append(normalized_tag)
+            if not enabled:
+                tags = [item for item in tags if item != normalized_tag]
+            cursor.execute(
+                "UPDATE document_records SET tags_json=CAST(%s AS JSON) WHERE id=%s",
+                (json.dumps(tags), record["id"]),
+            )
+    return tags
 
 
 def delete_record(user_id: int, file_id: str, sheet_name: str, record_number: int) -> None:
@@ -392,34 +431,43 @@ def _ai_search_terms(question: str, columns: set[str]) -> list[str] | None:
         return None
 
 
-def search(user_id: int, query: str, limit: int = 50, offset: int = 0, file_ids: list[str] | None = None) -> tuple[list[dict[str, Any]], int]:
+def search(user_id: int, query: str, limit: int = 50, offset: int = 0, file_ids: list[str] | None = None, tag: str | None = None) -> tuple[list[dict[str, Any]], int]:
     """Return top workbook rows containing the supplied keywords, without AI."""
     normalized_query = query.casefold().strip()
     terms = _search_terms(query)
-    if not terms:
+    normalized_tag = tag.strip().upper() if tag else ""
+    if normalized_tag and normalized_tag != "BPCL":
+        raise ValueError("Unsupported row tag filter.")
+    if not terms and not normalized_tag:
         return [], 0
 
     # Every keyword must be present in the same source row.
-    predicates = " AND ".join(["LOWER(r.searchable_text) LIKE %s"] * len(terms))
+    predicates = " AND ".join(["LOWER(r.searchable_text) LIKE %s"] * len(terms)) if terms else "1=1"
+    tag_filter = " AND JSON_CONTAINS(COALESCE(r.tags_json, CAST('[]' AS JSON)), CAST(%s AS JSON))" if normalized_tag else ""
     file_filter = ""
     params: list[Any] = [user_id]
     if file_ids:
         file_filter = f" AND f.id IN ({','.join(['%s'] * len(file_ids))})"
         params.extend(file_ids)
+    if normalized_tag:
+        params.append(json.dumps(normalized_tag))
     params.extend(f"%{term}%" for term in terms)
     with db_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                f"SELECT r.id, f.filename, s.name AS sheet_name, r.record_number, r.record_json, r.searchable_text "
+                f"SELECT r.id, f.id AS file_id, f.filename, s.id AS sheet_id, s.name AS sheet_name, r.record_number, r.record_json, r.tags_json, r.searchable_text "
                 f"FROM document_records r JOIN document_files f ON f.id=r.file_id "
                 f"LEFT JOIN document_sheets s ON s.id=r.sheet_id "
-                f"WHERE f.user_id=%s{file_filter} AND ({predicates})",
+                f"WHERE f.user_id=%s{file_filter}{tag_filter} AND ({predicates})",
                 params,
             )
             rows = list(cursor.fetchall())
     for row in rows:
         if isinstance(row["record_json"], str):
             row["record_json"] = json.loads(row["record_json"])
+        if isinstance(row.get("tags_json"), str):
+            row["tags_json"] = json.loads(row["tags_json"] or "[]")
+        row["tags"] = row.pop("tags_json", None) or []
 
     def rank(row: dict[str, Any]) -> tuple[int, int, int]:
         text = row["searchable_text"].casefold()

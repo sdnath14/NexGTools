@@ -10,7 +10,7 @@ const navItems = [
   { path: '/lead-search/csv', label: 'Lead CSV History', icon: FileSpreadsheet, permission: 'exports' },
   { path: '/business-search', label: 'Business Search', icon: Building2, permission: 'business_search' },
   { path: '/business-search/csv', label: 'Business CSV History', icon: FileSpreadsheet, permission: 'exports' },
-  { path: '/outreach', label: 'Company Outreach', icon: Send, permission: 'outreach' },
+  { path: '/business-outreach', label: 'Business Outreach', icon: Send, permission: 'outreach' },
   { path: '/data-library', label: 'Data Library', icon: Database, permission: 'data_library' },
 ];
 

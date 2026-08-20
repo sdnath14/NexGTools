@@ -53,12 +53,12 @@ from .database import (
     set_user_role,
     save_csv_export,
     save_lead_search,
+    save_manual_outreach_contact,
     save_website_scrape,
-    save_outreach_contacts,
     verify_admin_password,
 )
 from .scraper import CrawlOptions, EMAIL_RE, PHONE_RE, scrape_website
-from .documents import answer as answer_documents, create_file, delete_file, delete_record, file_contents, file_download, ingest, list_files, run_diagnostics, search as search_documents, update_cell, validate_upload, validate_workbook
+from .documents import answer as answer_documents, create_file, delete_file, delete_record, file_contents, file_download, ingest, list_files, run_diagnostics, search as search_documents, update_cell, update_record_tag, validate_upload, validate_workbook
 
 
 app = FastAPI(title="NexGTools API", version="0.1.0")
@@ -68,6 +68,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -141,6 +143,26 @@ class OutreachSendRequest(BaseModel):
     reply_to_email: str = ""
 
 
+class OutreachContactRequest(BaseModel):
+    company_name: str
+    contact_person: str = ""
+    email: str = ""
+    phone: str = ""
+    website: str = ""
+    category: str = "manual"
+
+
+class OutreachGenerateRequest(BaseModel):
+    contact_ids: list[int]
+    channel: str = "email"
+    tone: str = "professional"
+    campaign_goal: str = ""
+    key_points: list[str] = Field(default_factory=list)
+    existing_draft: str = ""
+    rewrite_prompt: str = ""
+    sender_name: str = ""
+
+
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -151,6 +173,13 @@ class DocumentCellUpdate(BaseModel):
     record_number: int
     column: str
     value: str | None = None
+
+
+class DocumentRecordTagUpdate(BaseModel):
+    sheet_id: int
+    record_number: int
+    tag: str = "BPCL"
+    enabled: bool = True
 
 
 class LeadAiChatRequest(BaseModel):
@@ -223,6 +252,7 @@ class DocumentQueryRequest(BaseModel):
     limit: int = Field(default=50, ge=1, le=50)
     offset: int = Field(default=0, ge=0)
     file_ids: list[str] = Field(default_factory=list)
+    tag: str | None = None
 
 
 
@@ -343,6 +373,8 @@ def _require_user(authorization: str | None) -> dict[str, Any]:
 
 def _require_admin(authorization: str | None, admin_token: str | None) -> dict[str, Any]:
     user = _require_user(authorization)
+    if not user.get("is_nexg_admin"):
+        raise HTTPException(status_code=403, detail="NexG Admin access required.")
     session = get_admin_session(admin_token or "", user["id"])
     if not session:
         raise HTTPException(status_code=403, detail="Admin access required.")
@@ -1355,9 +1387,10 @@ def login(payload: AuthRequest) -> dict[str, Any]:
 
     token = create_token()
     create_session(user_row["id"], token)
+    session_user = get_user_by_token(token)
     return {
         "token": token,
-        "user": {
+        "user": session_user or {
             "id": user_row["id"],
             "name": user_row["name"],
             "email": user_row["email"],
@@ -1453,7 +1486,10 @@ async def upload_document(
         return {"file": created, "status": "queued"}
     except ValueError as exc:
         if temporary:
-            temporary.unlink(missing_ok=True)
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         await file.close()
@@ -1497,6 +1533,16 @@ def update_document_cell(file_id: str, payload: DocumentCellUpdate, authorizatio
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.patch("/api/documents/{file_id}/records/tag")
+def update_document_record_tag(file_id: str, payload: DocumentRecordTagUpdate, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "data_library")
+    try:
+        tags = update_record_tag(user["id"], file_id, payload.sheet_id, payload.record_number, payload.tag, payload.enabled)
+        return {"updated": True, "tags": tags}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.delete("/api/documents/{file_id}/records/{sheet_name}/{record_number}")
 def delete_document_record(file_id: str, sheet_name: str, record_number: int, authorization: str | None = Header(default=None)) -> dict[str, bool]:
     user = _require_permission(authorization, "data_library")
@@ -1521,10 +1567,11 @@ def download_document(file_id: str, authorization: str | None = Header(default=N
 def keyword_document_search(payload: DocumentQueryRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     user = _require_permission(authorization, "data_library")
     question = payload.query.strip()
-    if not question:
-        raise HTTPException(status_code=400, detail="A query is required.")
+    tag = payload.tag.strip().upper() if payload.tag else None
+    if not question and not tag:
+        raise HTTPException(status_code=400, detail="A query or BPCL filter is required.")
     try:
-        records, total = search_documents(user["id"], question, payload.limit, payload.offset, payload.file_ids or None)
+        records, total = search_documents(user["id"], question, payload.limit, payload.offset, payload.file_ids or None, tag)
         return {
             "records": records,
             "total": total,
@@ -1610,6 +1657,8 @@ def search_history_detail(search_id: int, authorization: str | None = Header(def
 @app.post("/api/admin/login")
 def admin_login(payload: AdminLoginRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     user = _require_user(authorization)
+    if not user.get("is_nexg_admin"):
+        raise HTTPException(status_code=403, detail="NexG Admin access required.")
     if not verify_admin_password(payload.password):
         raise HTTPException(status_code=401, detail="Invalid admin password.")
     token = create_admin_session(user["id"])
@@ -1979,13 +2028,6 @@ def search_leads(payload: LeadSearchRequest, authorization: str | None = Header(
         lead["emails"] = list(lead.get("emails") or [])
         lead["phones"] = [lead["phone"]] if lead.get("phone") else []
 
-    for lead in leads:
-        save_outreach_contacts(
-            user["id"], lead, lead.get("contact_scrape") or {
-                "emails": lead.get("emails") or [], "phones": lead.get("phones") or []
-            }, text_query,
-        )
-
     response = {
         "query": text_query,
         "radius_km": payload.radius_km,
@@ -2000,14 +2042,10 @@ def search_leads(payload: LeadSearchRequest, authorization: str | None = Header(
 
 @app.post("/api/scrape")
 def scrape(payload: WebsiteScrapeRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_permission(authorization, "lead_search")
+    _require_permission(authorization, "lead_search")
     try:
         response = scrape_website(payload.url, CrawlOptions(max_pages=payload.max_pages))
         response["database_scrape_id"] = save_website_scrape(response)
-        if payload.lead:
-            response["outreach_contacts_saved"] = save_outreach_contacts(
-                user["id"], payload.lead, response, payload.search_name.strip()
-            )
         return response
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2027,6 +2065,118 @@ def outreach_workspace(authorization: str | None = Header(default=None)) -> dict
             "name": user.get("name") or "",
             "email": settings.smtp_from_email,
         },
+    }
+
+
+@app.post("/api/outreach/contacts", status_code=201)
+def create_outreach_contact(payload: OutreachContactRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "outreach")
+    try:
+        contact = save_manual_outreach_contact(
+            user["id"],
+            payload.company_name,
+            payload.contact_person,
+            payload.email,
+            payload.phone,
+            payload.website,
+            payload.category,
+        )
+        return {"contact": contact}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/outreach/generate")
+def generate_outreach(payload: OutreachGenerateRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "outreach")
+    channel = payload.channel.strip().lower()
+    if channel not in {"email", "whatsapp"}:
+        raise HTTPException(status_code=400, detail="Channel must be email or whatsapp.")
+    if not payload.contact_ids:
+        raise HTTPException(status_code=400, detail="Select at least one lead before generating content.")
+
+    contacts = {contact["id"]: contact for contact in list_outreach_contacts(user["id"])}
+    selected = [contacts[contact_id] for contact_id in payload.contact_ids if contact_id in contacts]
+    if not selected:
+        raise HTTPException(status_code=404, detail="No matching contacts were found.")
+
+    reachable = [
+        contact for contact in selected
+        if (contact.get("email") if channel == "email" else contact.get("phone"))
+    ]
+    if not reachable:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Select at least one lead with {'a business email' if channel == 'email' else 'a WhatsApp phone number'}.",
+        )
+
+    primary = reachable[0]
+    key_points = [point.strip() for point in payload.key_points if point.strip()]
+    goal = payload.campaign_goal.strip() or "start a short business conversation"
+    context = {
+        "channel": channel,
+        "tone": payload.tone.strip() or "professional",
+        "campaign_goal": goal,
+        "key_points": key_points,
+        "sender_name": payload.sender_name.strip() or user.get("name") or "",
+        "primary_lead": primary,
+        "target_leads": reachable[:20],
+        "business_search_context_fields": [
+            "company_name",
+            "contact_person",
+            "search_name",
+            "category",
+            "website",
+            "email",
+            "phone",
+        ],
+    }
+    is_rewrite = bool(payload.existing_draft.strip() and payload.rewrite_prompt.strip())
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are NexGTools Business Outreach AI. Generate practical outbound outreach using only "
+                "the selected workbook or manually saved leads provided in context. "
+                "Do not invent products, partnerships, discounts, owners, testimonials, metrics, or prior meetings. "
+                "If a fact is not present, keep it generic. Write a message that is ready to send. "
+                "For email, include a concise subject and body. For WhatsApp, return an empty subject and a short body. "
+                "Keep the body under 130 words, personalize the greeting with the contact person when present, "
+                "and include one clear call to action. Return strict JSON with keys subject and message only."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Workbook and outreach context:\n{_trim_json(context, 12000)}",
+        },
+    ]
+    if is_rewrite:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Rewrite this existing draft according to the instruction. Preserve factual accuracy and return "
+                    f"strict JSON only.\nInstruction: {payload.rewrite_prompt.strip()}\nDraft:\n{payload.existing_draft.strip()}"
+                ),
+            }
+        )
+    else:
+        messages.append({"role": "user", "content": "Generate the outreach content now."})
+
+    answer = _chat_completion(messages)
+    try:
+        parsed = json.loads(answer)
+    except json.JSONDecodeError:
+        parsed = {"subject": "Business invitation", "message": answer}
+
+    subject = str(parsed.get("subject") or ("Business invitation" if channel == "email" else "")).strip()
+    message = str(parsed.get("message") or "").strip()
+    if not message:
+        raise HTTPException(status_code=502, detail="OpenAI returned an empty outreach draft.")
+    return {
+        "subject": subject,
+        "message": message,
+        "model": settings.openai_model,
     }
 
 

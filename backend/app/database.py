@@ -220,6 +220,7 @@ def initialize_database() -> None:
                     user_id BIGINT UNSIGNED NOT NULL,
                     lead_place_id VARCHAR(255),
                     company_name VARCHAR(500) NOT NULL,
+                    contact_person VARCHAR(255),
                     search_name VARCHAR(500),
                     category VARCHAR(120),
                     contact_key VARCHAR(64),
@@ -245,6 +246,8 @@ def initialize_database() -> None:
                 (settings.mysql_database,),
             )
             outreach_columns = {row["column_name"] for row in cursor.fetchall()}
+            if "contact_person" not in outreach_columns:
+                cursor.execute("ALTER TABLE outreach_contacts ADD COLUMN contact_person VARCHAR(255) AFTER company_name")
             if "category" not in outreach_columns:
                 cursor.execute("ALTER TABLE outreach_contacts ADD COLUMN category VARCHAR(120) AFTER search_name")
             if "contact_key" not in outreach_columns:
@@ -316,7 +319,8 @@ def initialize_database() -> None:
                 CREATE TABLE IF NOT EXISTS document_records (
                     id CHAR(40) NOT NULL PRIMARY KEY, file_id CHAR(32) NOT NULL,
                     sheet_id BIGINT UNSIGNED NULL, record_number INT NOT NULL, record_json JSON NOT NULL,
-                    searchable_text MEDIUMTEXT NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    searchable_text MEDIUMTEXT NOT NULL, tags_json JSON NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE KEY uq_document_record (file_id, sheet_id, record_number),
                     INDEX idx_document_records_file (file_id), INDEX idx_document_records_sheet (sheet_id),
                     FULLTEXT KEY ft_document_records_text (searchable_text),
@@ -325,6 +329,16 @@ def initialize_database() -> None:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
+            cursor.execute(
+                """
+                SELECT COLUMN_NAME AS column_name FROM information_schema.columns
+                WHERE table_schema = %s AND table_name = 'document_records'
+                """,
+                (settings.mysql_database,),
+            )
+            document_record_columns = {row["column_name"] for row in cursor.fetchall()}
+            if "tags_json" not in document_record_columns:
+                cursor.execute("ALTER TABLE document_records ADD COLUMN tags_json JSON NULL AFTER searchable_text")
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS document_processing_jobs (
@@ -649,8 +663,9 @@ def list_outreach_contacts(user_id: int) -> list[dict[str, Any]]:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, company_name, search_name, category, website, email, phone, created_at, updated_at
-                FROM outreach_contacts WHERE user_id = %s
+                SELECT id, company_name, contact_person, search_name, category, website, email, phone, created_at, updated_at
+                FROM outreach_contacts
+                WHERE user_id = %s AND search_name = 'Manual'
                 ORDER BY updated_at DESC, id DESC
                 """,
                 (user_id,),
@@ -671,6 +686,56 @@ def list_outreach_contacts(user_id: int) -> list[dict[str, Any]]:
         for key in ("created_at", "updated_at"):
             if row.get(key): row[key] = row[key].isoformat()
     return rows
+
+
+def save_manual_outreach_contact(
+    user_id: int,
+    company_name: str,
+    contact_person: str = "",
+    email: str = "",
+    phone: str = "",
+    website: str = "",
+    category: str = "manual",
+) -> dict[str, Any]:
+    company = company_name.strip()
+    if not company:
+        raise ValueError("Company name is required.")
+    normalized_email = email.strip().lower()
+    normalized_phone = phone.strip()
+    if not normalized_email and not normalized_phone:
+        raise ValueError("Enter a business email or WhatsApp phone number.")
+    identity = normalized_email or re.sub(r"\D", "", normalized_phone) or company.lower()
+    contact_key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO outreach_contacts (
+                    user_id, lead_place_id, company_name, contact_person, search_name, category,
+                    contact_key, website, email, phone, scrape_id
+                ) VALUES (%s, NULL, %s, %s, 'Manual', %s, %s, %s, %s, %s, NULL)
+                ON DUPLICATE KEY UPDATE
+                    company_name = VALUES(company_name),
+                    contact_person = VALUES(contact_person),
+                    search_name = VALUES(search_name),
+                    category = VALUES(category),
+                    website = VALUES(website),
+                    email = VALUES(email),
+                    phone = VALUES(phone),
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    user_id,
+                    company,
+                    contact_person.strip(),
+                    category.strip() or "manual",
+                    contact_key,
+                    website.strip(),
+                    normalized_email,
+                    normalized_phone,
+                ),
+            )
+    return next((contact for contact in list_outreach_contacts(user_id) if contact.get("email") == normalized_email or contact.get("phone") == normalized_phone), {})
 
 
 def save_outreach_message(user_id: int, contact_id: int, channel: str, recipient: str, subject: str, message: str, status: str, provider_response: str = "") -> int:
@@ -762,10 +827,7 @@ def ensure_default_user(name: str, email: str, password: str) -> None:
             cursor.execute("SELECT id FROM users WHERE email = %s", (normalized_email,))
             existing = cursor.fetchone()
             if existing:
-                cursor.execute(
-                    "UPDATE users SET name = %s, password_salt = %s, password_hash = %s, role_id = NULL WHERE id = %s",
-                    (name, salt, password_digest, existing["id"]),
-                )
+                pass
             else:
                 cursor.execute(
                     """

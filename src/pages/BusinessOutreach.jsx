@@ -1,0 +1,642 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  AlertCircle,
+  Bot,
+  BriefcaseBusiness,
+  Check,
+  CheckCircle2,
+  Copy,
+  Database,
+  Edit3,
+  Filter,
+  Loader2,
+  Mail,
+  MessageSquare,
+  Plus,
+  RefreshCw,
+  Save,
+  Search,
+  Send,
+  Settings,
+  Sparkles,
+  UserRound,
+  X,
+  Zap,
+} from 'lucide-react';
+import { API_BASE_URL, authHeaders } from '../auth';
+import './BusinessOutreach.css';
+
+const tones = [
+  { id: 'professional', label: 'Professional', icon: BriefcaseBusiness },
+  { id: 'casual', label: 'Casual', icon: MessageSquare },
+  { id: 'urgent', label: 'Urgent', icon: Zap },
+  { id: 'empathetic', label: 'Empathetic', icon: Check },
+];
+
+const tabs = [
+  { id: 'leads', label: 'Leads', icon: Database },
+  { id: 'generate', label: 'Generate', icon: Sparkles },
+  { id: 'editor', label: 'Editor', icon: Edit3 },
+  { id: 'settings', label: 'Settings', icon: Settings },
+];
+
+const emptyLead = { company_name: '', contact_person: '', email: '', phone: '', website: '', category: 'manual' };
+
+const statusClass = (status) => status.toLowerCase();
+const contactName = (contact) => contact.contact_person || contact.company_name;
+const firstName = (contact) => (contact.contact_person || '').split(' ')[0] || 'there';
+const fieldValue = (record, names) => {
+  const values = record.record_json || {};
+  const normalized = new Map(Object.entries(values).map(([key, value]) => [key.trim().toLowerCase(), value]));
+  for (const name of names) {
+    const value = normalized.get(name.toLowerCase());
+    if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+  }
+  return '';
+};
+
+export default function BusinessOutreach() {
+  const [activeTab, setActiveTab] = useState('leads');
+  const [contacts, setContacts] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [providers, setProviders] = useState({ smtp: false, whatsapp: false });
+  const [sender, setSender] = useState({ name: '', email: '' });
+  const [selectedLeadIds, setSelectedLeadIds] = useState([]);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [tone, setTone] = useState('professional');
+  const [campaignGoal, setCampaignGoal] = useState('');
+  const [keyPoints, setKeyPoints] = useState(['']);
+  const [channel, setChannel] = useState('email');
+  const [subject, setSubject] = useState('Business invitation');
+  const [draft, setDraft] = useState(() => localStorage.getItem('nexgtools_business_outreach_draft') || '');
+  const [rewritePrompt, setRewritePrompt] = useState('');
+  const [newLead, setNewLead] = useState(emptyLead);
+  const [leadModalOpen, setLeadModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [documents, setDocuments] = useState([]);
+  const [importFileId, setImportFileId] = useState('');
+  const [importSheets, setImportSheets] = useState([]);
+  const [selectedImportRows, setSelectedImportRows] = useState([]);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importSaving, setImportSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [savingLead, setSavingLead] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [rewriting, setRewriting] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+
+  const loadWorkspace = async () => {
+    setError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/outreach`, { headers: authHeaders() });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not load business outreach.');
+      setContacts(data.contacts || []);
+      setHistory(data.history || []);
+      setProviders(data.providers || { smtp: false, whatsapp: false });
+      setSender(data.sender || { name: '', email: '' });
+    } catch (loadError) {
+      setError(loadError.message || 'Could not load business outreach.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadWorkspace();
+  }, []);
+
+  const latestStatusByContact = useMemo(() => {
+    const statuses = new Map();
+    history.forEach((item) => {
+      if (!statuses.has(item.company_name)) {
+        statuses.set(item.company_name, item.status === 'sent' ? 'Contacted' : 'Failed');
+      }
+    });
+    return statuses;
+  }, [history]);
+
+  const leads = useMemo(() => contacts.map((contact) => ({
+    ...contact,
+    status: latestStatusByContact.get(contact.company_name) || 'New',
+  })), [contacts, latestStatusByContact]);
+
+  const filteredLeads = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return leads.filter((lead) => {
+      const matchesQuery = !needle || [
+        lead.company_name,
+        lead.contact_person || '',
+        lead.email || '',
+        lead.phone || '',
+        lead.website || '',
+        lead.status,
+      ].some((value) => String(value).toLowerCase().includes(needle));
+      const matchesStatus = statusFilter === 'all' || lead.status.toLowerCase() === statusFilter;
+      return matchesQuery && matchesStatus;
+    });
+  }, [leads, query, statusFilter]);
+
+  const selectedLeads = leads.filter((lead) => selectedLeadIds.includes(lead.id));
+  const selectedChannelLeads = selectedLeads.filter((lead) => channel === 'email' ? lead.email : lead.phone);
+  const providerReady = channel === 'email' ? providers.smtp : providers.whatsapp;
+  const importRows = useMemo(() => importSheets.flatMap((sheet) => (sheet.records || []).map((record) => {
+    const company = fieldValue(record, ['LEGAL NAME', 'Trade Name', 'Company', 'Company Name', 'Business Name']);
+    return {
+      id: `${sheet.id}-${record.record_number}`,
+      sheet_id: sheet.id,
+      sheet_name: sheet.name,
+      record_number: record.record_number,
+      company_name: company,
+      contact_person: fieldValue(record, ['Contact Person', 'Contact Name', 'Name', 'Owner']),
+      email: fieldValue(record, ['E-Mail', 'Email', 'Business Email', 'Mail']),
+      phone: fieldValue(record, ['Mobile No.', 'Mobile No', 'Phone (WA)', 'Phone', 'WhatsApp', 'Whatsapp']),
+      website: fieldValue(record, ['Website', 'Web Site', 'URL']),
+      category: fieldValue(record, ['BUSINESS_CONST', 'Category', 'Business Type']) || 'data_library',
+    };
+  })).filter((row) => row.company_name && (row.email || row.phone)), [importSheets]);
+
+  const toggleLead = (leadId) => {
+    setSelectedLeadIds((current) => current.includes(leadId) ? current.filter((id) => id !== leadId) : [...current, leadId]);
+  };
+
+  const toggleAllVisible = () => {
+    const visibleIds = filteredLeads.map((lead) => lead.id);
+    const everyVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedLeadIds.includes(id));
+    setSelectedLeadIds((current) => everyVisibleSelected ? current.filter((id) => !visibleIds.includes(id)) : [...new Set([...current, ...visibleIds])]);
+  };
+
+  const updateKeyPoint = (index, value) => {
+    setKeyPoints((current) => current.map((point, pointIndex) => pointIndex === index ? value : point));
+  };
+
+  const addKeyPoint = () => setKeyPoints((current) => [...current, '']);
+
+  const saveLead = async (event) => {
+    event.preventDefault();
+    setSavingLead(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/outreach/contacts`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(newLead),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not save lead.');
+      setNotice('Lead saved.');
+      setLeadModalOpen(false);
+      setNewLead(emptyLead);
+      await loadWorkspace();
+      if (data.contact?.id) setSelectedLeadIds((current) => [...new Set([...current, data.contact.id])]);
+    } catch (saveError) {
+      setError(saveError.message || 'Could not save lead.');
+    } finally {
+      setSavingLead(false);
+    }
+  };
+
+  const openImportModal = async () => {
+    setImportModalOpen(true);
+    setError('');
+    setNotice('');
+    setImportLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/documents`, { headers: authHeaders() });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not load Data Library workbooks.');
+      const completed = (data.files || []).filter((file) => file.status === 'completed');
+      setDocuments(completed);
+      if (completed[0]?.id) {
+        await openImportWorkbook(completed[0].id);
+      } else {
+        setImportFileId('');
+        setImportSheets([]);
+      }
+    } catch (loadError) {
+      setError(loadError.message || 'Could not load Data Library workbooks.');
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const openImportWorkbook = async (fileId) => {
+    setImportFileId(fileId);
+    setSelectedImportRows([]);
+    if (!fileId) {
+      setImportSheets([]);
+      return;
+    }
+    setImportLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/documents/${fileId}/contents`, { headers: authHeaders() });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not open workbook.');
+      setImportSheets(data.sheets || []);
+    } catch (loadError) {
+      setImportSheets([]);
+      setError(loadError.message || 'Could not open workbook.');
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const toggleImportRow = (rowId) => {
+    setSelectedImportRows((current) => current.includes(rowId) ? current.filter((id) => id !== rowId) : [...current, rowId]);
+  };
+
+  const toggleAllImportRows = () => {
+    const rowIds = importRows.map((row) => row.id);
+    const allSelected = rowIds.length > 0 && rowIds.every((rowId) => selectedImportRows.includes(rowId));
+    setSelectedImportRows(allSelected ? [] : rowIds);
+  };
+
+  const importSelectedRows = async () => {
+    const rows = importRows.filter((row) => selectedImportRows.includes(row.id));
+    if (!rows.length) {
+      setError('Select at least one workbook row to import.');
+      return;
+    }
+    setImportSaving(true);
+    setError('');
+    setNotice('');
+    let imported = 0;
+    try {
+      for (const row of rows) {
+        const response = await fetch(`${API_BASE_URL}/api/outreach/contacts`, {
+          method: 'POST',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify(row),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || `Could not import ${row.company_name}.`);
+        imported += 1;
+      }
+      setNotice(`${imported} lead${imported === 1 ? '' : 's'} imported from Data Library.`);
+      setImportModalOpen(false);
+      setSelectedImportRows([]);
+      await loadWorkspace();
+    } catch (importError) {
+      setError(importError.message || 'Could not import selected workbook rows.');
+    } finally {
+      setImportSaving(false);
+    }
+  };
+
+  const requestGeneratedDraft = async ({ rewrite = false } = {}) => {
+    if (!selectedLeads.length) {
+      setError('Select at least one lead before generating content.');
+      setActiveTab('leads');
+      return;
+    }
+    if (rewrite && (!rewritePrompt.trim() || !draft.trim())) return;
+    const setBusy = rewrite ? setRewriting : setGenerating;
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/outreach/generate`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contact_ids: selectedLeadIds,
+          channel,
+          tone,
+          campaign_goal: campaignGoal,
+          key_points: keyPoints,
+          existing_draft: rewrite ? draft : '',
+          rewrite_prompt: rewrite ? rewritePrompt : '',
+          sender_name: sender.name || '',
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not generate outreach content.');
+      if (channel === 'email' && data.subject) setSubject(data.subject);
+      setDraft(data.message || '');
+      localStorage.setItem('nexgtools_business_outreach_draft', data.message || '');
+      setRewritePrompt('');
+      setNotice(rewrite ? 'Draft rewritten with OpenAI.' : 'Draft generated with OpenAI.');
+      setActiveTab('editor');
+    } catch (generateError) {
+      setError(generateError.message || 'Could not generate outreach content.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyDraft = async () => {
+    if (!draft.trim()) return;
+    await navigator.clipboard.writeText(draft);
+    setNotice('Draft copied.');
+  };
+
+  const saveDraft = () => {
+    localStorage.setItem('nexgtools_business_outreach_draft', draft);
+    setNotice('Draft saved on this device.');
+  };
+
+  const rewriteDraft = () => requestGeneratedDraft({ rewrite: true });
+
+  const sendNow = async () => {
+    if (!providerReady) {
+      setError(channel === 'email' ? 'Company email is not configured yet.' : 'WhatsApp API is not configured yet.');
+      setActiveTab('settings');
+      return;
+    }
+    if (!selectedChannelLeads.length) {
+      setError(`Select at least one lead with ${channel === 'email' ? 'a business email' : 'a WhatsApp phone number'}.`);
+      setActiveTab('leads');
+      return;
+    }
+    if (!draft.trim()) {
+      setError('Generate or write a message before sending.');
+      return;
+    }
+    setSending(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/outreach/send`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contact_ids: selectedChannelLeads.map((lead) => lead.id),
+          channel,
+          subject,
+          message: draft,
+          sender_name: sender.name || '',
+          reply_to_email: sender.email || '',
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not send outreach.');
+      const sent = (data.results || []).filter((result) => result.status === 'sent').length;
+      const failed = (data.results || []).filter((result) => result.status === 'failed').length;
+      setNotice(`${sent} sent${failed ? `, ${failed} failed` : ''}.`);
+      await loadWorkspace();
+    } catch (sendError) {
+      setError(sendError.message || 'Could not send outreach.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="bo-page">
+      <div className="bo-top-strip">
+        <h1>{tabs.find((tab) => tab.id === activeTab)?.label}</h1>
+        <button type="button" className="bo-profile-btn" title={sender.email || 'Workspace user'}>
+          <UserRound size={15} />
+        </button>
+      </div>
+
+      {(error || notice) && (
+        <div className={`bo-alert ${error ? 'error' : 'success'}`}>
+          {error ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
+          <span>{error || notice}</span>
+          <button type="button" onClick={() => { setError(''); setNotice(''); }}><X size={14} /></button>
+        </div>
+      )}
+
+      {activeTab === 'leads' && (
+        <section className="bo-leads">
+          <label className="bo-search">
+            <Search size={16} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads by company, contact, or email..." />
+          </label>
+
+          <div className="bo-leads-bar">
+            <span>{leads.length.toLocaleString()} total leads</span>
+            <div>
+              <button type="button" className="bo-soft-btn" onClick={() => setStatusFilter((current) => current === 'all' ? 'new' : current === 'new' ? 'contacted' : current === 'contacted' ? 'failed' : 'all')}><Filter size={14} /> {statusFilter === 'all' ? 'Filter' : statusFilter}</button>
+              <button type="button" className="bo-soft-btn" onClick={openImportModal}><Database size={14} /> Import Workbook</button>
+              <button type="button" className="bo-dark-btn" onClick={() => setLeadModalOpen(true)}><Plus size={14} /> New Lead</button>
+              <button type="button" className="bo-soft-btn" onClick={loadWorkspace} disabled={loading}><RefreshCw size={14} /> Refresh</button>
+            </div>
+          </div>
+
+          <div className="bo-table-wrap">
+            <table className="bo-table">
+              <thead>
+                <tr>
+                  <th><input type="checkbox" checked={filteredLeads.length > 0 && filteredLeads.every((lead) => selectedLeadIds.includes(lead.id))} onChange={toggleAllVisible} /></th>
+                  <th>Company</th>
+                  <th>Contact Person</th>
+                  <th>Business Email</th>
+                  <th>Phone (WA)</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr><td colSpan="6"><span className="bo-empty-inline"><Loader2 className="spin" size={16} /> Loading leads...</span></td></tr>
+                ) : filteredLeads.length ? filteredLeads.map((lead) => (
+                  <tr key={lead.id} onDoubleClick={() => toggleLead(lead.id)}>
+                    <td><input type="checkbox" checked={selectedLeadIds.includes(lead.id)} onChange={() => toggleLead(lead.id)} /></td>
+                    <td><span className="bo-initial">{lead.company_name[0]}</span>{lead.company_name}</td>
+                    <td>{lead.contact_person || 'Not set'}</td>
+                    <td>{lead.email || 'Not set'}</td>
+                    <td>{lead.phone || 'Not set'}</td>
+                    <td><span className={`bo-status bo-status-${statusClass(lead.status)}`}>{lead.status}</span></td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan="6"><span className="bo-empty-inline">No real leads found. Import from Data Library workbook or add one manually.</span></td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {activeTab === 'generate' && (
+        <section className="bo-generate">
+          <div className="bo-field-group">
+            <h2>Target Audience</h2>
+            <div className="bo-audience">
+              <div className="bo-audience-icon"><UserRound size={15} /></div>
+              <div>
+                <strong>{selectedLeadIds.length} Leads Selected</strong>
+                <span>{selectedChannelLeads.length} reachable by {channel === 'email' ? 'email' : 'WhatsApp'}</span>
+                <div className="bo-avatar-row">
+                  {selectedLeads.slice(0, 3).map((lead) => <i key={lead.id}>{contactName(lead)[0]}</i>)}
+                  {selectedLeadIds.length > 3 && <em>+{selectedLeadIds.length - 3}</em>}
+                </div>
+              </div>
+              <button type="button" onClick={() => setActiveTab('leads')}><Edit3 size={15} /></button>
+            </div>
+          </div>
+
+          <label className="bo-field-group">
+            <span className="bo-required">Required</span>
+            <h2>Campaign Goal</h2>
+            <input value={campaignGoal} onChange={(event) => setCampaignGoal(event.target.value)} placeholder="e.g., Follow up and schedule a 10-minute discovery call..." />
+          </label>
+
+          <div className="bo-field-group">
+            <h2>Tone & Style</h2>
+            <div className="bo-tone-row">
+              {tones.map((item) => {
+                const Icon = item.icon;
+                return <button key={item.id} type="button" className={tone === item.id ? 'active' : ''} onClick={() => setTone(item.id)}><Icon size={14} /> {item.label}</button>;
+              })}
+            </div>
+          </div>
+
+          <div className="bo-field-group">
+            <div className="bo-section-head">
+              <h2>Key Points</h2>
+              <button type="button" onClick={addKeyPoint}>+ Add Point</button>
+            </div>
+            <div className="bo-points">
+              {keyPoints.map((point, index) => (
+                <label key={`${index}-${keyPoints.length}`}>
+                  <span>::</span>
+                  <input value={point} onChange={(event) => updateKeyPoint(index, event.target.value)} placeholder="Type a real key point here..." />
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <button type="button" className="bo-generate-btn" onClick={() => requestGeneratedDraft()} disabled={generating}>
+            {generating ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
+            {generating ? 'Generating...' : 'Generate Content'}
+          </button>
+          <small className="bo-helper">Uses OpenAI with selected workbook/manual leads and your inputs.</small>
+        </section>
+      )}
+
+      {activeTab === 'editor' && (
+        <section className="bo-editor">
+          <div className="bo-channel-tabs">
+            <button type="button" className={channel === 'email' ? 'active' : ''} onClick={() => setChannel('email')}><Mail size={14} /> Email</button>
+            <button type="button" className={channel === 'whatsapp' ? 'active' : ''} onClick={() => setChannel('whatsapp')}><MessageSquare size={14} /> WhatsApp</button>
+          </div>
+
+          <div className="bo-draft-card">
+            <div className="bo-draft-head">
+              <span><Bot size={18} /></span>
+              <div><strong>{draft.trim() ? 'Draft Ready' : 'Draft Empty'}</strong><small>{selectedLeads[0] ? `Prepared for ${selectedLeads[0].company_name}` : 'Select leads and generate content'}</small></div>
+              <button type="button" title="Copy draft" onClick={copyDraft} disabled={!draft.trim()}><Copy size={15} /></button>
+            </div>
+            {channel === 'email' && <input className="bo-subject" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Email subject" />}
+            <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Generate content or write your message here..." />
+            <label className="bo-rewrite">
+              <input value={rewritePrompt} onChange={(event) => setRewritePrompt(event.target.value)} placeholder="e.g., Make it shorter and punchier..." />
+              <button type="button" onClick={rewriteDraft} disabled={rewriting || !rewritePrompt.trim() || !draft.trim()}>
+                {rewriting ? <Loader2 className="spin" size={15} /> : <Sparkles size={15} />}
+              </button>
+            </label>
+          </div>
+
+          <div className="bo-editor-actions">
+            <button type="button" className="bo-soft-btn" onClick={saveDraft}><Save size={15} /> Save Draft</button>
+            <button type="button" className="bo-dark-btn" onClick={sendNow} disabled={sending || !draft.trim()}>
+              {sending ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
+              Send Now
+            </button>
+          </div>
+        </section>
+      )}
+
+      {activeTab === 'settings' && (
+        <section className="bo-settings">
+          <div>
+            <h2>Sending Preferences</h2>
+            <label><span>Default channel</span><select value={channel} onChange={(event) => setChannel(event.target.value)}><option value="email">Email</option><option value="whatsapp">WhatsApp</option></select></label>
+            <label><span>Company email status</span><input value={providers.smtp ? `Configured: ${sender.email || 'SMTP ready'}` : 'Not configured yet'} readOnly /></label>
+            <label><span>WhatsApp API status</span><input value={providers.whatsapp ? 'Configured' : 'Not configured yet'} readOnly /></label>
+            <label><span>Setup note</span><textarea rows="4" readOnly value={'Provide SMTP and WhatsApp API credentials for the backend .env. Once configured, this page will send through /api/outreach/send.'} /></label>
+          </div>
+        </section>
+      )}
+
+      {leadModalOpen && (
+        <div className="bo-modal-backdrop" role="presentation" onMouseDown={() => setLeadModalOpen(false)}>
+          <form className="bo-modal" onSubmit={saveLead} onMouseDown={(event) => event.stopPropagation()}>
+            <div className="bo-section-head"><h2>New Lead</h2><button type="button" onClick={() => setLeadModalOpen(false)}><X size={16} /></button></div>
+            <label><span>Company</span><input value={newLead.company_name} onChange={(event) => setNewLead((current) => ({ ...current, company_name: event.target.value }))} required /></label>
+            <label><span>Contact person</span><input value={newLead.contact_person} onChange={(event) => setNewLead((current) => ({ ...current, contact_person: event.target.value }))} /></label>
+            <label><span>Business email</span><input type="email" value={newLead.email} onChange={(event) => setNewLead((current) => ({ ...current, email: event.target.value }))} /></label>
+            <label><span>Phone (WA)</span><input value={newLead.phone} onChange={(event) => setNewLead((current) => ({ ...current, phone: event.target.value }))} /></label>
+            <label><span>Website</span><input value={newLead.website} onChange={(event) => setNewLead((current) => ({ ...current, website: event.target.value }))} /></label>
+            <button className="bo-dark-btn" disabled={savingLead}>{savingLead ? 'Saving...' : 'Save Lead'}</button>
+          </form>
+        </div>
+      )}
+
+      {importModalOpen && (
+        <div className="bo-modal-backdrop" role="presentation" onMouseDown={() => setImportModalOpen(false)}>
+          <div className="bo-modal bo-import-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="bo-section-head">
+              <h2>Import From Data Library</h2>
+              <button type="button" onClick={() => setImportModalOpen(false)}><X size={16} /></button>
+            </div>
+
+            <label>
+              <span>Completed workbook</span>
+              <select value={importFileId} onChange={(event) => openImportWorkbook(event.target.value)}>
+                <option value="">Choose workbook</option>
+                {documents.map((file) => (
+                  <option key={file.id} value={file.id}>{file.filename}</option>
+                ))}
+              </select>
+            </label>
+
+            <div className="bo-import-summary">
+              {importLoading ? <span><Loader2 className="spin" size={15} /> Loading workbook...</span>
+                : importRows.length ? <span>{importRows.length} importable rows with company and email/phone</span>
+                  : <span>No importable rows found. Rows need company plus email or WhatsApp phone.</span>}
+              <button type="button" onClick={toggleAllImportRows} disabled={!importRows.length}>{selectedImportRows.length === importRows.length && importRows.length ? 'Clear' : 'Select all'}</button>
+            </div>
+
+            <div className="bo-import-table-wrap">
+              <table className="bo-table bo-import-table">
+                <thead>
+                  <tr>
+                    <th><input type="checkbox" checked={importRows.length > 0 && selectedImportRows.length === importRows.length} onChange={toggleAllImportRows} /></th>
+                    <th>Company</th>
+                    <th>Contact</th>
+                    <th>Email</th>
+                    <th>Phone</th>
+                    <th>Sheet</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {importRows.slice(0, 200).map((row) => (
+                    <tr key={row.id}>
+                      <td><input type="checkbox" checked={selectedImportRows.includes(row.id)} onChange={() => toggleImportRow(row.id)} /></td>
+                      <td>{row.company_name}</td>
+                      <td>{row.contact_person || 'Not set'}</td>
+                      <td>{row.email || 'Not set'}</td>
+                      <td>{row.phone || 'Not set'}</td>
+                      <td>{row.sheet_name}</td>
+                    </tr>
+                  ))}
+                  {!importRows.length && (
+                    <tr><td colSpan="6"><span className="bo-empty-inline">Choose a completed Data Library workbook to preview importable leads.</span></td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {importRows.length > 200 && <small className="bo-helper">Showing first 200 importable rows. Select all imports every importable row.</small>}
+            <button type="button" className="bo-dark-btn" onClick={importSelectedRows} disabled={!selectedImportRows.length || importSaving}>
+              {importSaving ? 'Importing...' : `Import ${selectedImportRows.length} Lead${selectedImportRows.length === 1 ? '' : 's'}`}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <nav className="bo-bottom-tabs">
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          return <button key={tab.id} type="button" className={activeTab === tab.id ? 'active' : ''} onClick={() => setActiveTab(tab.id)}><Icon size={17} /><span>{tab.label}</span></button>;
+        })}
+      </nav>
+    </div>
+  );
+}
