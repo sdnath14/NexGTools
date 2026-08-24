@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Database, Download, FileUp, Loader2, RotateCcw, Search, Tag, Trash2 } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './DataLibrary.css';
@@ -20,8 +20,7 @@ export default function DataLibrary() {
   const [workbook, setWorkbook] = useState(null);
   const [activeSheetId, setActiveSheetId] = useState(null);
   const [workbookScrollTop, setWorkbookScrollTop] = useState(0);
-  // const [activePanel, setActivePanel] = useState('upload');
-  const [activePanel, setActivePanel] = useState('search');
+  const [activePanel, setActivePanel] = useState('upload');
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [question, setQuestion] = useState('');
@@ -33,6 +32,7 @@ export default function DataLibrary() {
   const [error, setError] = useState('');
   const [diagnosingFileId, setDiagnosingFileId] = useState(null);
   const [diagnosticResult, setDiagnosticResult] = useState(null);
+  const [pendingDiagnosticIds, setPendingDiagnosticIds] = useState([]);
   const [editingCell, setEditingCell] = useState(null);
   const [cellValue, setCellValue] = useState('');
   const [savingCell, setSavingCell] = useState(false);
@@ -69,6 +69,7 @@ export default function DataLibrary() {
     if (!selected?.length) return;
     setUploading(true); setError('');
     try {
+      const uploadedIds = [];
       for (const file of selected) {
         const body = new FormData(); body.append('file', file);
         const response = await fetch(`${API_BASE_URL}/api/documents`, { method: 'POST', headers: authHeaders(), body });
@@ -79,7 +80,12 @@ export default function DataLibrary() {
           const message = data.detail || 'Please upload CSV, XLS, or XLSX files only.';
           throw new Error(`${file.name}: ${message}`);
         }
+        if (data.file?.file_id) uploadedIds.push(data.file.file_id);
       }
+      if (uploadedIds.length) {
+        setPendingDiagnosticIds((current) => [...new Set([...current, ...uploadedIds])]);
+      }
+      setActivePanel('upload');
       await loadFiles();
     } catch (uploadError) { setError(uploadError.message); } finally { setUploading(false); if (picker.current) picker.current.value = ''; }
   };
@@ -98,7 +104,7 @@ export default function DataLibrary() {
     } catch (deleteError) { setError(deleteError.message); } finally { setDeletingFileId(null); }
   };
 
-  const runDiagnostic = async (file) => {
+  const runDiagnostic = useCallback(async (file) => {
     if (diagnosingFileId) return;
     setDiagnosingFileId(file.id); setError(''); setDiagnosticResult(null);
     try {
@@ -107,7 +113,19 @@ export default function DataLibrary() {
       if (!response.ok) throw new Error(data.detail || 'Could not run diagnostics.');
       setDiagnosticResult({ fileId: file.id, filename: file.filename, ...data });
     } catch (diagnosticError) { setError(diagnosticError.message); } finally { setDiagnosingFileId(null); }
-  };
+  }, [diagnosingFileId]);
+
+  useEffect(() => {
+    if (diagnosingFileId || !pendingDiagnosticIds.length) return;
+    const nextFile = files.find((file) => pendingDiagnosticIds.includes(file.id) && file.status === 'completed');
+    const failedIds = files.filter((file) => pendingDiagnosticIds.includes(file.id) && file.status === 'failed').map((file) => file.id);
+    if (failedIds.length) {
+      setPendingDiagnosticIds((current) => current.filter((id) => !failedIds.includes(id)));
+    }
+    if (!nextFile) return;
+    setPendingDiagnosticIds((current) => current.filter((id) => id !== nextFile.id));
+    runDiagnostic(nextFile);
+  }, [files, pendingDiagnosticIds, diagnosingFileId, runDiagnostic]);
 
   const fixDiagnostic = async (issue) => {
     const file = files.find((item) => item.id === diagnosticResult?.fileId);

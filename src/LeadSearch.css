@@ -226,6 +226,83 @@
   border-top: 1px solid #f3f4f6;
 }
 
+.ls-spelling-suggestion {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.75rem;
+  color: #64748b;
+  font-size: 0.82rem;
+}
+
+.ls-spelling-suggestion button {
+  border: 0;
+  background: transparent;
+  color: #ea580c;
+  font: inherit;
+  font-weight: 750;
+  padding: 0.1rem 0.15rem;
+  cursor: pointer;
+}
+
+.ls-spelling-suggestion button:hover {
+  color: #c2410c;
+  text-decoration: underline;
+}
+
+.ls-suggestion-box {
+  overflow: hidden;
+  margin-top: 0.45rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.55rem;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.1);
+  animation: ls-suggestion-open 0.16s ease-out;
+}
+
+.ls-suggestion-box button {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  border: 0;
+  border-bottom: 1px solid #f1f5f9;
+  background: #fff;
+  color: #1f2937;
+  padding: 0.45rem 0.7rem;
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ls-suggestion-box button:last-child {
+  border-bottom: 0;
+}
+
+.ls-suggestion-box button svg {
+  flex: 0 0 auto;
+  color: #94a3b8;
+}
+
+.ls-suggestion-box button:hover {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+@keyframes ls-suggestion-open {
+  from {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 /* ── Status Banner ─────────────────────────────────────── */
 
 .ls-status-banner {

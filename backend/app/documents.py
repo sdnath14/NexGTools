@@ -55,7 +55,7 @@ def _validate_contact_values(values: dict[str, Any], sheet_name: str, row_number
 
 
 def validate_workbook(path: Path, extension: str) -> dict[str, int]:
-    """Validate column names before accepting an upload."""
+    """Validate that uploaded sheets have usable headers before accepting them."""
     try:
         sheets = (
             # Read without a header so duplicate spreadsheet headers are retained
@@ -80,20 +80,16 @@ def validate_workbook(path: Path, extension: str) -> dict[str, int]:
         headers = ["" if _is_empty(value) else str(value).strip() for value in frame.iloc[0].tolist()]
         duplicate_headers = sorted({header for header in headers if header and headers.count(header) > 1})
         blank_headers = [str(index + 1) for index, header in enumerate(headers) if not header]
-        missing = [column for column in TEMPLATE_COLUMNS if column not in headers]
-        unexpected = [column for column in headers if column not in TEMPLATE_COLUMNS]
-        if duplicate_headers or blank_headers or missing or unexpected:
+        if duplicate_headers or blank_headers:
             details = []
             if duplicate_headers:
                 details.append(f"duplicate columns: {', '.join(duplicate_headers)}")
             if blank_headers:
                 details.append(f"blank column headers at positions: {', '.join(blank_headers)}")
-            if missing:
-                details.append(f"missing columns: {', '.join(missing)}")
-            if unexpected:
-                details.append(f"unexpected columns: {', '.join(unexpected)}")
-            errors.append(f"{sheet_name}: template columns do not match ({'; '.join(details)})")
+            errors.append(f"{sheet_name}: column template has issues ({'; '.join(details)})")
             continue
+        if not any(headers):
+            errors.append(f"{sheet_name}: no column headers were found")
 
     if errors:
         preview = errors[:20]
@@ -145,7 +141,10 @@ def run_diagnostics(user_id: int, file_id: str) -> dict[str, Any]:
                     "value": values.get(column),
                     "fixable": True,
                 })
-        row_key = tuple("" if _is_empty(values.get(column)) else str(values.get(column)).strip() for column in TEMPLATE_COLUMNS)
+        row_key = tuple(
+            (column, "" if _is_empty(values.get(column)) else str(values.get(column)).strip())
+            for column in sorted(values)
+        )
         identity = (record["name"], row_key)
         if identity in seen_rows and len(issues) < 100:
             issues.append({

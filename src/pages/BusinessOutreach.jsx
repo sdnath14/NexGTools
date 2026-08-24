@@ -39,6 +39,29 @@ const tabs = [
   { id: 'editor', label: 'Editor', icon: Edit3 },
 ];
 
+const campaignTemplates = [
+  {
+    id: 'garages',
+    label: 'Garages',
+    goal: 'Introduce our automotive lubricant and used-oil solutions to garages, build trust with the owner or manager, and schedule a short call or visit to discuss regular supply requirements.',
+    keyPoints: [
+      'Reliable lubricant supply for daily garage operations',
+      'Support for used-oil handling and business follow-up',
+      'Request a 10-minute call or quick shop visit',
+    ],
+  },
+  {
+    id: 'restaurants',
+    label: 'Restaurants',
+    goal: 'Reach restaurant owners or managers with a practical business introduction, understand their recurring operational supply needs, and schedule a quick conversation for partnership opportunities.',
+    keyPoints: [
+      'Simple business introduction for restaurant decision makers',
+      'Focus on recurring supply, service, or partnership needs',
+      'Request a short call at a convenient time',
+    ],
+  },
+];
+
 const emptyLead = { company_name: '', contact_person: '', email: '', phone: '', website: '', category: 'manual' };
 
 const statusClass = (status) => status.toLowerCase();
@@ -187,6 +210,13 @@ export default function BusinessOutreach() {
   };
 
   const addKeyPoint = () => setKeyPoints((current) => [...current, '']);
+
+  const applyCampaignTemplate = (template) => {
+    setCampaignGoal(template.goal);
+    setKeyPoints(template.keyPoints);
+    setNotice(`${template.label} campaign template applied.`);
+    setError('');
+  };
 
   const openNewLeadModal = () => {
     setEditLead(null);
@@ -620,6 +650,18 @@ export default function BusinessOutreach() {
             <span className="bo-required">Required</span>
             <h2>Campaign Goal</h2>
             <input value={campaignGoal} onChange={(event) => setCampaignGoal(event.target.value)} placeholder="e.g., Follow up and schedule a 10-minute discovery call..." />
+            <div className="bo-template-row">
+              {campaignTemplates.map((template) => (
+                <button
+                  key={template.id}
+                  type="button"
+                  className={campaignGoal === template.goal ? 'active' : ''}
+                  onClick={() => applyCampaignTemplate(template)}
+                >
+                  {template.label}
+                </button>
+              ))}
+            </div>
           </label>
 
           <label className="bo-field-group">

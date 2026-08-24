@@ -99,6 +99,7 @@
 .bo-soft-btn,
 .bo-dark-btn,
 .bo-tone-row button,
+.bo-template-row button,
 .bo-audience button,
 .bo-section-head button,
 .bo-rewrite button,
@@ -117,6 +118,7 @@
 .bo-soft-btn:disabled,
 .bo-dark-btn:disabled,
 .bo-tone-row button:disabled,
+.bo-template-row button:disabled,
 .bo-audience button:disabled,
 .bo-section-head button:disabled,
 .bo-rewrite button:disabled,
@@ -132,6 +134,29 @@
   background: #ffedd5;
   color: #07152b;
   padding: 0 12px;
+}
+
+.bo-template-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.bo-template-row button {
+  min-height: 30px;
+  border: 1px solid #fed7aa;
+  background: #fff7ed;
+  color: #c2410c;
+  padding: 0 11px;
+}
+
+.bo-template-row button:hover,
+.bo-template-row button.active {
+  border-color: #fb923c;
+  background: #ffedd5;
+  color: #9a3412;
 }
 
 .bo-dark-btn,

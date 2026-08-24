@@ -9,6 +9,124 @@ const AI_WELCOME_MESSAGE = {
   content: 'Search or select a lead, scrape its website, then ask me about the company here.',
 };
 
+const SPELLING_WORDS = [
+  'accountant', 'agency', 'architect', 'automobile', 'bakery', 'bank', 'beauty', 'boutique', 'builder', 'cafe',
+  'caterer', 'chemist', 'clinic', 'coaching', 'college', 'consultant', 'contractor', 'courier', 'dentist',
+  'developer', 'diagnostic', 'distributor', 'doctor', 'electrician', 'electronics', 'engineer', 'exporter',
+  'factory', 'finance', 'furniture', 'garage', 'grocery', 'gym', 'hardware', 'hospital', 'hotel', 'importer',
+  'institute', 'insurance', 'interior', 'jewellery', 'laboratory', 'laundry', 'lawyer', 'logistics', 'manufacturer',
+  'marketing', 'medical', 'mobile', 'pharmacy', 'printing', 'real', 'repair', 'restaurant', 'retail', 'salon',
+  'school', 'security', 'service', 'software', 'stationery', 'supplier', 'textile', 'tour', 'training', 'transport',
+  'travel', 'wholesale', 'agency', 'services', 'solutions', 'technologies', 'enterprise', 'company', 'business',
+  'kolkata', 'salt', 'lake', 'delhi', 'mumbai', 'pune', 'chennai', 'bengaluru', 'bangalore', 'hyderabad', 'ahmedabad',
+  'jaipur', 'lucknow', 'noida', 'gurgaon', 'gurugram', 'surat', 'indore', 'patna', 'bhubaneswar', 'guwahati',
+];
+
+const BUSINESS_SUGGESTIONS = [
+  'restaurant', 'garage', 'car repair', 'automobile service', 'petrol pump', 'software company', 'clinic', 'hospital',
+  'pharmacy', 'hotel', 'bakery', 'cafe', 'salon', 'gym', 'hardware shop', 'electronics shop', 'furniture store',
+  'real estate agency', 'travel agency', 'courier service', 'logistics company', 'manufacturer', 'distributor',
+  'wholesale supplier', 'school', 'coaching institute', 'printing service', 'diagnostic center', 'insurance agency',
+];
+
+const LOCATION_SUGGESTIONS = [
+  'Kolkata', 'Salt Lake', 'Madhyamgram', 'Dum Dum', 'Howrah', 'New Town', 'Park Street', 'Ballygunge', 'Behala',
+  'Barasat', 'Siliguri', 'Durgapur', 'Delhi', 'Noida', 'Gurugram', 'Mumbai', 'Pune', 'Bengaluru', 'Hyderabad',
+  'Chennai', 'Ahmedabad', 'Surat', 'Jaipur', 'Lucknow', 'Patna', 'Bhubaneswar', 'Guwahati',
+];
+
+const AI_PROMPT_SUGGESTIONS = [
+  'Show only phone numbers',
+  'Show email addresses',
+  'What products do they offer?',
+  'Company summary',
+  'Write a short outreach message',
+  'Find decision maker details',
+];
+
+const EMAIL_MESSAGE_SUGGESTIONS = [
+  'Please share a convenient time for a quick call.',
+  'We would like to discuss a potential business opportunity.',
+  'Can we schedule a 10-minute discovery call this week?',
+  'Please let us know who handles vendor partnerships.',
+];
+
+const COMMON_SPELLING_FIXES = {
+  restorant: 'restaurant',
+  restarant: 'restaurant',
+  resturant: 'restaurant',
+  restarunt: 'restaurant',
+  restraunt: 'restaurant',
+  restaurent: 'restaurant',
+  sofware: 'software',
+  softwere: 'software',
+  softwar: 'software',
+  clinik: 'clinic',
+  farmacy: 'pharmacy',
+  pharmcy: 'pharmacy',
+  hospial: 'hospital',
+  hospitle: 'hospital',
+  hotal: 'hotel',
+  jewellary: 'jewellery',
+  jwellery: 'jewellery',
+  manufacter: 'manufacturer',
+  manufactur: 'manufacturer',
+  supllier: 'supplier',
+  suplier: 'supplier',
+  wholsale: 'wholesale',
+  kolkota: 'kolkata',
+  calcutta: 'kolkata',
+  banglore: 'bangalore',
+  gurgaon: 'gurugram',
+};
+
+const editDistance = (left, right) => {
+  const rows = Array.from({ length: left.length + 1 }, (_, index) => [index]);
+  for (let column = 1; column <= right.length; column += 1) rows[0][column] = column;
+  for (let row = 1; row <= left.length; row += 1) {
+    for (let column = 1; column <= right.length; column += 1) {
+      rows[row][column] = left[row - 1] === right[column - 1]
+        ? rows[row - 1][column - 1]
+        : Math.min(rows[row - 1][column - 1], rows[row][column - 1], rows[row - 1][column]) + 1;
+    }
+  }
+  return rows[left.length][right.length];
+};
+
+const correctionForWord = (word) => {
+  const normalized = word.toLowerCase();
+  if (normalized.length < 4 || /^\d+$/.test(normalized)) return word;
+  if (COMMON_SPELLING_FIXES[normalized]) return COMMON_SPELLING_FIXES[normalized];
+  if (SPELLING_WORDS.includes(normalized)) return word;
+  let best = null;
+  for (const candidate of SPELLING_WORDS) {
+    if (Math.abs(candidate.length - normalized.length) > 2) continue;
+    const distance = editDistance(normalized, candidate);
+    const limit = normalized.length <= 5 ? 1 : 2;
+    if (distance <= limit && (!best || distance < best.distance)) best = { candidate, distance };
+  }
+  return best?.candidate || word;
+};
+
+const correctSearchPhrase = (value) => value.replace(/[A-Za-z]+/g, correctionForWord);
+const spellingSuggestionFor = (value) => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const corrected = correctSearchPhrase(trimmed);
+  return corrected.toLowerCase() === trimmed.toLowerCase() ? null : corrected;
+};
+
+const textSuggestionsFor = (value, options, limit = 5) => {
+  const normalized = value.trim().toLowerCase();
+  const matches = options.filter((option) => {
+    const optionText = option.toLowerCase();
+    if (!normalized) return true;
+    if (optionText === normalized) return false;
+    return optionText.startsWith(normalized) || optionText.includes(normalized);
+  });
+  return [...new Set(matches)].slice(0, limit);
+};
+
 const LeadSearch = () => {
   const [form, setForm] = useState({
     companyName: '',
@@ -43,6 +161,7 @@ const LeadSearch = () => {
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [emailRecipient, setEmailRecipient] = useState('');
   const [emailMessage, setEmailMessage] = useState('');
+  const [activeSuggestionField, setActiveSuggestionField] = useState('');
   const aiChatEndRef = useRef(null);
 
   const selectedLead = useMemo(
@@ -63,6 +182,29 @@ const LeadSearch = () => {
   );
   const allLeadsChecked = visibleLeads.length > 0 && checkedLeads.length === visibleLeads.length;
   const exportCount = checkedLeads.length || visibleLeads.length;
+  const spellingSuggestion = useMemo(() => {
+    const businessType = spellingSuggestionFor(form.businessType);
+    const cityArea = form.cityArea ? spellingSuggestionFor(form.cityArea) : '';
+    const hasBusinessFix = Boolean(businessType);
+    const hasLocationFix = Boolean(cityArea);
+    if (!hasBusinessFix && !hasLocationFix) return null;
+    return {
+      businessType: hasBusinessFix ? businessType : form.businessType,
+      cityArea: hasLocationFix ? cityArea : form.cityArea,
+    };
+  }, [form.businessType, form.cityArea]);
+  const socialSpellingSuggestion = useMemo(() => spellingSuggestionFor(socialSearchQuery), [socialSearchQuery]);
+  const aiSpellingSuggestion = useMemo(() => spellingSuggestionFor(aiQuestion), [aiQuestion]);
+  const emailMessageSpellingSuggestion = useMemo(() => spellingSuggestionFor(emailMessage), [emailMessage]);
+  const businessTypeSuggestions = useMemo(() => form.businessType.trim() ? textSuggestionsFor(form.businessType, BUSINESS_SUGGESTIONS) : [], [form.businessType]);
+  const locationSuggestions = useMemo(() => !form.pincode && form.cityArea.trim() ? textSuggestionsFor(form.cityArea, LOCATION_SUGGESTIONS) : [], [form.cityArea, form.pincode]);
+  const socialQuerySuggestions = useMemo(() => {
+    const leadNames = leads.map((lead) => lead.name).filter(Boolean);
+    const options = [selectedLead?.name, ...leadNames].filter(Boolean);
+    return socialSearchQuery.trim() ? textSuggestionsFor(socialSearchQuery, options, 4) : [];
+  }, [leads, selectedLead, socialSearchQuery]);
+  const aiQuestionSuggestions = useMemo(() => aiQuestion.trim() ? textSuggestionsFor(aiQuestion, AI_PROMPT_SUGGESTIONS, 4) : [], [aiQuestion]);
+  const emailMessageSuggestions = useMemo(() => emailMessage.trim() ? textSuggestionsFor(emailMessage, EMAIL_MESSAGE_SUGGESTIONS, 3) : [], [emailMessage]);
 
   useEffect(() => {
     setScraperUrl(selectedLead?.website || '');
@@ -151,6 +293,31 @@ const LeadSearch = () => {
       cityArea: isPincode ? '' : value,
     }));
   };
+
+  const applySpellingSuggestion = () => {
+    if (!spellingSuggestion) return;
+    setForm((current) => ({
+      ...current,
+      businessType: spellingSuggestion.businessType,
+      cityArea: current.pincode ? current.cityArea : spellingSuggestion.cityArea,
+      pincode: current.pincode,
+    }));
+  };
+
+  const applyTextSuggestion = (setter, suggestion) => {
+    if (suggestion) setter(suggestion);
+  };
+
+  const suggestionBox = (field, items, onPick) => activeSuggestionField === field && items.length ? (
+    <div className="ls-suggestion-box">
+      {items.map((item) => (
+        <button type="button" key={item} onMouseDown={(event) => event.preventDefault()} onClick={() => { onPick(item); setActiveSuggestionField(''); }}>
+          <Search size={14} />
+          {item}
+        </button>
+      ))}
+    </div>
+  ) : null;
 
   const handleSearch = async (event) => {
     event.preventDefault();
@@ -459,10 +626,14 @@ const LeadSearch = () => {
             <label>Area / Pincode</label>
             <input
               type="text"
+              spellCheck="true"
               placeholder="e.g. Kolkata, Salt Lake or 700001"
               value={form.pincode || form.cityArea}
+              onFocus={() => setActiveSuggestionField('location')}
+              onBlur={() => setActiveSuggestionField('')}
               onChange={(event) => updateLocationField(event.target.value)}
             />
+            {suggestionBox('location', locationSuggestions, updateLocationField)}
           </div>
           <div className="ls-field">
             <label>Search Radius</label>
@@ -482,16 +653,29 @@ const LeadSearch = () => {
             <label>Business Type</label>
             <input
               type="text"
+              spellCheck="true"
               placeholder="e.g. software, restaurant, clinic"
               value={form.businessType}
+              onFocus={() => setActiveSuggestionField('businessType')}
+              onBlur={() => setActiveSuggestionField('')}
               onChange={(event) => updateField('businessType', event.target.value)}
             />
+            {suggestionBox('businessType', businessTypeSuggestions, (value) => updateField('businessType', value))}
           </div>
           <button className="ls-search-btn" disabled={isSearching}>
             {isSearching ? <Loader2 size={18} className="ls-spin" /> : <Search size={18} />}
             {isSearching ? 'Searching...' : 'Search'}
           </button>
         </div>
+        {spellingSuggestion ? (
+          <div className="ls-spelling-suggestion">
+            <span>Did you mean</span>
+            <button type="button" onClick={applySpellingSuggestion}>
+              {[spellingSuggestion.businessType, spellingSuggestion.cityArea].filter(Boolean).join(' in ')}
+            </button>
+            <span>?</span>
+          </div>
+        ) : null}
         <p className="ls-form-hint">
           Radius filters around the pincode or city. Company name is optional and helps narrow the search.
         </p>
@@ -628,14 +812,6 @@ const LeadSearch = () => {
                   Open in Google Maps
                 </a>
               ) : null}
-              <button
-                type="button"
-                className="ls-email-company-btn"
-                onClick={openEmailModal}
-              >
-                <Mail size={15} />
-                Email company
-              </button>
               <div className="ls-social-section">
                 <div className="ls-social-title">
                   <Share2 size={16} />
@@ -645,7 +821,10 @@ const LeadSearch = () => {
                   <Search size={16} />
                   <input
                     type="search"
+                    spellCheck="true"
                     value={socialSearchQuery}
+                    onFocus={() => setActiveSuggestionField('social')}
+                    onBlur={() => setActiveSuggestionField('')}
                     onChange={(event) => setSocialSearchQuery(event.target.value)}
                     placeholder="Search company or brand name..."
                     aria-label="Company or brand name for social media search"
@@ -654,6 +833,16 @@ const LeadSearch = () => {
                     {isSocialLoading ? 'Searching...' : 'Search'}
                   </button>
                 </form>
+                {socialSpellingSuggestion ? (
+                  <div className="ls-spelling-suggestion">
+                    <span>Did you mean</span>
+                    <button type="button" onClick={() => applyTextSuggestion(setSocialSearchQuery, socialSpellingSuggestion)}>
+                      {socialSpellingSuggestion}
+                    </button>
+                    <span>?</span>
+                  </div>
+                ) : null}
+                {suggestionBox('social', socialQuerySuggestions, setSocialSearchQuery)}
                 {isSocialLoading ? (
                   <div className="ls-social-search-state">
                     <span className="ls-social-search-icon">
@@ -761,6 +950,7 @@ const LeadSearch = () => {
                 <label>Website URL</label>
                 <input
                   type="text"
+                  spellCheck="false"
                   placeholder="https://example.com"
                   value={scraperUrl}
                   onChange={(event) => setScraperUrl(event.target.value)}
@@ -914,8 +1104,11 @@ const LeadSearch = () => {
             <form className="ls-ai-input-row" onSubmit={handleAiSubmit}>
               <input
                 type="text"
+                spellCheck="true"
                 placeholder="Ask Lead AI anything..."
                 value={aiQuestion}
+                onFocus={() => setActiveSuggestionField('ai')}
+                onBlur={() => setActiveSuggestionField('')}
                 onChange={(event) => setAiQuestion(event.target.value)}
               />
               <button className="ls-btn ls-btn-primary ls-btn-send" disabled={isAiThinking || !aiQuestion.trim()}>
@@ -923,6 +1116,16 @@ const LeadSearch = () => {
                 Send
               </button>
             </form>
+            {aiSpellingSuggestion ? (
+              <div className="ls-spelling-suggestion">
+                <span>Did you mean</span>
+                <button type="button" onClick={() => applyTextSuggestion(setAiQuestion, aiSpellingSuggestion)}>
+                  {aiSpellingSuggestion}
+                </button>
+                <span>?</span>
+              </div>
+            ) : null}
+            {suggestionBox('ai', aiQuestionSuggestions, setAiQuestion)}
           </div>
         </div>
       </div>
@@ -939,12 +1142,22 @@ const LeadSearch = () => {
             </div>
             <div className="ls-field">
               <label>To</label>
-              <input type="email" placeholder="company@example.com" value={emailRecipient} onChange={(event) => setEmailRecipient(event.target.value)} required autoFocus />
+              <input type="email" spellCheck="false" placeholder="company@example.com" value={emailRecipient} onChange={(event) => setEmailRecipient(event.target.value)} required autoFocus />
               {!emailRecipient ? <small className="ls-email-help">No company email was found yet. Enter one here or scrape the company website first.</small> : null}
             </div>
             <div className="ls-field">
               <label>Message</label>
-              <textarea rows="9" value={emailMessage} onChange={(event) => setEmailMessage(event.target.value)} required />
+              <textarea rows="9" spellCheck="true" value={emailMessage} onFocus={() => setActiveSuggestionField('emailMessage')} onBlur={() => setActiveSuggestionField('')} onChange={(event) => setEmailMessage(event.target.value)} required />
+              {emailMessageSpellingSuggestion ? (
+                <div className="ls-spelling-suggestion">
+                  <span>Did you mean</span>
+                  <button type="button" onClick={() => applyTextSuggestion(setEmailMessage, emailMessageSpellingSuggestion)}>
+                    {emailMessageSpellingSuggestion}
+                  </button>
+                  <span>?</span>
+                </div>
+              ) : null}
+              {suggestionBox('emailMessage', emailMessageSuggestions, setEmailMessage)}
             </div>
             <div className="ls-email-modal-actions">
               <button type="button" className="ls-btn ls-btn-ghost" onClick={() => setEmailModalOpen(false)}>Cancel</button>
