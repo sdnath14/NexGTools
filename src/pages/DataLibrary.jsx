@@ -8,7 +8,7 @@ import './DataLibraryUndo.css';
 
 
 
-const ACCEPTED = '.csv,.xls,.xlsx';
+const ACCEPTED = '.csv,.xls,.xlsx,.xlsm,.pdf,.docx,.txt';
 const formatBytes = (value) => `${(Number(value || 0) / 1024 / 1024).toFixed(1)} MB`;
 const tableColumns = (records) => [...new Set(records.flatMap((record) => Object.keys(record.record_json || {})))];
 const displayValue = (value) => value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
@@ -77,7 +77,7 @@ export default function DataLibrary() {
         let data = {};
         try { data = payload ? JSON.parse(payload) : {}; } catch { /* Use the user-friendly fallback below. */ }
         if (!response.ok) {
-          const message = data.detail || 'Please upload CSV, XLS, or XLSX files only.';
+          const message = data.detail || 'Please upload CSV, Excel, PDF, DOCX, or TXT files only.';
           throw new Error(`${file.name}: ${message}`);
         }
         if (data.file?.file_id) uploadedIds.push(data.file.file_id);

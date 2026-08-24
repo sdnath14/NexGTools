@@ -14,7 +14,9 @@ from pypdf import PdfReader
 
 from .database import db_connection
 
-SUPPORTED_EXTENSIONS = {".csv", ".xls", ".xlsx"}
+TABULAR_EXTENSIONS = {".csv", ".xls", ".xlsx", ".xlsm"}
+TEXT_EXTENSIONS = {".pdf", ".docx", ".txt"}
+SUPPORTED_EXTENSIONS = TABULAR_EXTENSIONS | TEXT_EXTENSIONS
 
 TEMPLATE_COLUMNS = (
     "GSTIN", "LEGAL NAME", "Pincode", "Trade Name", "BUSINESS_CONST",
@@ -28,7 +30,7 @@ def validate_upload(filename: str) -> tuple[str, str]:
     safe_name = Path(filename).name.strip() or "document"
     extension = Path(safe_name).suffix.lower()
     if extension not in SUPPORTED_EXTENSIONS:
-        raise ValueError("Only CSV, XLS, and XLSX files can be uploaded.")
+        raise ValueError("Only CSV, Excel, PDF, DOCX, and TXT files can be uploaded.")
     return safe_name, extension
 
 
@@ -54,48 +56,53 @@ def _validate_contact_values(values: dict[str, Any], sheet_name: str, row_number
     return errors
 
 
+def _read_csv(path: Path, header: int | None = 0) -> pd.DataFrame:
+    last_error: Exception | None = None
+    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin1"):
+        try:
+            return pd.read_csv(path, header=header, dtype=object, encoding=encoding)
+        except UnicodeDecodeError as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    return pd.read_csv(path, header=header, dtype=object)
+
+
 def validate_workbook(path: Path, extension: str) -> dict[str, int]:
-    """Validate that uploaded sheets have usable headers before accepting them."""
+    """Validate that uploaded files are readable before accepting them."""
+    if extension in TEXT_EXTENSIONS:
+        try:
+            records = list(_text_records(path, extension))
+        except Exception as exc:
+            raise ValueError("The file could not be read. Upload a valid PDF, DOCX, TXT, CSV, or Excel file.") from exc
+        rows_checked = sum(len(group_records) for _, _, _, group_records in records)
+        if not rows_checked:
+            raise ValueError("The document does not contain any readable text to import.")
+        return {"sheets_checked": len(records)}
+
     try:
         sheets = (
             # Read without a header so duplicate spreadsheet headers are retained
             # instead of silently being renamed by pandas.
-            {"CSV": pd.read_csv(path, header=None, dtype=object)}
+            {"CSV": _read_csv(path, header=None)}
             if extension == ".csv"
             else pd.read_excel(path, sheet_name=None, header=None, dtype=object)
         )
     except Exception as exc:
         raise ValueError("The file could not be read. Upload a valid CSV, XLS, or XLSX file.") from exc
-    errors: list[str] = []
-
     if not sheets:
         raise ValueError("The workbook does not contain a worksheet.")
 
+    sheets_checked = 0
     for sheet_name, frame in sheets.items():
         frame = frame.dropna(how="all").dropna(axis=1, how="all")
         if frame.empty:
-            errors.append(f"{sheet_name}: the worksheet is empty")
             continue
+        sheets_checked += 1
 
-        headers = ["" if _is_empty(value) else str(value).strip() for value in frame.iloc[0].tolist()]
-        duplicate_headers = sorted({header for header in headers if header and headers.count(header) > 1})
-        blank_headers = [str(index + 1) for index, header in enumerate(headers) if not header]
-        if duplicate_headers or blank_headers:
-            details = []
-            if duplicate_headers:
-                details.append(f"duplicate columns: {', '.join(duplicate_headers)}")
-            if blank_headers:
-                details.append(f"blank column headers at positions: {', '.join(blank_headers)}")
-            errors.append(f"{sheet_name}: column template has issues ({'; '.join(details)})")
-            continue
-        if not any(headers):
-            errors.append(f"{sheet_name}: no column headers were found")
-
-    if errors:
-        preview = errors[:20]
-        suffix = " (showing the first 20 issues)" if len(errors) > len(preview) else ""
-        raise ValueError("Upload rejected: " + " ".join(preview) + suffix)
-    return {"sheets_checked": len(sheets)}
+    if not sheets_checked:
+        raise ValueError("The workbook does not contain any rows to import.")
+    return {"sheets_checked": sheets_checked}
 
 
 def _value(value: Any) -> Any:
@@ -172,7 +179,7 @@ def _clean_headers(columns: list[Any]) -> list[str]:
 
 
 def _tabular_records(path: Path, extension: str) -> Iterator[tuple[str, int, list[str], list[dict[str, Any]]]]:
-    sheets = pd.read_excel(path, sheet_name=None, dtype=object) if extension in {".xls", ".xlsx"} else {"CSV": pd.read_csv(path, dtype=object)}
+    sheets = pd.read_excel(path, sheet_name=None, dtype=object) if extension in {".xls", ".xlsx", ".xlsm"} else {"CSV": _read_csv(path)}
     for position, (name, frame) in enumerate(sheets.items()):
         frame = frame.dropna(how="all").dropna(axis=1, how="all")
         headers = _clean_headers(list(frame.columns))
@@ -202,7 +209,7 @@ def ingest(file_id: str) -> int:
             if not file_row: raise ValueError("Document not found.")
             cursor.execute("UPDATE document_files SET status = 'processing', error_message = NULL WHERE id = %s", (file_id,))
     path, extension = Path(file_row["storage_path"]), file_row["file_type"]
-    groups = _tabular_records(path, extension) if extension in {".csv", ".xls", ".xlsx"} else _text_records(path, extension)
+    groups = _tabular_records(path, extension) if extension in TABULAR_EXTENSIONS else _text_records(path, extension)
     total = 0
     with db_connection() as connection:
         with connection.cursor() as cursor:
