@@ -495,6 +495,17 @@ return (
               aria-label="Search uploaded data"
             />
 
+            <button disabled={(!question.trim() && !bpclOnly) || searching}>
+              {searching ? (
+                <Loader2 className="spin" size={17} />
+              ) : (
+                <Search size={17} />
+              )}
+              Search
+            </button>
+          </form>
+
+          <div className="library-search-controls">
             <button
               type="button"
               className={`library-bpcl-filter ${bpclOnly ? 'active' : ''}`}
@@ -505,16 +516,7 @@ return (
               <Tag size={16} />
               BPCL
             </button>
-
-            <button disabled={(!question.trim() && !bpclOnly) || searching}>
-              {searching ? (
-                <Loader2 className="spin" size={17} />
-              ) : (
-                <Search size={17} />
-              )}
-              Search
-            </button>
-          </form>
+          </div>
 
           <div className="library-selected-sources">
             <strong>Selected sources:</strong>

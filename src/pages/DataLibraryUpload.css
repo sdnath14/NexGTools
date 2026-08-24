@@ -16,6 +16,14 @@
   white-space: nowrap;
 }
 
+.library-search-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  margin-top: 0.8rem;
+}
+
 .library-selected-sources {
   display: flex;
   align-items: center;
