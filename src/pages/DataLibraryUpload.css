@@ -16,6 +16,35 @@
   white-space: nowrap;
 }
 
+.library-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 1rem;
+  color: var(--app-text);
+  font-size: 0.82rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.library-select-all input {
+  width: 16px;
+  height: 16px;
+  accent-color: #f97316;
+  cursor: pointer;
+}
+
+.library-select-all small {
+  color: #64748b;
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.library-select-all:has(input:disabled) {
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
 .library-search-controls {
   display: flex;
   align-items: center;

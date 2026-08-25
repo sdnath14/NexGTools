@@ -1585,10 +1585,11 @@ def keyword_document_search(payload: DocumentQueryRequest, authorization: str | 
     if not question and not tag:
         raise HTTPException(status_code=400, detail="A query or BPCL filter is required.")
     try:
-        records, total = search_documents(user["id"], question, payload.limit, payload.offset, payload.file_ids or None, tag)
+        records, total, source_counts = search_documents(user["id"], question, payload.limit, payload.offset, payload.file_ids or None, tag)
         return {
             "records": records,
             "total": total,
+            "source_counts": source_counts,
             "offset": payload.offset,
             "limit": payload.limit,
             "has_more": payload.offset + len(records) < total,

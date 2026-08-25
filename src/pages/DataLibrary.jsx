@@ -309,6 +309,7 @@ export default function DataLibrary() {
         records,
         ...(append && current ? { records: [...current.records, ...records] } : {}),
         total: data.total || 0,
+        sourceCounts: data.source_counts || [],
         hasMore: Boolean(data.has_more),
         fileIds: selectedFileIds,
       }));
@@ -339,6 +340,7 @@ export default function DataLibrary() {
         ...current,
         records: [...current.records, ...(data.records || [])],
         total: data.total || current.total,
+        sourceCounts: data.source_counts || current.sourceCounts || [],
         hasMore: Boolean(data.has_more),
       });
     } catch (loadError) { setError(loadError.message); } finally { setLoadingMoreIndex(null); }
@@ -375,10 +377,114 @@ export default function DataLibrary() {
   };
 
   const selectedFiles = files.filter((file) => selectedFileIds.includes(file.id));
+  const completedFileIds = files.filter((file) => file.status === 'completed').map((file) => file.id);
+  const selectedCompletedCount = completedFileIds.filter((id) => selectedFileIds.includes(id)).length;
+  const allCompletedSelected = completedFileIds.length > 0 && selectedCompletedCount === completedFileIds.length;
 
-  const documentsPanel = <section className="library-upload-grid"><div className="library-card library-documents-panel"><div className="library-card-head"><div><h2>Documents</h2><span>Upload files here, then select the sources you want to search.</span></div><div className="library-documents-actions"><button className="library-upload" onClick={() => picker.current?.click()} disabled={uploading}><FileUp size={18} /> {uploading ? 'Uploading…' : 'Upload file'}</button><button type="button" className="library-refresh" onClick={downloadTemplate}><Download size={17} /> Download template</button><button onClick={loadFiles} className="library-refresh">Refresh</button></div></div>
-    {loading ? <div className="library-empty"><Loader2 className="spin" /> Loading documents…</div> : files.length ? <div className="library-files">{files.map((file) => <div key={file.id} className={`library-file ${selectedFileIds.includes(file.id) ? 'selected' : ''}`} onClick={() => file.status === 'completed' && toggleSource(file.id)}><label className="library-source-select"><input type="checkbox" checked={selectedFileIds.includes(file.id)} onClick={(event) => event.stopPropagation()} onChange={() => toggleSource(file.id)} disabled={file.status !== 'completed'} aria-label={`Search ${file.filename}`} /></label><div className="library-file-text"><Database size={19} /><div><strong>{file.filename}</strong><small>{file.file_type.replace('.', '').toUpperCase()} · {formatBytes(file.file_size)} · {file.records || 0} records</small></div></div><div className="library-file-actions"><span className={`library-status ${file.status}`}>{file.status === 'completed' ? <CheckCircle2 size={15} /> : file.status === 'failed' ? <AlertCircle size={15} /> : <Loader2 className="spin" size={15} />}{file.status}</span>{file.status === 'completed' && <button type="button" className="library-refresh" onClick={(event) => { event.stopPropagation(); runDiagnostic(file); }} disabled={diagnosingFileId !== null}>{diagnosingFileId === file.id ? <Loader2 className="spin" size={15} /> : 'Run diagnostics'}</button>}<button type="button" className="library-delete-source" onClick={(event) => { event.stopPropagation(); deleteSource(file); }} disabled={deletingFileId !== null} aria-label={`Delete ${file.filename}`}>{deletingFileId === file.id ? <Loader2 className="spin" size={15} /> : <Trash2 size={15} />}</button></div></div>)}</div> : <div className="library-empty"><Database size={28} /> Upload a source to create searchable records.</div>}
-  </div></section>;
+  const toggleAllSources = () => {
+    setSelectedFileIds((current) => {
+      if (allCompletedSelected) {
+        return current.filter((id) => !completedFileIds.includes(id));
+      }
+      return [...new Set([...current, ...completedFileIds])];
+    });
+    setSearchResult(null);
+    setError('');
+  };
+
+  const documentsPanel = (
+    <section className="library-upload-grid">
+      <div className="library-card library-documents-panel">
+        <div className="library-card-head">
+          <div>
+            <h2>Documents</h2>
+            <span>Upload files here, then select the sources you want to search.</span>
+          </div>
+          <div className="library-documents-actions">
+            <button className="library-upload" onClick={() => picker.current?.click()} disabled={uploading}>
+              <FileUp size={18} /> {uploading ? 'Uploading…' : 'Upload file'}
+            </button>
+            <button type="button" className="library-refresh" onClick={downloadTemplate}>
+              <Download size={17} /> Download template
+            </button>
+            <button onClick={loadFiles} className="library-refresh">Refresh</button>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="library-empty"><Loader2 className="spin" /> Loading documents…</div>
+        ) : files.length ? (
+          <>
+            <label className="library-select-all">
+              <input
+                type="checkbox"
+                checked={allCompletedSelected}
+                onChange={toggleAllSources}
+                disabled={!completedFileIds.length}
+              />
+              <span>Select all</span>
+              <small>{selectedCompletedCount} of {completedFileIds.length} selected</small>
+            </label>
+
+            <div className="library-files">
+              {files.map((file) => (
+                <div
+                  key={file.id}
+                  className={`library-file ${selectedFileIds.includes(file.id) ? 'selected' : ''}`}
+                  onClick={() => file.status === 'completed' && toggleSource(file.id)}
+                >
+                  <label className="library-source-select">
+                    <input
+                      type="checkbox"
+                      checked={selectedFileIds.includes(file.id)}
+                      onClick={(event) => event.stopPropagation()}
+                      onChange={() => toggleSource(file.id)}
+                      disabled={file.status !== 'completed'}
+                      aria-label={`Search ${file.filename}`}
+                    />
+                  </label>
+                  <div className="library-file-text">
+                    <Database size={19} />
+                    <div>
+                      <strong>{file.filename}</strong>
+                      <small>{file.file_type.replace('.', '').toUpperCase()} · {formatBytes(file.file_size)} · {file.records || 0} records</small>
+                    </div>
+                  </div>
+                  <div className="library-file-actions">
+                    <span className={`library-status ${file.status}`}>
+                      {file.status === 'completed' ? <CheckCircle2 size={15} /> : file.status === 'failed' ? <AlertCircle size={15} /> : <Loader2 className="spin" size={15} />}
+                      {file.status}
+                    </span>
+                    {file.status === 'completed' && (
+                      <button
+                        type="button"
+                        className="library-refresh"
+                        onClick={(event) => { event.stopPropagation(); runDiagnostic(file); }}
+                        disabled={diagnosingFileId !== null}
+                      >
+                        {diagnosingFileId === file.id ? <Loader2 className="spin" size={15} /> : 'Run diagnostics'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="library-delete-source"
+                      onClick={(event) => { event.stopPropagation(); deleteSource(file); }}
+                      disabled={deletingFileId !== null}
+                      aria-label={`Delete ${file.filename}`}
+                    >
+                      {deletingFileId === file.id ? <Loader2 className="spin" size={15} /> : <Trash2 size={15} />}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="library-empty"><Database size={28} /> Upload a source to create searchable records.</div>
+        )}
+      </div>
+    </section>
+  );
 
 
 
@@ -398,14 +504,6 @@ return (
         <div className="library-panel-tabs">
           <button
             type="button"
-            className={activePanel === 'search' ? 'active' : ''}
-            onClick={() => setActivePanel('search')}
-          >
-            Search data
-          </button>
-
-          <button
-            type="button"
             className={activePanel === 'upload' ? 'active' : ''}
             onClick={() => setActivePanel('upload')}
           >
@@ -418,6 +516,14 @@ return (
             onClick={() => setActivePanel('workbook')}
           >
             Workbook view
+          </button>
+
+          <button
+            type="button"
+            className={activePanel === 'search' ? 'active' : ''}
+            onClick={() => setActivePanel('search')}
+          >
+            Search data
           </button>
         </div>
       </div>
@@ -469,8 +575,7 @@ return (
             <div>
               <h2>Search database</h2>
               <span>
-                Search exact keywords across your uploaded data. Select sources
-                in Upload files, or leave them unselected to search every source.
+                Search keywords with BM25 ranking across all files, or only the sources selected in Upload files.
               </span>
             </div>
 
@@ -563,6 +668,14 @@ return (
                           ? ` for “${searchResult.query}”`
                           : ''}
                       </span>
+                      {!!searchResult.sourceCounts?.length && (
+                        <div className="library-selected-sources library-result-sources">
+                          <strong>Found in:</strong>
+                          {searchResult.sourceCounts.map((source) => (
+                            <span key={source.filename}>{source.filename}: {source.count}</span>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     <button

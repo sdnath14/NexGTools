@@ -3,14 +3,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import uuid
+from collections import Counter
 from pathlib import Path
 from typing import Any, Iterator
 
 import pandas as pd
 from docx import Document
 from pypdf import PdfReader
+
+try:
+    from rank_bm25 import BM25Okapi
+except ImportError:  # pragma: no cover - local fallback keeps search usable without the optional package.
+    BM25Okapi = None
 
 from .database import db_connection
 
@@ -382,6 +389,35 @@ def _search_terms(query: str) -> list[str]:
     return list(dict.fromkeys(term for term in terms if term not in _SEARCH_STOP_WORDS))
 
 
+def _bm25_tokens(text: str) -> list[str]:
+    return re.findall(r"[\w@.+-]+", text.casefold())
+
+
+def _fallback_bm25_scores(corpus: list[list[str]], query_terms: list[str], k1: float = 1.5, b: float = 0.75) -> list[float]:
+    if not corpus or not query_terms:
+        return [0.0 for _ in corpus]
+    document_count = len(corpus)
+    average_length = sum(len(document) for document in corpus) / max(document_count, 1)
+    document_frequencies = Counter(
+        term
+        for document in corpus
+        for term in set(document)
+    )
+    scores: list[float] = []
+    for document in corpus:
+        frequencies = Counter(document)
+        document_length = len(document) or 1
+        score = 0.0
+        for term in query_terms:
+            if not frequencies[term]:
+                continue
+            idf = math.log(1 + (document_count - document_frequencies[term] + 0.5) / (document_frequencies[term] + 0.5))
+            denominator = frequencies[term] + k1 * (1 - b + b * document_length / max(average_length, 1))
+            score += idf * (frequencies[term] * (k1 + 1) / denominator)
+        scores.append(score)
+    return scores
+
+
 def _source_columns(user_id: int, file_ids: list[str] | None) -> set[str]:
     """Read available source columns before interpreting a natural query."""
     statement = "SELECT s.headers_json FROM document_sheets s JOIN document_files f ON f.id=s.file_id WHERE f.user_id=%s"
@@ -437,18 +473,16 @@ def _ai_search_terms(question: str, columns: set[str]) -> list[str] | None:
         return None
 
 
-def search(user_id: int, query: str, limit: int = 50, offset: int = 0, file_ids: list[str] | None = None, tag: str | None = None) -> tuple[list[dict[str, Any]], int]:
-    """Return top workbook rows containing the supplied keywords, without AI."""
+def search(user_id: int, query: str, limit: int = 50, offset: int = 0, file_ids: list[str] | None = None, tag: str | None = None) -> tuple[list[dict[str, Any]], int, list[dict[str, Any]]]:
+    """Return BM25-ranked workbook rows matching the supplied keywords."""
     normalized_query = query.casefold().strip()
     terms = _search_terms(query)
     normalized_tag = tag.strip().upper() if tag else ""
     if normalized_tag and normalized_tag != "BPCL":
         raise ValueError("Unsupported row tag filter.")
     if not terms and not normalized_tag:
-        return [], 0
+        return [], 0, []
 
-    # Every keyword must be present in the same source row.
-    predicates = " AND ".join(["LOWER(r.searchable_text) LIKE %s"] * len(terms)) if terms else "1=1"
     tag_filter = " AND JSON_CONTAINS(COALESCE(r.tags_json, CAST('[]' AS JSON)), CAST(%s AS JSON))" if normalized_tag else ""
     file_filter = ""
     params: list[Any] = [user_id]
@@ -457,14 +491,13 @@ def search(user_id: int, query: str, limit: int = 50, offset: int = 0, file_ids:
         params.extend(file_ids)
     if normalized_tag:
         params.append(json.dumps(normalized_tag))
-    params.extend(f"%{term}%" for term in terms)
     with db_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 f"SELECT r.id, f.id AS file_id, f.filename, s.id AS sheet_id, s.name AS sheet_name, r.record_number, r.record_json, r.tags_json, r.searchable_text "
                 f"FROM document_records r JOIN document_files f ON f.id=r.file_id "
                 f"LEFT JOIN document_sheets s ON s.id=r.sheet_id "
-                f"WHERE f.user_id=%s{file_filter}{tag_filter} AND ({predicates})",
+                f"WHERE f.user_id=%s{file_filter}{tag_filter}",
                 params,
             )
             rows = list(cursor.fetchall())
@@ -474,22 +507,46 @@ def search(user_id: int, query: str, limit: int = 50, offset: int = 0, file_ids:
         if isinstance(row.get("tags_json"), str):
             row["tags_json"] = json.loads(row["tags_json"] or "[]")
         row["tags"] = row.pop("tags_json", None) or []
+    if not rows:
+        return [], 0, []
 
-    def rank(row: dict[str, Any]) -> tuple[int, int, int]:
-        text = row["searchable_text"].casefold()
-        phrase_score = 1000 if normalized_query in text else 0
-        term_score = sum(text.count(term) for term in terms)
-        return (phrase_score + term_score, -len(text), -row["record_number"])
+    if terms:
+        corpus = [_bm25_tokens(row["searchable_text"]) for row in rows]
+        if BM25Okapi:
+            scores = BM25Okapi(corpus).get_scores(terms).tolist()
+        else:
+            scores = _fallback_bm25_scores(corpus, terms)
+        matched_rows = []
+        for row, score in zip(rows, scores):
+            text = row["searchable_text"].casefold()
+            phrase_score = 4.0 if normalized_query and normalized_query in text else 0.0
+            coverage_score = sum(1 for term in terms if term in text) / max(len(terms), 1)
+            final_score = float(score) + phrase_score + coverage_score
+            if final_score > 0:
+                row["_search_score"] = final_score
+                matched_rows.append(row)
+    else:
+        matched_rows = rows
 
-    total = len(rows)
-    ranked = sorted(rows, key=rank, reverse=True)[offset:offset + limit]
+    source_counter = Counter(row["filename"] for row in matched_rows)
+    source_counts = [
+        {"filename": filename, "count": count}
+        for filename, count in source_counter.most_common()
+    ]
+    total = len(matched_rows)
+    ranked = sorted(
+        matched_rows,
+        key=lambda row: (row.get("_search_score", 0), -len(row["searchable_text"]), -row["record_number"]),
+        reverse=True,
+    )[offset:offset + limit]
     for row in ranked:
         row.pop("searchable_text", None)
-    return ranked, total
+        row.pop("_search_score", None)
+    return ranked, total, source_counts
 
 
 def answer(user_id: int, question: str) -> dict[str, Any]:
-    records, total = search(user_id, question)
+    records, total, _source_counts = search(user_id, question)
     if not records:
         return {"answer": "No matching rows were found in your uploaded data.", "sources": []}
     return {"answer": f"Found {total} keyword match{'' if total == 1 else 'es'} in your uploaded data.", "sources": records}
