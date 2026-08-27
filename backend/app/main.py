@@ -1,6 +1,6 @@
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, quote_plus, urlencode, urljoin, urlparse
+from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from email.message import EmailMessage
@@ -55,6 +55,7 @@ from .database import (
     save_role,
     set_user_role,
     save_csv_export,
+    save_business_search,
     save_lead_search,
     save_manual_outreach_contact,
     save_outreach_message,
@@ -64,7 +65,7 @@ from .database import (
     verify_admin_password,
 )
 from .scraper import CrawlOptions, EMAIL_RE, PHONE_RE, scrape_website
-from .documents import answer as answer_documents, create_file, delete_file, delete_record, file_contents, file_download, ingest, list_files, run_diagnostics, search as search_documents, update_cell, update_record_tag, validate_upload, validate_workbook
+from .documents import answer as answer_documents, create_file, delete_file, delete_record, file_contents, file_download, ingest, list_files, run_diagnostics, search as search_documents, update_cell, update_file_tag, update_record_tag, validate_upload, validate_workbook
 
 
 app = FastAPI(title="NexGTools API", version="0.1.0")
@@ -193,6 +194,11 @@ class DocumentRecordTagUpdate(BaseModel):
     sheet_id: int
     record_number: int
     tag: str = "BPCL"
+    enabled: bool = True
+
+
+class DocumentFileTagUpdate(BaseModel):
+    tag: str
     enabled: bool = True
 
 
@@ -704,13 +710,63 @@ def _extract_structured_business_data(soup: BeautifulSoup) -> dict[str, str]:
     return extracted
 
 
+def _reader_url(url: str) -> str:
+    return f"https://r.jina.ai/{url}"
+
+
+def _reader_detail(url: str, session: requests.Session) -> dict[str, Any]:
+    try:
+        response = session.get(_reader_url(url), timeout=18, allow_redirects=True)
+        if response.status_code >= 400:
+            return {}
+    except requests.RequestException:
+        return {}
+
+    text = _clean_business_text(response.text, 3200)
+    if not text:
+        return {}
+
+    title = ""
+    description = ""
+    for line in response.text.splitlines():
+        clean_line = line.strip()
+        if clean_line.lower().startswith("title:") and not title:
+            title = _clean_business_text(clean_line.split(":", 1)[1], 180)
+        elif clean_line and not clean_line.lower().startswith(("url source:", "markdown content:")) and not description:
+            description = _clean_business_text(clean_line, 500)
+        if title and description:
+            break
+
+    links: list[str] = []
+    for _label, link in re.findall(r"\[([^\]]{2,180})\]\((https?://[^)\s]+)\)", response.text):
+        if _is_business_result_link(link) and link not in links:
+            links.append(link)
+        if len(links) >= 8:
+            break
+
+    return {
+        "detail_title": title,
+        "detail_description": description,
+        "detail_text": text,
+        "structured_name": title,
+        "structured_address": "",
+        "structured_phone": "",
+        "structured_email": "",
+        "structured_website": url,
+        "emails": sorted(set(EMAIL_RE.findall(response.text))),
+        "phones": sorted(set(match.strip() for match in PHONE_RE.findall(text)))[:8],
+        "external_links": links,
+        "reader_fallback": True,
+    }
+
+
 def _scrape_business_detail(url: str, session: requests.Session) -> dict[str, Any]:
     try:
         response = session.get(url, timeout=10, allow_redirects=True)
         if response.status_code >= 400 or "text/html" not in response.headers.get("content-type", "").lower():
-            return {}
+            return _reader_detail(url, session)
     except requests.RequestException:
-        return {}
+        return _reader_detail(url, session)
 
     soup = BeautifulSoup(response.text, "html.parser")
     structured_data = _extract_structured_business_data(soup)
@@ -754,6 +810,107 @@ def _scrape_business_detail(url: str, session: requests.Session) -> dict[str, An
     }
 
 
+def _reader_business_source_results(source_id: str, query: str, location: str, limit: int, search_url: str, previous_error: str = "") -> dict[str, Any]:
+    source = BUSINESS_SOURCES[source_id]
+    source_domain = _business_source_domain(source_id)
+    session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            )
+        }
+    )
+    detail = _reader_detail(search_url, session)
+    if not detail:
+        return {
+            "source": source_id,
+            "label": source["label"],
+            "search_url": search_url,
+            "results": [],
+            "error": previous_error or f"{source['label']} could not be read with the fallback reader.",
+        }
+
+    seen: set[str] = set()
+    candidates: list[dict[str, Any]] = []
+    for label, link in re.findall(r"\[([^\]]{2,180})\]\((https?://[^)\s]+)\)", detail.get("detail_text", "")):
+        if link in seen or not _is_business_result_link(link):
+            continue
+        if source_domain and not _domain_matches(link, source_domain):
+            continue
+        seen.add(link)
+        title = _clean_business_text(label, 140)
+        parent_text = _clean_business_text(title, 500)
+        score = _business_link_score(source_id, link, title, parent_text, query, location)
+        if score < 0:
+            continue
+        candidates.append({"score": score, "title": title, "url": link, "parent_text": parent_text})
+
+    candidates.sort(key=lambda item: item["score"], reverse=True)
+    results: list[dict[str, Any]] = []
+    for candidate in candidates[:limit]:
+        result = {
+            "id": f"{source_id}-{len(results) + 1}",
+            "name": candidate["title"],
+            "source": source_id,
+            "source_label": source["label"],
+            "url": candidate["url"],
+            "search_url": search_url,
+            "snippet": candidate["parent_text"],
+            "address": "",
+            "phone": "",
+            "email": "",
+            "website": candidate["url"],
+            "business_type": query,
+            "source_score": candidate["score"],
+            "reader_fallback": True,
+        }
+        page_detail = _scrape_business_detail(candidate["url"], session)
+        if page_detail:
+            result.update(page_detail)
+            result["name"] = page_detail.get("structured_name") or result["name"] or page_detail.get("detail_title", "")
+            result["snippet"] = page_detail.get("detail_description") or result["snippet"] or page_detail.get("detail_text", "")[:500]
+            phones = page_detail.get("phones") or []
+            emails = page_detail.get("emails") or []
+            external_links = page_detail.get("external_links") or []
+            result["phone"] = page_detail.get("structured_phone") or (phones[0] if phones else "")
+            result["email"] = page_detail.get("structured_email") or (emails[0] if emails else "")
+            result["address"] = page_detail.get("structured_address") or result["address"]
+            result["website"] = page_detail.get("structured_website") or (external_links[0] if external_links else result["website"])
+        results.append(result)
+
+    if not results:
+        results.append(
+            {
+                "id": f"{source_id}-1",
+                "name": detail.get("detail_title") or source["label"],
+                "source": source_id,
+                "source_label": source["label"],
+                "url": search_url,
+                "search_url": search_url,
+                "snippet": detail.get("detail_description") or detail.get("detail_text", "")[:500],
+                "detail_text": detail.get("detail_text", ""),
+                "address": "",
+                "phone": (detail.get("phones") or [""])[0],
+                "email": (detail.get("emails") or [""])[0],
+                "website": search_url,
+                "business_type": query,
+                "source_score": 0,
+                "reader_fallback": True,
+            }
+        )
+
+    return {
+        "source": source_id,
+        "label": source["label"],
+        "search_url": search_url,
+        "results": results,
+        "error": previous_error,
+        "fallback": "jina_reader",
+    }
+
+
 def _scrape_business_source(source_id: str, query: str, location: str, limit: int) -> dict[str, Any]:
     search_url = _business_source_url(source_id, query, location)
     source = BUSINESS_SOURCES[source_id]
@@ -770,16 +927,17 @@ def _scrape_business_source(source_id: str, query: str, location: str, limit: in
     try:
         response = session.get(search_url, timeout=14, allow_redirects=True)
     except requests.RequestException as exc:
-        return {"source": source_id, "label": source["label"], "search_url": search_url, "results": [], "error": str(exc)}
+        return _reader_business_source_results(source_id, query, location, limit, search_url, str(exc))
 
     if response.status_code >= 400:
-        return {
-            "source": source_id,
-            "label": source["label"],
-            "search_url": search_url,
-            "results": [],
-            "error": f"{source['label']} returned HTTP {response.status_code}.",
-        }
+        return _reader_business_source_results(
+            source_id,
+            query,
+            location,
+            limit,
+            search_url,
+            f"{source['label']} returned HTTP {response.status_code}.",
+        )
 
     soup = BeautifulSoup(response.text, "html.parser")
     parsed_search_url = urlparse(response.url)
@@ -849,24 +1007,12 @@ def _scrape_business_source(source_id: str, query: str, location: str, limit: in
         )
 
     if not results:
+        reader_report = _reader_business_source_results(source_id, query, location, limit, response.url)
+        if reader_report.get("results"):
+            return reader_report
         page_title = soup.title.string.strip() if soup.title and soup.title.string else source["label"]
         page_text = _clean_business_text(soup.get_text(" ", strip=True), 900)
-        results.append(
-            {
-                "id": f"{source_id}-1",
-                "name": page_title,
-                "source": source_id,
-                "source_label": source["label"],
-                "url": response.url,
-                "search_url": response.url,
-                "snippet": page_text,
-                "address": "",
-                "phone": "",
-                "website": "",
-                "business_type": query,
-                "source_score": 0,
-            }
-        )
+        results.append({"id": f"{source_id}-1", "name": page_title, "source": source_id, "source_label": source["label"], "url": response.url, "search_url": response.url, "snippet": page_text, "address": "", "phone": "", "website": "", "business_type": query, "source_score": 0})
 
     for result in results[: min(8, len(results))]:
         detail = _scrape_business_detail(result["url"], session)
@@ -1557,6 +1703,16 @@ def update_document_record_tag(file_id: str, payload: DocumentRecordTagUpdate, a
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.patch("/api/documents/{file_id}/records/tags")
+def update_document_file_tag(file_id: str, payload: DocumentFileTagUpdate, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "data_library")
+    try:
+        updated_count = update_file_tag(user["id"], file_id, payload.tag, payload.enabled)
+        return {"updated": True, "updated_count": updated_count}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.delete("/api/documents/{file_id}/records/{sheet_name}/{record_number}")
 def delete_document_record(file_id: str, sheet_name: str, record_number: int, authorization: str | None = Header(default=None)) -> dict[str, bool]:
     user = _require_permission(authorization, "data_library")
@@ -1583,7 +1739,7 @@ def keyword_document_search(payload: DocumentQueryRequest, authorization: str | 
     question = payload.query.strip()
     tag = payload.tag.strip().upper() if payload.tag else None
     if not question and not tag:
-        raise HTTPException(status_code=400, detail="A query or BPCL filter is required.")
+        raise HTTPException(status_code=400, detail="A query or tag filter is required.")
     try:
         records, total, source_counts = search_documents(user["id"], question, payload.limit, payload.offset, payload.file_ids or None, tag)
         return {
@@ -1840,7 +1996,7 @@ def business_search(payload: BusinessSearchRequest, authorization: str | None = 
     if not query:
         raise HTTPException(status_code=400, detail="Enter a business, product, or service to search.")
 
-    available_source_ids = ["google_maps", *BUSINESS_SOURCES.keys()]
+    available_source_ids = list(BUSINESS_SOURCES.keys())
     available_sources = set(available_source_ids)
     requested_sources = list(dict.fromkeys(payload.sources))
     if not requested_sources:
@@ -1857,14 +2013,7 @@ def business_search(payload: BusinessSearchRequest, authorization: str | None = 
     results: list[dict[str, Any]] = []
 
     def search_source(source_id: str) -> dict[str, Any]:
-        if source_id == "google_maps":
-            return _business_places_results(query, location, per_source_limit, payload.radius_km)
-        report = _custom_search_business_source(source_id, query, location, per_source_limit)
-        if not report.get("results"):
-            fallback_report = _scrape_business_source(source_id, query, location, per_source_limit)
-            if fallback_report.get("results"):
-                fallback_report["error"] = report.get("error", "")
-                report = fallback_report
+        report = _scrape_business_source(source_id, query, location, per_source_limit)
         if not report.get("results"):
             report["results"] = [_source_lookup_result(source_id, query, location, report.get("error", ""))]
         return report
@@ -1877,18 +2026,12 @@ def business_search(payload: BusinessSearchRequest, authorization: str | None = 
             try:
                 reports_by_source[source_id] = future.result()
             except Exception as exc:
-                if source_id == "google_maps":
-                    reports_by_source[source_id] = {
-                        "source": source_id, "label": "Google Maps", "search_url": "",
-                        "results": [], "error": str(exc),
-                    }
-                else:
-                    reports_by_source[source_id] = {
-                        "source": source_id, "label": BUSINESS_SOURCES[source_id]["label"],
-                        "search_url": _business_source_url(source_id, query, location),
-                        "results": [_source_lookup_result(source_id, query, location, str(exc))],
-                        "error": str(exc),
-                    }
+                reports_by_source[source_id] = {
+                    "source": source_id, "label": BUSINESS_SOURCES[source_id]["label"],
+                    "search_url": _business_source_url(source_id, query, location),
+                    "results": [_source_lookup_result(source_id, query, location, str(exc))],
+                    "error": str(exc),
+                }
 
     for source_id in source_ids:
         report = reports_by_source[source_id]

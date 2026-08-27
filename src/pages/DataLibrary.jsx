@@ -9,9 +9,27 @@ import './DataLibraryUndo.css';
 
 
 const ACCEPTED = '.csv,.xls,.xlsx,.xlsm,.pdf,.docx,.txt';
+const TAG_OPTIONS = ['BPCL', 'HPCL'];
 const formatBytes = (value) => `${(Number(value || 0) / 1024 / 1024).toFixed(1)} MB`;
 const tableColumns = (records) => [...new Set(records.flatMap((record) => Object.keys(record.record_json || {})))];
 const displayValue = (value) => value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+const normalizeTag = (value) => String(value || '').trim().toUpperCase();
+const displayTags = (tags, selectedTag) => {
+  const normalizedTags = (tags || []).map(normalizeTag).filter(Boolean);
+  const selected = normalizeTag(selectedTag);
+  const vendorTag = selected && normalizedTags.includes(selected)
+    ? selected
+    : TAG_OPTIONS.find((tag) => normalizedTags.includes(tag));
+  return [
+    ...(vendorTag ? [vendorTag] : []),
+    ...normalizedTags.filter((tag) => !TAG_OPTIONS.includes(tag)),
+  ];
+};
+const hasOnlySelectedVendorTag = (tags, selectedTag) => {
+  const selected = normalizeTag(selectedTag);
+  const vendorTags = (tags || []).map(normalizeTag).filter((tag) => TAG_OPTIONS.includes(tag));
+  return Boolean(selected && vendorTags.length === 1 && vendorTags[0] === selected);
+};
 export default function DataLibrary() {
   const picker = useRef(null);
   const workbookTableRef = useRef(null);
@@ -38,7 +56,9 @@ export default function DataLibrary() {
   const [savingCell, setSavingCell] = useState(false);
   const [savingTag, setSavingTag] = useState(false);
   const [removingSearchTagId, setRemovingSearchTagId] = useState(null);
-  const [bpclOnly, setBpclOnly] = useState(false);
+  const [tagInput, setTagInput] = useState('BPCL');
+  const [tagOnly, setTagOnly] = useState(false);
+  const [bulkTagging, setBulkTagging] = useState(false);
   const [undoStack, setUndoStack] = useState([]);
   const [undoing, setUndoing] = useState(false);
 
@@ -61,7 +81,7 @@ export default function DataLibrary() {
   const clearSearch = () => {
     setSearchResult(null);
     setQuestion('');
-    setBpclOnly(false);
+    setTagOnly(false);
     setError('');
   };
 
@@ -175,7 +195,7 @@ export default function DataLibrary() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not update the cell.');
       setWorkbook((current) => current && ({ ...current, sheets: current.sheets.map((item) => item.id !== sheet.id ? item : ({ ...item, records: item.records.map((record) => record.record_number !== editingCell.recordNumber ? record : ({ ...record, record_json: { ...record.record_json, [editingCell.column]: nextValue } })) })) }));
-      setUndoStack((current) => [...current, { sheetId: sheet.id, sheetName: sheet.name, recordNumber: editingCell.recordNumber, column: editingCell.column, previousValue }]);
+      setUndoStack((current) => [...current, { type: 'cell', sheetId: sheet.id, sheetName: sheet.name, recordNumber: editingCell.recordNumber, column: editingCell.column, previousValue }]);
       setEditingCell(null);
     } catch (cellError) { setError(cellError.message); } finally { setSavingCell(false); }
   };
@@ -184,40 +204,107 @@ export default function DataLibrary() {
   const selectedWorkbookRecord = activeSheet && editingCell
     ? activeSheet.records.find((record) => record.record_number === editingCell.recordNumber)
     : null;
-  const selectedRowIsBpcl = Boolean(selectedWorkbookRecord?.tags?.includes('BPCL'));
+  const currentTag = normalizeTag(tagInput);
+  const selectedRowHasTag = hasOnlySelectedVendorTag(selectedWorkbookRecord?.tags || [], currentTag);
+  const workbookRecords = workbook?.sheets.flatMap((sheet) => sheet.records.map((record) => ({ sheetId: sheet.id, recordNumber: record.record_number, tags: record.tags || [] }))) || [];
+  const allWorkbookRowsHaveTag = Boolean(currentTag && workbookRecords.length && workbookRecords.every((record) => hasOnlySelectedVendorTag(record.tags, currentTag)));
+  const patchRecordTag = async (sheetId, recordNumber, tag, enabled) => {
+    const response = await fetch(`${API_BASE_URL}/api/documents/${workbook.file.id}/records/tag`, {
+      method: 'PATCH',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sheet_id: sheetId, record_number: recordNumber, tag, enabled }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Could not update tag.');
+    return data.tags || [];
+  };
 
-  const toggleSelectedRowBpcl = async () => {
+  const toggleSelectedRowTag = async () => {
     if (!workbook || !activeSheet || !editingCell || savingTag) return;
+    if (!currentTag) { setError('Type a tag before tagging a row.'); return; }
+    const previousTags = selectedWorkbookRecord?.tags || [];
+    const nextEnabled = !selectedRowHasTag;
     setSavingTag(true); setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/documents/${workbook.file.id}/records/tag`, { method: 'PATCH', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ sheet_id: activeSheet.id, record_number: editingCell.recordNumber, tag: 'BPCL', enabled: !selectedRowIsBpcl }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'Could not update BPCL tag.');
-      setWorkbook((current) => current && ({ ...current, sheets: current.sheets.map((sheet) => sheet.id !== activeSheet.id ? sheet : ({ ...sheet, records: sheet.records.map((record) => record.record_number !== editingCell.recordNumber ? record : ({ ...record, tags: data.tags || [] })) })) }));
+      let tags = previousTags;
+      if (nextEnabled) {
+        for (const tag of TAG_OPTIONS.filter((option) => option !== currentTag && tags.includes(option))) {
+          tags = await patchRecordTag(activeSheet.id, editingCell.recordNumber, tag, false);
+        }
+      }
+      tags = await patchRecordTag(activeSheet.id, editingCell.recordNumber, currentTag, nextEnabled);
+      setWorkbook((current) => current && ({ ...current, sheets: current.sheets.map((sheet) => sheet.id !== activeSheet.id ? sheet : ({ ...sheet, records: sheet.records.map((record) => record.record_number !== editingCell.recordNumber ? record : ({ ...record, tags })) })) }));
+      setUndoStack((current) => [...current, { type: 'tag-row', sheetId: activeSheet.id, recordNumber: editingCell.recordNumber, previousTags }]);
     } catch (tagError) { setError(tagError.message); } finally { setSavingTag(false); }
   };
 
-  const removeSearchResultBpcl = async (record) => {
+  const toggleWholeWorkbookTag = async () => {
+    if (!workbook || bulkTagging) return;
+    if (!currentTag) { setError('Type a tag before tagging a workbook.'); return; }
+    const nextEnabled = !allWorkbookRowsHaveTag;
+    const changedRows = workbookRecords
+      .filter((record) => nextEnabled ? !hasOnlySelectedVendorTag(record.tags, currentTag) : record.tags.includes(currentTag))
+      .map((record) => ({ sheetId: record.sheetId, recordNumber: record.recordNumber, previousTags: record.tags }));
+    if (!changedRows.length) return;
+    setBulkTagging(true); setError('');
+    try {
+      if (nextEnabled) {
+        for (const tag of TAG_OPTIONS.filter((option) => option !== currentTag)) {
+          const response = await fetch(`${API_BASE_URL}/api/documents/${workbook.file.id}/records/tags`, {
+            method: 'PATCH',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tag, enabled: false }),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || 'Could not update the workbook tag.');
+        }
+      }
+      const response = await fetch(`${API_BASE_URL}/api/documents/${workbook.file.id}/records/tags`, {
+        method: 'PATCH',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag: currentTag, enabled: nextEnabled }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not update the workbook tag.');
+      setWorkbook((current) => current && ({
+        ...current,
+        sheets: current.sheets.map((sheet) => ({
+          ...sheet,
+          records: sheet.records.map((record) => ({
+            ...record,
+            tags: nextEnabled
+              ? [...(record.tags || []).filter((tag) => !TAG_OPTIONS.includes(tag)), currentTag]
+              : (record.tags || []).filter((tag) => tag !== currentTag),
+          })),
+        })),
+      }));
+      setUndoStack((current) => [...current, { type: 'tag-workbook', tag: currentTag, rows: changedRows }]);
+    } catch (tagError) { setError(tagError.message || 'Could not update the workbook tag.'); } finally { setBulkTagging(false); }
+  };
+
+  const removeSearchResultTag = async (record, tag) => {
     if (!record?.file_id || !record?.sheet_id || removingSearchTagId) return;
-    setRemovingSearchTagId(record.id);
+    const nextTag = normalizeTag(tag);
+    if (!nextTag) return;
+    setRemovingSearchTagId(`${record.id}-${nextTag}`);
     setError('');
     try {
       const response = await fetch(`${API_BASE_URL}/api/documents/${record.file_id}/records/tag`, {
         method: 'PATCH',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sheet_id: record.sheet_id, record_number: record.record_number, tag: 'BPCL', enabled: false }),
+        body: JSON.stringify({ sheet_id: record.sheet_id, record_number: record.record_number, tag: nextTag, enabled: false }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'Could not remove the BPCL tag.');
+      if (!response.ok) throw new Error(data.detail || 'Could not remove the tag.');
       setSearchResult((current) => {
         if (!current) return current;
         const nextRecords = current.records
           .map((item) => item.id !== record.id ? item : ({ ...item, tags: data.tags || [] }))
-          .filter((item) => current.tag !== 'BPCL' || item.id !== record.id);
+          .filter((item) => current.tag !== nextTag || item.id !== record.id);
         return {
           ...current,
           records: nextRecords,
-          total: current.tag === 'BPCL' ? Math.max(0, current.total - 1) : current.total,
+          total: current.tag === nextTag ? Math.max(0, current.total - 1) : current.total,
         };
       });
       setWorkbook((current) => current && current.file.id === record.file_id ? ({
@@ -228,21 +315,52 @@ export default function DataLibrary() {
         })),
       }) : current);
     } catch (tagError) {
-      setError(tagError.message || 'Could not remove the BPCL tag.');
+      setError(tagError.message || 'Could not remove the tag.');
     } finally {
       setRemovingSearchTagId(null);
     }
   };
 
-  const undoLastCellChange = async () => {
-    if (!workbook || !undoStack.length || undoing || savingCell) return;
+  const undoLastChange = async () => {
+    if (!workbook || !undoStack.length || undoing || savingCell || savingTag || bulkTagging) return;
     const change = undoStack[undoStack.length - 1];
     setUndoing(true); setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/documents/${workbook.file.id}/cell`, { method: 'PATCH', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ sheet_id: change.sheetId, record_number: change.recordNumber, column: change.column, value: change.previousValue }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'Could not undo the cell change.');
-      setWorkbook((current) => current && ({ ...current, sheets: current.sheets.map((sheet) => sheet.id !== change.sheetId ? sheet : ({ ...sheet, records: sheet.records.map((record) => record.record_number !== change.recordNumber ? record : ({ ...record, record_json: { ...record.record_json, [change.column]: change.previousValue } })) })) }));
+      if (!change.type || change.type === 'cell') {
+        const response = await fetch(`${API_BASE_URL}/api/documents/${workbook.file.id}/cell`, { method: 'PATCH', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ sheet_id: change.sheetId, record_number: change.recordNumber, column: change.column, value: change.previousValue }) });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'Could not undo the cell change.');
+        setWorkbook((current) => current && ({ ...current, sheets: current.sheets.map((sheet) => sheet.id !== change.sheetId ? sheet : ({ ...sheet, records: sheet.records.map((record) => record.record_number !== change.recordNumber ? record : ({ ...record, record_json: { ...record.record_json, [change.column]: change.previousValue } })) })) }));
+      } else if (change.type === 'tag-row') {
+        let tags = [];
+        for (const tag of TAG_OPTIONS) {
+          tags = await patchRecordTag(change.sheetId, change.recordNumber, tag, (change.previousTags || []).includes(tag));
+        }
+        setWorkbook((current) => current && ({ ...current, sheets: current.sheets.map((sheet) => sheet.id !== change.sheetId ? sheet : ({ ...sheet, records: sheet.records.map((record) => record.record_number !== change.recordNumber ? record : ({ ...record, tags })) })) }));
+      } else if (change.type === 'tag-workbook') {
+        for (const row of change.rows) {
+          for (const tag of TAG_OPTIONS) {
+            await patchRecordTag(row.sheetId, row.recordNumber, tag, (row.previousTags || []).includes(tag));
+          }
+        }
+        setWorkbook((current) => current && ({
+          ...current,
+          sheets: current.sheets.map((sheet) => ({
+            ...sheet,
+            records: sheet.records.map((record) => {
+              const row = change.rows.find((item) => item.sheetId === sheet.id && item.recordNumber === record.record_number);
+              if (!row) return record;
+              return {
+                ...record,
+                tags: [
+                  ...(record.tags || []).filter((tag) => !TAG_OPTIONS.includes(tag)),
+                  ...(row.previousTags || []).filter((tag) => TAG_OPTIONS.includes(tag)),
+                ],
+              };
+            }),
+          })),
+        }));
+      }
       setUndoStack((current) => current.slice(0, -1));
       setEditingCell(null);
     } catch (undoError) { setError(undoError.message); } finally { setUndoing(false); }
@@ -252,12 +370,12 @@ export default function DataLibrary() {
     const handleUndoShortcut = (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && activePanel === 'workbook' && !editingCell) {
         event.preventDefault();
-        undoLastCellChange();
+        undoLastChange();
       }
     };
     window.addEventListener('keydown', handleUndoShortcut);
     return () => window.removeEventListener('keydown', handleUndoShortcut);
-  }, [activePanel, editingCell, undoStack, undoing, savingCell, workbook]);
+  }, [activePanel, editingCell, undoStack, undoing, savingCell, savingTag, bulkTagging, workbook]);
 
   const openWorkbook = async (file) => {
     if (file.status !== 'completed') return;
@@ -319,14 +437,15 @@ export default function DataLibrary() {
 
   const ask = async (event) => {
     event.preventDefault();
-    await runDocumentSearch({ query: question, tag: bpclOnly ? 'BPCL' : null });
+    await runDocumentSearch({ query: question, tag: tagOnly ? currentTag : null });
   };
 
-  const showBpclRows = async () => {
-    const nextBpclOnly = !bpclOnly;
-    setBpclOnly(nextBpclOnly);
+  const showTaggedRows = async () => {
+    if (!currentTag) { setError('Type a tag before filtering by tag.'); return; }
+    const nextTagOnly = !tagOnly;
+    setTagOnly(nextTagOnly);
     setSearchResult(null);
-    if (nextBpclOnly) await runDocumentSearch({ query: question, tag: 'BPCL' });
+    if (nextTagOnly) await runDocumentSearch({ query: question, tag: currentTag });
   };
 
   const loadMore = async () => {
@@ -600,7 +719,7 @@ return (
               aria-label="Search uploaded data"
             />
 
-            <button disabled={(!question.trim() && !bpclOnly) || searching}>
+            <button disabled={(!question.trim() && !tagOnly) || searching}>
               {searching ? (
                 <Loader2 className="spin" size={17} />
               ) : (
@@ -611,15 +730,26 @@ return (
           </form>
 
           <div className="library-search-controls">
+            <label className="library-tag-input">
+              <Tag size={15} />
+              <select
+                value={tagInput}
+                onChange={(event) => setTagInput(event.target.value)}
+                aria-label="Tag name"
+              >
+                {TAG_OPTIONS.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+              </select>
+            </label>
+
             <button
               type="button"
-              className={`library-bpcl-filter ${bpclOnly ? 'active' : ''}`}
-              onClick={showBpclRows}
+              className={`library-bpcl-filter ${tagOnly ? 'active' : ''}`}
+              onClick={showTaggedRows}
               disabled={searching}
-              title="Show rows tagged BPCL"
+              title="Show rows with this tag"
             >
               <Tag size={16} />
-              BPCL
+              {tagOnly ? `Showing ${currentTag || 'tag'}` : 'Filter tag'}
             </button>
           </div>
 
@@ -705,19 +835,22 @@ return (
                           {records.map((record) => (
                             <tr key={record.id}>
                               <td>
-                                {record.tags?.includes('BPCL') ? (
+                                {displayTags(record.tags, currentTag).length ? (
                                   <span className="library-bpcl-cell">
-                                    <span className="library-bpcl-badge">BPCL</span>
-                                    <button
-                                      type="button"
-                                      className="library-bpcl-remove"
-                                      onClick={() => removeSearchResultBpcl(record)}
-                                      disabled={removingSearchTagId === record.id}
-                                      title="Remove BPCL tag"
-                                    >
-                                      {removingSearchTagId === record.id ? <Loader2 className="spin" size={13} /> : <Trash2 size={13} />}
-                                      Remove
-                                    </button>
+                                    {displayTags(record.tags, currentTag).map((tag) => (
+                                      <span className="library-tag-chip" key={tag}>
+                                        <span className="library-bpcl-badge">{tag}</span>
+                                        <button
+                                          type="button"
+                                          className="library-bpcl-remove"
+                                          onClick={() => removeSearchResultTag(record, tag)}
+                                          disabled={removingSearchTagId === `${record.id}-${normalizeTag(tag)}`}
+                                          title={`Remove ${tag} tag`}
+                                        >
+                                          {removingSearchTagId === `${record.id}-${normalizeTag(tag)}` ? <Loader2 className="spin" size={13} /> : <Trash2 size={13} />}
+                                        </button>
+                                      </span>
+                                    ))}
                                   </span>
                                 ) : ''}
                               </td>
@@ -798,9 +931,9 @@ return (
               <button
                 type="button"
                 className="library-refresh"
-                onClick={undoLastCellChange}
-                disabled={!undoStack.length || undoing || savingCell}
-                title="Undo last cell change (Ctrl/Cmd + Z)"
+                onClick={undoLastChange}
+                disabled={!undoStack.length || undoing || savingCell || savingTag || bulkTagging}
+                title="Undo last workbook change (Ctrl/Cmd + Z)"
               >
                 {undoing ? <Loader2 className="spin" size={15} /> : <RotateCcw size={15} />}
                 Undo
@@ -808,15 +941,41 @@ return (
             )}
 
             {workbook && (
+              <label className="library-tag-input library-workbook-tag-input">
+                <Tag size={15} />
+                <select
+                  value={tagInput}
+                  onChange={(event) => setTagInput(event.target.value)}
+                  aria-label="Workbook tag name"
+                >
+                  {TAG_OPTIONS.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+                </select>
+              </label>
+            )}
+
+            {workbook && (
               <button
                 type="button"
-                className={`library-bpcl-action ${selectedRowIsBpcl ? 'active' : ''}`}
-                onClick={toggleSelectedRowBpcl}
-                disabled={!editingCell || savingTag}
-                title="Tag the selected row as BPCL"
+                className={`library-bpcl-action ${selectedRowHasTag ? 'active' : ''}`}
+                onClick={toggleSelectedRowTag}
+                disabled={!editingCell || savingTag || !currentTag}
+                title="Tag the selected row"
               >
                 {savingTag ? <Loader2 className="spin" size={15} /> : <Tag size={15} />}
-                {selectedRowIsBpcl ? 'BPCL tagged' : 'Tag BPCL'}
+                {selectedRowHasTag ? `${currentTag} tagged` : 'Tag row'}
+              </button>
+            )}
+
+            {workbook && (
+              <button
+                type="button"
+                className="library-bpcl-action"
+                onClick={toggleWholeWorkbookTag}
+                disabled={bulkTagging || !currentTag}
+                title={allWorkbookRowsHaveTag ? 'Remove this tag from every row in this workbook' : 'Tag every row in this workbook'}
+              >
+                {bulkTagging ? <Loader2 className="spin" size={15} /> : <Tag size={15} />}
+                {allWorkbookRowsHaveTag ? 'Untag workbook' : 'Tag workbook'}
               </button>
             )}
 
@@ -921,9 +1080,15 @@ return (
                           )}
 
                           {visibleRows.map((record) => (
-                            <tr key={record.record_number} className={record.tags?.includes('BPCL') ? 'library-bpcl-row' : ''}>
+                            <tr key={record.record_number} className={displayTags(record.tags, currentTag).length ? 'library-bpcl-row' : ''}>
                               <td>{record.record_number}</td>
-                              <td>{record.tags?.includes('BPCL') ? <span className="library-bpcl-badge">BPCL</span> : ''}</td>
+                              <td>
+                                {displayTags(record.tags, currentTag).length ? (
+                                  <span className="library-tag-stack">
+                                    {displayTags(record.tags, currentTag).map((tag) => <span className="library-bpcl-badge" key={tag}>{tag}</span>)}
+                                  </span>
+                                ) : ''}
+                              </td>
 
                               {columns.map((column) => (
                                 <td

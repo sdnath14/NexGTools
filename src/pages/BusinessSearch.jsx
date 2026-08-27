@@ -33,7 +33,6 @@ const SEARCH_SOURCES = [
   { id: 'indiamart',   label: 'IndiaMart',      icon: '🏭', color: '#f59e0b', desc: 'B2B marketplace' },
   { id: 'tradeindia',  label: 'TradeIndia',     icon: '📦', color: '#10b981', desc: 'Import & export portal' },
   { id: 'sulekha',     label: 'Sulekha',        icon: '🔧', color: '#8b5cf6', desc: 'Local services platform' },
-  { id: 'google_maps', label: 'Google Maps',    icon: '📍', color: '#ef4444', desc: 'Map-based business search' },
   { id: 'google_business', label: 'Google Business', icon: '🏪', color: '#16a34a', desc: 'Google business pages' },
   { id: 'startupindia', label: 'Startup India', icon: '🚀', color: '#9333ea', desc: 'Startup India profiles' },
   { id: 'mca',         label: 'MCA',            icon: '📜', color: '#334155', desc: 'Government company records' },
@@ -57,7 +56,7 @@ const BUSINESS_AI_WELCOME = {
 const BusinessSearch = () => {
   const [query, setQuery] = useState('');
   const [lastSearchQuery, setLastSearchQuery] = useState('');
-  const [selectedSourceIds, setSelectedSourceIds] = useState(new Set(['google_maps']));
+  const [selectedSourceIds, setSelectedSourceIds] = useState(new Set(['justdial']));
   const [isSearching, setIsSearching] = useState(false);
   const [results, setResults] = useState([]);
   const [sources, setSources] = useState([]);

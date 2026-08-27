@@ -14,7 +14,6 @@ from pymysql.cursors import DictCursor
 from .auth import create_token, hash_password, verify_password
 from .config import settings
 
-
 TOOL_PERMISSIONS = ["dashboard", "lead_search", "lead_search_history", "business_search", "business_search_history", "outreach", "data_library", "exports", "settings"]
 
 
@@ -35,6 +34,7 @@ def _connect(database: str | None = None):
 def db_connection() -> Iterator[Any]:
     connection = _connect(settings.mysql_database)
     try:
+        
         yield connection
         connection.commit()
     except Exception:
@@ -691,6 +691,7 @@ def list_outreach_contacts(user_id: int) -> list[dict[str, Any]]:
     # the response so each company is shown once without destroying message history.
     merged: dict[str, dict[str, Any]] = {}
     for row in rows:
+
         key = str(row.get("website") or row.get("company_name") or row["id"]).strip().lower()
         if key not in merged:
             merged[key] = row

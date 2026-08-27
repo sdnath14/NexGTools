@@ -67,12 +67,27 @@ const emptyLead = { company_name: '', contact_person: '', email: '', phone: '', 
 const statusClass = (status) => status.toLowerCase();
 const contactName = (contact) => contact.contact_person || contact.company_name;
 const firstName = (contact) => (contact.contact_person || '').split(' ')[0] || 'there';
+const normalizeFieldName = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 const fieldValue = (record, names) => {
   const values = record.record_json || {};
-  const normalized = new Map(Object.entries(values).map(([key, value]) => [key.trim().toLowerCase(), value]));
+  const normalized = new Map(Object.entries(values).map(([key, value]) => [normalizeFieldName(key), value]));
   for (const name of names) {
-    const value = normalized.get(name.toLowerCase());
+    const value = normalized.get(normalizeFieldName(name));
     if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+  }
+  return '';
+};
+
+const fieldValueMatching = (record, names, patterns = []) => {
+  const exactValue = fieldValue(record, names);
+  if (exactValue) return exactValue;
+  const values = record.record_json || {};
+  const normalizedNames = names.map(normalizeFieldName);
+  for (const [key, value] of Object.entries(values)) {
+    const normalizedKey = normalizeFieldName(key);
+    const hasMatch = normalizedNames.some((name) => normalizedKey.includes(name) || name.includes(normalizedKey))
+      || patterns.some((pattern) => pattern.test(normalizedKey));
+    if (hasMatch && value !== undefined && value !== null && String(value).trim()) return String(value).trim();
   }
   return '';
 };
@@ -176,18 +191,63 @@ export default function BusinessOutreach() {
   const selectedMissingChannelLeads = selectedLeads.filter((lead) => channel === 'email' ? !lead.email : !lead.phone);
   const providerReady = channel === 'email' ? providers.smtp : providers.whatsapp;
   const importRows = useMemo(() => importSheets.flatMap((sheet) => (sheet.records || []).map((record) => {
-    const company = fieldValue(record, ['LEGAL NAME', 'Trade Name', 'Company', 'Company Name', 'Business Name']);
+    const company = fieldValueMatching(record, [
+      'LEGAL NAME',
+      'Trade Name',
+      'Company',
+      'Company Name',
+      'Business Name',
+      'Business',
+      'Organization',
+      'Organisation',
+      'Name',
+      'Customer Name',
+      'Firm Name',
+      'Dealer Name',
+      'Party Name',
+      'Lead Name',
+    ], [/company/, /business.*name/, /trade.*name/, /legal.*name/, /firm.*name/, /dealer.*name/, /party.*name/, /lead.*name/]);
     return {
       id: `${sheet.id}-${record.record_number}`,
       sheet_id: sheet.id,
       sheet_name: sheet.name,
       record_number: record.record_number,
       company_name: company,
-      contact_person: fieldValue(record, ['Contact Person', 'Contact Name', 'Name', 'Owner']),
-      email: fieldValue(record, ['E-Mail', 'Email', 'Business Email', 'Mail']),
-      phone: fieldValue(record, ['Mobile No.', 'Mobile No', 'Phone (WA)', 'Phone', 'WhatsApp', 'Whatsapp']),
-      website: fieldValue(record, ['Website', 'Web Site', 'URL']),
-      category: fieldValue(record, ['BUSINESS_CONST', 'Category', 'Business Type']) || 'data_library',
+      contact_person: fieldValueMatching(record, [
+        'Contact Person',
+        'Contact Name',
+        'Person Name',
+        'Owner',
+        'Owner Name',
+        'Proprietor',
+        'Manager',
+      ], [/contact.*person/, /contact.*name/, /owner/, /proprietor/, /manager/]),
+      email: fieldValueMatching(record, [
+        'E-Mail',
+        'Email',
+        'Email ID',
+        'Email Address',
+        'Business Email',
+        'Mail',
+        'Mail ID',
+      ], [/email/, /mail/]),
+      phone: fieldValueMatching(record, [
+        'Mobile No.',
+        'Mobile No',
+        'Mobile',
+        'Mobile Number',
+        'Contact Number',
+        'Phone (WA)',
+        'Phone',
+        'Phone Number',
+        'Telephone',
+        'Tel',
+        'WhatsApp',
+        'Whatsapp',
+        'WA Number',
+      ], [/mobile/, /phone/, /telephone/, /^tel$/, /whatsapp/, /^wa/]),
+      website: fieldValueMatching(record, ['Website', 'Web Site', 'URL', 'Link', 'Domain'], [/website/, /weburl/, /^url$/, /domain/]),
+      category: fieldValueMatching(record, ['BUSINESS_CONST', 'Category', 'Business Type', 'Industry', 'Segment'], [/category/, /businesstype/, /industry/, /segment/]) || 'data_library',
     };
   })).filter((row) => row.company_name && (row.email || row.phone)), [importSheets]);
 
@@ -355,21 +415,33 @@ export default function BusinessOutreach() {
     setError('');
     setNotice('');
     let imported = 0;
+    const importedIds = [];
+    const failedRows = [];
     try {
       for (const row of rows) {
-        const response = await fetch(`${API_BASE_URL}/api/outreach/contacts`, {
-          method: 'POST',
-          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-          body: JSON.stringify(row),
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || `Could not import ${row.company_name}.`);
-        imported += 1;
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/outreach/contacts`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(row),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || `Could not import ${row.company_name}.`);
+          imported += 1;
+          if (data.contact?.id) importedIds.push(data.contact.id);
+        } catch (rowError) {
+          failedRows.push({ row, message: rowError.message || 'Could not import this row.' });
+        }
       }
-      setNotice(`${imported} lead${imported === 1 ? '' : 's'} imported from Data Library.`);
-      setImportModalOpen(false);
-      setSelectedImportRows([]);
       await loadWorkspace();
+      if (importedIds.length) setSelectedLeadIds((current) => [...new Set([...current, ...importedIds])]);
+      if (imported) {
+        setNotice(`${imported} lead${imported === 1 ? '' : 's'} imported from Data Library${failedRows.length ? `; ${failedRows.length} row${failedRows.length === 1 ? '' : 's'} skipped.` : '.'}`);
+        setImportModalOpen(false);
+        setSelectedImportRows([]);
+      } else if (failedRows.length) {
+        setError(failedRows[0].message || 'Could not import selected workbook rows.');
+      }
     } catch (importError) {
       setError(importError.message || 'Could not import selected workbook rows.');
     } finally {

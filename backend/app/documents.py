@@ -31,6 +31,7 @@ TEMPLATE_COLUMNS = (
 )
 GSTIN_PATTERN = re.compile(r"^[A-Z\d]{15}$")
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+TAG_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9 _-]{0,39}$")
 
 
 def validate_upload(filename: str) -> tuple[str, str]:
@@ -318,8 +319,8 @@ def update_cell(user_id: int, file_id: str, sheet_id: int, record_number: int, c
 def update_record_tag(user_id: int, file_id: str, sheet_id: int, record_number: int, tag: str, enabled: bool) -> list[str]:
     """Add or remove a workbook row tag for an authorized record."""
     normalized_tag = tag.strip().upper()
-    if normalized_tag != "BPCL":
-        raise ValueError("Only BPCL can be used as a row tag.")
+    if not TAG_PATTERN.fullmatch(normalized_tag):
+        raise ValueError("Tags can use letters, numbers, spaces, hyphens, and underscores up to 40 characters.")
     with db_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -343,6 +344,43 @@ def update_record_tag(user_id: int, file_id: str, sheet_id: int, record_number: 
                 (json.dumps(tags), record["id"]),
             )
     return tags
+
+
+def update_file_tag(user_id: int, file_id: str, tag: str, enabled: bool) -> int:
+    """Add or remove a tag from every row in one authorized workbook."""
+    normalized_tag = tag.strip().upper()
+    if not TAG_PATTERN.fullmatch(normalized_tag):
+        raise ValueError("Tags can use letters, numbers, spaces, hyphens, and underscores up to 40 characters.")
+    updated = 0
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT r.id, r.tags_json FROM document_records r JOIN document_files f ON f.id=r.file_id "
+                "WHERE r.file_id=%s AND f.user_id=%s",
+                (file_id, user_id),
+            )
+            records = list(cursor.fetchall())
+            if not records:
+                cursor.execute("SELECT id FROM document_files WHERE id=%s AND user_id=%s", (file_id, user_id))
+                if not cursor.fetchone():
+                    raise ValueError("Document not found.")
+            rows = []
+            for record in records:
+                tags = record.get("tags_json") or []
+                if isinstance(tags, str):
+                    tags = json.loads(tags or "[]")
+                tags = [str(item).upper() for item in tags if str(item).strip()]
+                previous = tags[:]
+                if enabled and normalized_tag not in tags:
+                    tags.append(normalized_tag)
+                if not enabled:
+                    tags = [item for item in tags if item != normalized_tag]
+                if tags != previous:
+                    rows.append((json.dumps(tags), record["id"]))
+            if rows:
+                cursor.executemany("UPDATE document_records SET tags_json=CAST(%s AS JSON) WHERE id=%s", rows)
+                updated = cursor.rowcount
+    return updated
 
 
 def delete_record(user_id: int, file_id: str, sheet_name: str, record_number: int) -> None:
@@ -478,8 +516,8 @@ def search(user_id: int, query: str, limit: int = 50, offset: int = 0, file_ids:
     normalized_query = query.casefold().strip()
     terms = _search_terms(query)
     normalized_tag = tag.strip().upper() if tag else ""
-    if normalized_tag and normalized_tag != "BPCL":
-        raise ValueError("Unsupported row tag filter.")
+    if normalized_tag and not TAG_PATTERN.fullmatch(normalized_tag):
+        raise ValueError("Tags can use letters, numbers, spaces, hyphens, and underscores up to 40 characters.")
     if not terms and not normalized_tag:
         return [], 0, []
 

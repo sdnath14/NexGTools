@@ -22,10 +22,53 @@
   min-height: 34px;
 }
 
+.library-tag-input {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  min-height: 34px;
+  border: 1px solid #cbd5e1;
+  border-radius: .45rem;
+  background: #fff;
+  color: #475569;
+  padding: 0 .55rem;
+}
+
+.library-tag-input select {
+  width: 104px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--app-text);
+  font: inherit;
+  font-size: .78rem;
+  font-weight: 750;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.library-workbook-tag-input select {
+  width: 88px;
+}
+
 .library-bpcl-cell {
   display: inline-flex;
   align-items: center;
   gap: .35rem;
+  flex-wrap: wrap;
+}
+
+.library-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .18rem;
+}
+
+.library-tag-stack {
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+  flex-wrap: wrap;
 }
 
 .library-bpcl-remove {
@@ -61,7 +104,13 @@
   }
 
   .library-workbook-picker,
-  .library-workbook-actions .library-refresh {
+  .library-workbook-actions .library-refresh,
+  .library-workbook-actions .library-bpcl-action,
+  .library-workbook-actions .library-tag-input {
+    width: 100%;
+  }
+
+  .library-tag-input select {
     width: 100%;
   }
 }
