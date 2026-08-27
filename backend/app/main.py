@@ -148,6 +148,9 @@ class OutreachSendRequest(BaseModel):
     message: str
     sender_name: str = ""
     reply_to_email: str = ""
+    cc_email: str = ""
+    bcc_email: str = ""
+    use_selected_leads_as_bcc: bool = False
 
 
 class OutreachContactRequest(BaseModel):
@@ -2396,6 +2399,14 @@ def generate_outreach(payload: OutreachGenerateRequest, authorization: str | Non
     }
 
 
+def _split_email_recipients(value: str, field_name: str) -> list[str]:
+    recipients = [item.strip() for item in re.split(r"[,;]", value or "") if item.strip()]
+    invalid = [item for item in recipients if not EMAIL_RE.fullmatch(item)]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Invalid {field_name}: {invalid[0]}")
+    return recipients
+
+
 @app.post("/api/outreach/send")
 def send_outreach(payload: OutreachSendRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     user = _require_permission(authorization, "outreach")
@@ -2410,6 +2421,8 @@ def send_outreach(payload: OutreachSendRequest, authorization: str | None = Head
     if not selected:
         raise HTTPException(status_code=404, detail="No matching contacts were found.")
 
+    cc_recipients = _split_email_recipients(payload.cc_email, "CC email")
+    bcc_recipients = _split_email_recipients(payload.bcc_email, "BCC email")
     results = []
     smtp = None
     try:
@@ -2423,6 +2436,65 @@ def send_outreach(payload: OutreachSendRequest, authorization: str | None = Head
             if settings.smtp_username:
                 smtp.login(settings.smtp_username, settings.smtp_password)
 
+        if channel == "email" and payload.use_selected_leads_as_bcc and len(selected) > 1:
+            email_contacts = [contact for contact in selected if contact.get("email")]
+            if not email_contacts:
+                raise HTTPException(status_code=400, detail="Select at least one lead with a business email.")
+            selected_bcc = []
+            for contact in email_contacts:
+                recipient = str(contact.get("email") or "").strip()
+                if recipient and recipient not in selected_bcc:
+                    selected_bcc.append(recipient)
+            all_bcc_recipients = list(dict.fromkeys([*selected_bcc, *bcc_recipients]))
+            sender_name = payload.sender_name.strip()
+            bulk_email = EmailMessage()
+            bulk_email["From"] = formataddr((sender_name, settings.smtp_from_email)) if sender_name else settings.smtp_from_email
+            if payload.reply_to_email.strip():
+                bulk_email["Reply-To"] = payload.reply_to_email.strip()
+            bulk_email["To"] = payload.reply_to_email.strip() or settings.smtp_from_email
+            if cc_recipients:
+                bulk_email["Cc"] = ", ".join(cc_recipients)
+            bulk_email["Bcc"] = ", ".join(all_bcc_recipients)
+            bulk_email["Subject"] = payload.subject.strip() or "Business invitation"
+            bulk_message = (
+                payload.message
+                .replace("{{company_name}}", "your company")
+                .replace("{{contact_person}}", "there")
+                .replace("{{sender_name}}", payload.sender_name.strip() or "our team")
+                .replace("{{sender_email}}", payload.reply_to_email.strip() or settings.smtp_from_email)
+            )
+            try:
+                bulk_email.set_content(bulk_message)
+                smtp.send_message(bulk_email)
+                provider_response = "SMTP accepted BCC message"
+                for contact in selected:
+                    recipient = (contact.get("email") if contact.get("email") else "") or ""
+                    result_base = {
+                        "contact_id": contact["id"],
+                        "company_name": contact.get("company_name", ""),
+                        "recipient": recipient,
+                    }
+                    if not recipient:
+                        results.append({**result_base, "status": "skipped", "detail": "No email address"})
+                        continue
+                    save_outreach_message(user["id"], contact["id"], channel, recipient, payload.subject, bulk_message, "sent", provider_response)
+                    results.append({**result_base, "status": "sent"})
+                return {"results": results}
+            except Exception as exc:
+                for contact in selected:
+                    recipient = (contact.get("email") if contact.get("email") else "") or ""
+                    result_base = {
+                        "contact_id": contact["id"],
+                        "company_name": contact.get("company_name", ""),
+                        "recipient": recipient,
+                    }
+                    if not recipient:
+                        results.append({**result_base, "status": "skipped", "detail": "No email address"})
+                        continue
+                    save_outreach_message(user["id"], contact["id"], channel, recipient, payload.subject, bulk_message, "failed", str(exc))
+                    results.append({**result_base, "status": "failed", "detail": str(exc)})
+                return {"results": results}
+
         for contact in selected:
             recipient = (contact.get("email") if channel == "email" else contact.get("phone")) or ""
             result_base = {
@@ -2433,7 +2505,13 @@ def send_outreach(payload: OutreachSendRequest, authorization: str | None = Head
             if not recipient:
                 results.append({**result_base, "status": "skipped", "detail": f"No {channel} address"})
                 continue
-            personalized = payload.message.replace("{{company_name}}", contact["company_name"])
+            personalized = (
+                payload.message
+                .replace("{{company_name}}", contact.get("company_name", ""))
+                .replace("{{contact_person}}", contact.get("contact_person") or "there")
+                .replace("{{sender_name}}", payload.sender_name.strip() or "our team")
+                .replace("{{sender_email}}", payload.reply_to_email.strip() or settings.smtp_from_email)
+            )
             try:
                 if channel == "email":
                     email = EmailMessage()
@@ -2442,6 +2520,10 @@ def send_outreach(payload: OutreachSendRequest, authorization: str | None = Head
                     if payload.reply_to_email.strip():
                         email["Reply-To"] = payload.reply_to_email.strip()
                     email["To"] = recipient
+                    if cc_recipients:
+                        email["Cc"] = ", ".join(cc_recipients)
+                    if bcc_recipients:
+                        email["Bcc"] = ", ".join(bcc_recipients)
                     email["Subject"] = payload.subject.strip() or "Business invitation"
                     email.set_content(personalized)
                     smtp.send_message(email)

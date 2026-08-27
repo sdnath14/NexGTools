@@ -41,6 +41,16 @@ const tabs = [
 
 const campaignTemplates = [
   {
+    id: 'general',
+    label: 'General',
+    goal: 'Send a simple business introduction to selected companies, explore possible business opportunities, and ask for a short discussion to understand their requirements.',
+    keyPoints: [
+      'General business introduction',
+      'Explore possible work or supply opportunities',
+      'Request a short discussion at a convenient time',
+    ],
+  },
+  {
     id: 'garages',
     label: 'Garages',
     goal: 'Introduce our automotive lubricant and used-oil solutions to garages, build trust with the owner or manager, and schedule a short call or visit to discuss regular supply requirements.',
@@ -63,6 +73,21 @@ const campaignTemplates = [
 ];
 
 const emptyLead = { company_name: '', contact_person: '', email: '', phone: '', website: '', category: 'manual' };
+
+const generalBusinessEmail = (brandName, senderName, senderEmail) => `Hi {{contact_person}},
+
+I hope you are doing well.
+
+I am from ${brandName || '{{brand_name}}'}. We are reaching out to companies like {{company_name}} to explore possible business opportunities and understand if there is any scope to work together.
+
+We would be happy to share more details about our products or services and learn about your requirements as well.
+
+Please let us know if we can connect for a short discussion.
+
+Best regards,
+${senderName || '{{sender_name}}'}
+${brandName || '{{brand_name}}'}
+${senderEmail || '{{sender_email}}'}`;
 
 const statusClass = (status) => status.toLowerCase();
 const contactName = (contact) => contact.contact_person || contact.company_name;
@@ -108,6 +133,9 @@ export default function BusinessOutreach() {
   const [keyPoints, setKeyPoints] = useState(['']);
   const [channel, setChannel] = useState('email');
   const [subject, setSubject] = useState('Business invitation');
+  const [ccEmail, setCcEmail] = useState('');
+  const [bccEmailInput, setBccEmailInput] = useState('');
+  const [bccEmails, setBccEmails] = useState([]);
   const [draft, setDraft] = useState(() => localStorage.getItem('nexgtools_business_outreach_draft') || '');
   const [rewritePrompt, setRewritePrompt] = useState('');
   const [newLead, setNewLead] = useState(emptyLead);
@@ -189,6 +217,13 @@ export default function BusinessOutreach() {
   const selectedLeads = leads.filter((lead) => selectedLeadIds.includes(lead.id));
   const selectedChannelLeads = selectedLeads.filter((lead) => channel === 'email' ? lead.email : lead.phone);
   const selectedMissingChannelLeads = selectedLeads.filter((lead) => channel === 'email' ? !lead.email : !lead.phone);
+  const selectedBccEmails = channel === 'email' && selectedChannelLeads.length > 1
+    ? [...new Set(selectedChannelLeads.map((lead) => lead.email).filter(Boolean))]
+    : [];
+  const extraBccEmails = useMemo(() => {
+    const pending = bccEmailInput.trim();
+    return [...new Set([...bccEmails, ...(pending ? [pending] : [])])];
+  }, [bccEmailInput, bccEmails]);
   const providerReady = channel === 'email' ? providers.smtp : providers.whatsapp;
   const importRows = useMemo(() => importSheets.flatMap((sheet) => (sheet.records || []).map((record) => {
     const company = fieldValueMatching(record, [
@@ -271,11 +306,34 @@ export default function BusinessOutreach() {
 
   const addKeyPoint = () => setKeyPoints((current) => [...current, '']);
 
+  const addBccEmail = () => {
+    const nextEmail = bccEmailInput.trim();
+    if (!nextEmail) return;
+    setBccEmails((current) => current.includes(nextEmail) ? current : [...current, nextEmail]);
+    setBccEmailInput('');
+  };
+
+  const removeBccEmail = (email) => {
+    setBccEmails((current) => current.filter((item) => item !== email));
+  };
+
   const applyCampaignTemplate = (template) => {
     setCampaignGoal(template.goal);
     setKeyPoints(template.keyPoints);
     setNotice(`${template.label} campaign template applied.`);
     setError('');
+  };
+
+  const applyGeneralEmailTemplate = () => {
+    const nextBrandName = brandName.trim() || 'our company';
+    setChannel('email');
+    setCampaignGoal(campaignTemplates[0].goal);
+    setKeyPoints(campaignTemplates[0].keyPoints);
+    setSubject(`Business Inquiry from ${nextBrandName}`);
+    setDraft(generalBusinessEmail(nextBrandName, sender.name || '', sender.email || ''));
+    setNotice('General email template applied.');
+    setError('');
+    setActiveTab('editor');
   };
 
   const openNewLeadModal = () => {
@@ -594,6 +652,9 @@ export default function BusinessOutreach() {
           message: draft,
           sender_name: sender.name || '',
           reply_to_email: sender.email || '',
+          cc_email: ccEmail,
+          bcc_email: extraBccEmails.join(', '),
+          use_selected_leads_as_bcc: channel === 'email' && selectedBccEmails.length > 1,
         }),
       });
       const data = await response.json();
@@ -734,6 +795,10 @@ export default function BusinessOutreach() {
                 </button>
               ))}
             </div>
+            <button type="button" className="bo-template-fill" onClick={applyGeneralEmailTemplate}>
+              <Mail size={14} />
+              Use General Email Template
+            </button>
           </label>
 
           <label className="bo-field-group">
@@ -810,7 +875,50 @@ export default function BusinessOutreach() {
               <div><strong>{draft.trim() ? 'Draft Ready' : 'Draft Empty'}</strong><small>{selectedLeads[0] ? `Prepared for ${selectedLeads[0].company_name}` : 'Select leads and generate content'}</small></div>
               <button type="button" title="Copy draft" onClick={copyDraft} disabled={!draft.trim()}><Copy size={15} /></button>
             </div>
-            {channel === 'email' && <input className="bo-subject" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Email subject" />}
+            {channel === 'email' && (
+              <div className="bo-email-fields">
+                <input className="bo-subject" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Email subject" />
+                <div className="bo-copy-fields">
+                  <label>
+                    <span>CC</span>
+                    <input value={ccEmail} onChange={(event) => setCcEmail(event.target.value)} placeholder="team@example.com" />
+                  </label>
+                  <label>
+                    <span>BCC</span>
+                    <span className="bo-bcc-add-row">
+                      <input
+                        value={bccEmailInput}
+                        onChange={(event) => setBccEmailInput(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            addBccEmail();
+                          }
+                        }}
+                        placeholder={selectedBccEmails.length ? 'extra-bcc@example.com' : 'records@example.com'}
+                      />
+                      <button type="button" onClick={addBccEmail} disabled={!bccEmailInput.trim()}>Add</button>
+                    </span>
+                  </label>
+                </div>
+                {bccEmails.length > 0 && (
+                  <div className="bo-bcc-chip-row">
+                    {bccEmails.map((email) => (
+                      <span key={email}>
+                        {email}
+                        <button type="button" onClick={() => removeBccEmail(email)} title="Remove BCC email"><X size={12} /></button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {selectedBccEmails.length > 1 && (
+                  <div className="bo-auto-bcc">
+                    <span>Auto BCC</span>
+                    <em>{selectedBccEmails.join(', ')}</em>
+                  </div>
+                )}
+              </div>
+            )}
             <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Generate content or write your message here..." />
             <label className="bo-rewrite">
               <input value={rewritePrompt} onChange={(event) => setRewritePrompt(event.target.value)} placeholder="e.g., Make it shorter and punchier..." />
