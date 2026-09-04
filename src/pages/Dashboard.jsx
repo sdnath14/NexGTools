@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowRight,
   Database,
   BarChart3,
+  CalendarDays,
+  Lightbulb,
   Loader2,
   MoreVertical,
   Search,
   Send,
-  Users,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE_URL, authHeaders } from '../auth';
@@ -27,10 +29,10 @@ const permissionLabels = {
 const allDashboardPermissions = Object.keys(permissionLabels);
 
 const adminTools = [
-  { label: 'Lead Search', description: 'Find business leads', path: '/lead-search', icon: Users, color: '#f97316' },
-  { label: 'Business Outreach', description: 'Generate and send outreach', path: '/business-outreach', icon: Send, color: '#f97316' },
-  { label: 'Data Library', description: 'Search uploaded data', path: '/data-library', icon: Database, color: '#c2410c' },
-  { label: 'Business Analytics Platform', description: 'Ask SQL questions on Excel data', path: '/data-analytics', icon: BarChart3, color: '#ea580c' },
+  { label: 'Lead Search', description: 'Find business leads quickly', path: '/lead-search', icon: Search, color: '#f97316', soft: '#fff4e8', accent: '#2563eb' },
+  { label: 'Business Outreach', description: 'Generate and send outreach', path: '/business-outreach', icon: Send, color: '#3b82f6', soft: '#ecf7ff', accent: '#2563eb' },
+  { label: 'Data Library', description: 'Search uploaded data', path: '/data-library', icon: Database, color: '#10b981', soft: '#dcfff3', accent: '#059669' },
+  { label: 'Analytics Platform', description: 'Ask SQL questions on Excel data', path: '/data-analytics', icon: BarChart3, color: '#7c3aed', soft: '#f3efff', accent: '#2563eb' },
 ];
 
 const dateValue = (item) => new Date(item.created_at).getTime();
@@ -42,6 +44,20 @@ const formatDate = (value) => new Intl.DateTimeFormat(undefined, {
   hour: 'numeric',
   minute: '2-digit',
 }).format(new Date(value));
+
+const todayLabel = new Intl.DateTimeFormat(undefined, {
+  weekday: 'long',
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+}).format(new Date());
+
+const greeting = () => {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+};
 
 const sourceValue = (source) => {
   if (typeof source === 'string' || typeof source === 'number') return String(source);
@@ -136,13 +152,37 @@ const Dashboard = ({ user }) => {
 
   return (
     <div className="dash-page dash-live">
+      <section className="dash-command-row">
+        <div className="dash-date-card">
+          <span><CalendarDays size={18} /></span>
+          <div>
+            <strong>{todayLabel}</strong>
+            <small>Here is what is happening today.</small>
+          </div>
+        </div>
+      </section>
+
       <div className="dash-heading">
-        <img className="dash-brand-logo" src={nexgToolLogo} alt="NexG Tools" />
         <div>
-          <h1>Welcome back, {firstName}! <span aria-hidden="true">👋</span></h1>
+          <h1>{greeting()}, <em>{firstName}</em>! <span aria-hidden="true">Hi</span></h1>
           <p>{user?.is_nexg_admin ? 'NexG Admin access is active across the entire workspace.' : 'Your workspace access has been verified by an administrator.'}</p>
         </div>
       </div>
+
+      <section className="dash-hero">
+        <div className="dash-hero-copy">
+          <span>Explore. Outreach. Grow.</span>
+          <h2>Turn Business Data into Real <strong>Opportunities</strong></h2>
+          <p>Search, analyze, and connect with businesses effortlessly using NexG Tools.</p>
+          <button type="button" onClick={() => navigate('/lead-search')}>
+            Get Started <ArrowRight size={17} />
+          </button>
+        </div>
+        <blockquote>
+          Better data. Stronger connections. Greater possibilities.
+          <cite><img src={nexgToolLogo} alt="NexG Tools" /></cite>
+        </blockquote>
+      </section>
 
       {!user?.is_nexg_admin && <section className="dash-panel dash-access-panel">
         <h2>You have access to</h2>
@@ -158,12 +198,14 @@ const Dashboard = ({ user }) => {
               key={tool.path}
               type="button"
               className="dash-admin-tool-card"
-              style={{ '--tool-color': tool.color, '--tool-order': index }}
+              style={{ '--tool-color': tool.color, '--tool-soft': tool.soft, '--tool-accent': tool.accent, '--tool-order': index }}
               onClick={() => navigate(tool.path)}
             >
               <span className="dash-admin-tool-icon"><Icon size={23} /></span>
-              <strong>{tool.label}</strong>
-              <small>{tool.description}</small>
+              <span className="dash-admin-tool-copy">
+                <strong>{tool.label}</strong>
+                <small>{tool.description}</small>
+              </span>
             </button>;
           })}
         </div>
@@ -173,7 +215,14 @@ const Dashboard = ({ user }) => {
 
       <div className="dash-bottom-grid">
         <section className="dash-panel dash-recent">
-          <h2>Recent Searches</h2>
+          <div className="dash-panel-head">
+            <span className="dash-panel-icon"><Search size={18} /></span>
+            <div>
+              <h2>Recent Searches</h2>
+              <p>Your latest search activity across all sources.</p>
+            </div>
+            <button type="button" onClick={() => navigate('/lead-search/history')}>View All <ArrowRight size={15} /></button>
+          </div>
           <div className="dash-table-wrap">
             <table>
               <colgroup>
@@ -220,26 +269,43 @@ const Dashboard = ({ user }) => {
         </section>
 
         <section className="dash-panel dash-sources">
-          <h2>Top Sources</h2>
+          <div className="dash-panel-head">
+            <span className="dash-panel-icon"><BarChart3 size={18} /></span>
+            <div>
+              <h2>Top Sources</h2>
+              <p>Distribution of your searches by data source.</p>
+            </div>
+            <select aria-label="Source date range" defaultValue="30">
+              <option value="30">Last 30 days</option>
+              <option value="7">Last 7 days</option>
+            </select>
+          </div>
           {isLoading ? <div className="dash-empty"><Loader2 className="dash-spin" size={18} /> Loading sources…</div>
             : dashboard.sources.length ? (
+              <>
               <div className="dash-source-content">
                 <div className="dash-donut" style={{
                   background: `conic-gradient(${dashboard.sources.map((item, index) => {
                     const before = dashboard.sources.slice(0, index).reduce((sum, row) => sum + row.count, 0);
                     return `${SOURCE_COLORS[index]} ${(before / dashboard.sourceTotal) * 100}% ${((before + item.count) / dashboard.sourceTotal) * 100}%`;
                   }).join(', ')})`,
-                }}><span>{dashboard.sourceTotal}</span></div>
+                }}><span><strong>{dashboard.sourceTotal}</strong>Total Searches</span></div>
                 <div className="dash-source-list">
                   {dashboard.sources.map((item, index) => (
                     <div key={item.name}>
                       <i style={{ background: SOURCE_COLORS[index] }} />
                       <span>{item.name}</span>
                       <strong>{Math.round((item.count / dashboard.sourceTotal) * 100)}%</strong>
+                      <em>{item.count}</em>
                     </div>
                   ))}
                 </div>
               </div>
+              <div className="dash-insight">
+                <span><Lightbulb size={18} /></span>
+                <p><strong>Insight</strong>{dashboard.sources[0]?.name ? `${Math.round((dashboard.sources[0].count / dashboard.sourceTotal) * 100)}% of your searches are from ${dashboard.sources[0].name}.` : 'Source activity will appear here.'}</p>
+              </div>
+              </>
             ) : <div className="dash-empty">No source data yet.</div>}
         </section>
       </div>
