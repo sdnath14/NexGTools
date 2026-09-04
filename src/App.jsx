@@ -11,6 +11,7 @@ import AdminPage from './pages/AdminPage';
 import AuthPage from './pages/AuthPage';
 import SettingsPage from './pages/SettingsPage';
 import DataLibrary from './pages/DataLibrary';
+import DataAnalytics from './pages/DataAnalytics';
 import BusinessOutreach from './pages/BusinessOutreach';
 import { ADMIN_TOKEN_KEY, API_BASE_URL, AUTH_TOKEN_KEY, adminHeaders, authHeaders } from './auth';
 import { applyAppearance, loadAppearance, saveAppearance } from './appearance';
@@ -115,6 +116,7 @@ function App() {
               <Route path="/business-search/csv" element={hasPermission('exports') ? <CsvHistory type="business_search" /> : <Navigate to="/" replace />} />
               <Route path="/business-outreach" element={hasPermission('outreach') ? <BusinessOutreach /> : <Navigate to="/" replace />} />
               <Route path="/data-library" element={hasPermission('data_library') ? <DataLibrary /> : <Navigate to="/" replace />} />
+              <Route path="/data-analytics" element={hasPermission('data_analytics') ? <DataAnalytics /> : <Navigate to="/" replace />} />
               <Route path="/settings" element={hasPermission('settings') ? <SettingsPage appearance={appearance} onAppearanceChange={updateAppearance} /> : <Navigate to="/" replace />} />
               <Route path="/admin" element={<AdminPage onAdminUnlocked={setIsAdmin} />} />
             </Routes>

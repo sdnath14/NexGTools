@@ -5,6 +5,8 @@ import { ADMIN_TOKEN_KEY, API_BASE_URL, adminHeaders, authHeaders } from '../aut
 
 const permissionLabel = (permission) => ({
   outreach: 'Business Outreach',
+  data_analytics: 'Business Analytics Platform',
+  data_library: 'Data Library',
 }[permission] || permission.replaceAll('_', ' '));
 
 const compactValue = (value) => {

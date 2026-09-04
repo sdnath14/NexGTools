@@ -23,6 +23,16 @@ from pydantic import BaseModel, Field
 import requests
 
 from .auth import create_token, hash_password, verify_password
+from .analytics import (
+    analytics_summary,
+    execute_sql,
+    get_dataset,
+    list_datasets,
+    preview_table,
+    schema_for_dataset,
+    upload_dataset,
+    validate_sql,
+)
 from .config import settings
 from .database import (
     admin_overview,
@@ -278,6 +288,12 @@ class DocumentQueryRequest(BaseModel):
     tag: str | None = None
 
 
+class AnalyticsChatRequest(BaseModel):
+    dataset_id: int
+    question: str
+    history: list[ChatMessage] = Field(default_factory=list)
+
+
 
 
 BUSINESS_SOURCES: dict[str, dict[str, str]] = {
@@ -519,10 +535,28 @@ def _distance_km(
 def _trim_json(data: Any, limit: int = 24000) -> str:
     if not data:
         return "{}"
-    serialized = json.dumps(data, ensure_ascii=False, indent=2)
+    serialized = json.dumps(data, ensure_ascii=False, indent=2, default=str)
     if len(serialized) <= limit:
         return serialized
     return f"{serialized[:limit]}\n... [truncated]"
+
+
+def _parse_json_object(value: str) -> dict[str, Any]:
+    text = value.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise
+        parsed = json.loads(text[start:end + 1])
+    if not isinstance(parsed, dict):
+        raise json.JSONDecodeError("Expected a JSON object.", text, 0)
+    return parsed
 
 
 def _business_source_url(source_id: str, query: str, location: str) -> str:
@@ -1770,6 +1804,178 @@ def ask_documents(payload: DocumentQueryRequest, authorization: str | None = Hea
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Document answer unavailable: {exc}") from exc
+
+
+@app.get("/api/analytics/datasets")
+def get_analytics_datasets(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "data_analytics")
+    return {"datasets": list_datasets(user["id"])}
+
+
+@app.post("/api/analytics/datasets")
+async def create_analytics_dataset(
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user = _require_permission(authorization, "data_analytics")
+    try:
+        content = await file.read()
+        if not content:
+            raise ValueError("Upload a non-empty Excel or CSV file.")
+        dataset = upload_dataset(user["id"], file.filename or "analytics-upload.xlsx", content)
+        return {"dataset": dataset}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        await file.close()
+
+
+@app.get("/api/analytics/datasets/{dataset_id}")
+def get_analytics_dataset(dataset_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "data_analytics")
+    try:
+        return {"dataset": get_dataset(user["id"], dataset_id)}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/analytics/datasets/{dataset_id}/summary")
+def get_analytics_summary(dataset_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "data_analytics")
+    try:
+        return analytics_summary(user["id"], dataset_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/analytics/datasets/{dataset_id}/tables/{table_name}/preview")
+def get_analytics_table_preview(
+    dataset_id: int,
+    table_name: str,
+    limit: int = Query(default=5000, ge=1, le=100000),
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user = _require_permission(authorization, "data_analytics")
+    try:
+        return preview_table(user["id"], dataset_id, table_name, limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/analytics/chat")
+def analytics_chat(payload: AnalyticsChatRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "data_analytics")
+    question = payload.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="A question is required.")
+
+    try:
+        schema = schema_for_dataset(user["id"], payload.dataset_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    recent_history = [
+        {"role": message.role, "content": message.content}
+        for message in payload.history[-6:]
+        if message.role in {"user", "assistant"} and message.content.strip()
+    ]
+    sql_messages = [
+        {
+            "role": "system",
+            "content": (
+                "You generate MySQL SELECT statements for NexGTools AI Business Analytics. "
+                "Use only the provided schema table_name and column name values. "
+                "Never use INSERT, UPDATE, DELETE, ALTER, DROP, CREATE, SET, CALL, comments, or multiple statements. "
+                "Return strict JSON only with keys sql and notes. The sql value must be one valid MySQL SELECT. "
+                "For multi-part questions, combine the answer into one SELECT using scalar subqueries or UNION ALL. "
+                "For mixed summaries plus lists, return columns named section, label, and value so the result table is clear. "
+                "For distinct text counts, use COUNT(DISTINCT NULLIF(TRIM(column), '')). "
+                "For numeric totals, cast text-like numeric columns after removing commas. "
+                "If the user asks to show records, include enough selected columns and add LIMIT 1000."
+            ),
+        },
+        {"role": "user", "content": f"Database schema:\n{_trim_json(schema, 18000)}"},
+        *recent_history,
+        {"role": "user", "content": question},
+    ]
+    generated = _chat_completion(sql_messages)
+    try:
+        parsed = _parse_json_object(generated)
+        sql = str(parsed.get("sql") or "").strip()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail="OpenAI did not return valid SQL JSON.") from exc
+    allowed_tables = {table["table_name"] for table in schema["tables"]}
+    result = None
+    validation_error = ""
+    for attempt in range(2):
+        try:
+            sql = validate_sql(sql, allowed_tables)
+            result = execute_sql(user["id"], payload.dataset_id, sql)
+            break
+        except Exception as exc:
+            validation_error = str(exc) if isinstance(exc, ValueError) else f"SQL execution failed: {exc}"
+            if attempt == 1:
+                break
+            repair_messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "Repair this MySQL analytics query. Return strict JSON only with keys sql and notes. "
+                        "The sql must be exactly one safe SELECT statement, with no comments and no semicolon. "
+                        "Use only the provided table and column names. Use UNION ALL or scalar subqueries if needed. "
+                        "For mixed summaries plus lists, return clear columns named section, label, and value."
+                    ),
+                },
+                {"role": "user", "content": f"Schema:\n{_trim_json(schema, 18000)}"},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Question: {question}\n\n"
+                        f"Rejected SQL:\n{sql}\n\n"
+                        f"Validator error: {validation_error}"
+                    ),
+                },
+            ]
+            repaired = _chat_completion(repair_messages)
+            try:
+                sql = str(_parse_json_object(repaired).get("sql") or "").strip()
+            except json.JSONDecodeError as parse_exc:
+                raise HTTPException(status_code=502, detail="OpenAI did not return valid repaired SQL JSON.") from parse_exc
+    if result is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": f"Generated SQL was rejected: {validation_error}",
+                "sql": sql,
+            },
+        )
+
+    explain_messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are AI Business Analytics for NexGTools. Explain SQL query results in practical business language. "
+                "Use only the query result and schema. Do not invent missing facts. Keep the answer concise, include the key number, "
+                "and mention when the result is limited by the returned rows."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Question: {question}\n\n"
+                f"Schema:\n{_trim_json(schema, 8000)}\n\n"
+                f"SQL executed:\n{result['sql']}\n\n"
+                f"Rows:\n{_trim_json(result['rows'], 12000)}"
+            ),
+        },
+    ]
+    answer = _chat_completion(explain_messages)
+    return {
+        "answer": answer,
+        "sql": result["sql"],
+        "rows": result["rows"],
+        "model": settings.openai_model,
+    }
 
 
 @app.post("/api/csv-exports")

@@ -1,14 +1,8 @@
 import React from 'react';
 import ToolCard from './ToolCard';
-import { Building2, Users, BrainCircuit } from 'lucide-react';
+import { BarChart3, Users, BrainCircuit } from 'lucide-react';
 
 const tools = [
-  {
-    title: 'Business Search',
-    description: 'Search and discover company profiles, market data, and key financials.',
-    icon: Building2,
-    themeClass: 'card-business'
-  },
   {
     title: 'Lead Search',
     description: 'Identify and qualify potential business leads and decision-makers.',
@@ -21,6 +15,13 @@ const tools = [
     description: 'AI-powered analysis of request for proposals and tender documents.',
     icon: BrainCircuit,
     themeClass: 'card-tender'
+  },
+  {
+    title: 'Business Analytics Platform',
+    description: 'Upload Excel data and ask AI for SQL-backed business answers.',
+    icon: BarChart3,
+    themeClass: 'card-business',
+    link: '/data-analytics'
   }
 ];
 

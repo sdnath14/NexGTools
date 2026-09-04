@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Building2,
   Database,
+  BarChart3,
   Loader2,
   MoreVertical,
   Search,
@@ -17,10 +17,9 @@ const SOURCE_COLORS = ['#f97316', '#fb923c', '#fdba74', '#ea580c', '#c2410c', '#
 const permissionLabels = {
   lead_search: 'Lead Search',
   lead_search_history: 'Lead Search History',
-  business_search: 'Business Search',
-  business_search_history: 'Business Search History',
   outreach: 'Business Outreach',
   data_library: 'Data Library',
+  data_analytics: 'Business Analytics Platform',
   exports: 'CSV History',
   settings: 'Settings',
 };
@@ -29,9 +28,9 @@ const allDashboardPermissions = Object.keys(permissionLabels);
 
 const adminTools = [
   { label: 'Lead Search', description: 'Find business leads', path: '/lead-search', icon: Users, color: '#f97316' },
-  { label: 'Business Search', description: 'Discover businesses', path: '/business-search', icon: Building2, color: '#ea580c' },
   { label: 'Business Outreach', description: 'Generate and send outreach', path: '/business-outreach', icon: Send, color: '#f97316' },
   { label: 'Data Library', description: 'Search uploaded data', path: '/data-library', icon: Database, color: '#c2410c' },
+  { label: 'Business Analytics Platform', description: 'Ask SQL questions on Excel data', path: '/data-analytics', icon: BarChart3, color: '#ea580c' },
 ];
 
 const dateValue = (item) => new Date(item.created_at).getTime();

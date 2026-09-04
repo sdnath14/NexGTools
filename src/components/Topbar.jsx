@@ -11,6 +11,7 @@ const pageTitles = {
   '/business-search/csv': 'Business CSV History',
   '/business-outreach': 'Business Outreach',
   '/data-library': 'Data Library',
+  '/data-analytics': 'Business Analytics Platform',
   '/admin': 'Admin',
   '/tender-ai': 'TenderAI',
   '/settings': 'Settings',
