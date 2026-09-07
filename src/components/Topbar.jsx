@@ -1,6 +1,6 @@
 import React from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { LogOut, ArrowLeft, FileSpreadsheet, History } from 'lucide-react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { LogOut, ArrowLeft, FileSpreadsheet, History, Search } from 'lucide-react';
 
 const pageTitles = {
   '/': 'Dashboard',
@@ -11,7 +11,7 @@ const pageTitles = {
   '/business-search/csv': 'Business CSV History',
   '/business-outreach': 'Business Outreach',
   '/data-library': 'Data Library',
-  '/data-analytics': 'Business Analytics Platform',
+  '/data-analytics': 'Data AI',
   '/admin': 'Admin',
   '/tender-ai': 'TenderAI',
   '/settings': 'Settings',
@@ -20,6 +20,8 @@ const pageTitles = {
 const Topbar = ({ user, onLogout }) => {
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const isDashboard = location.pathname === '/';
   const pageTitle = pageTitles[location.pathname] || 'NexG Tools';
   const isLeadSearch = location.pathname.startsWith('/lead-search');
   const isBusinessSearch = location.pathname.startsWith('/business-search');
@@ -29,14 +31,14 @@ const Topbar = ({ user, onLogout }) => {
     : 'NT';
 
   return (
-    <header className="topbar">
+    <header className={`topbar ${isDashboard ? 'topbar-dashboard' : ''}`}>
       <div className="topbar-left">
         {showsDashboardBack && (
           <button className="topbar-nav-btn" onClick={() => navigate('/')}>
             <ArrowLeft size={16} /> Back
           </button>
         )}
-        <h2 className="topbar-title">{pageTitle}</h2>
+        {isDashboard ? <label className="dashboard-tool-search"><Search size={19} /><input aria-label="Search workspace tools" type="search" placeholder="Search workspace tools?" value={searchParams.get('tools') || ''} onChange={(event) => { const next = new URLSearchParams(searchParams); if (event.target.value) next.set('tools', event.target.value); else next.delete('tools'); setSearchParams(next, { replace: true }); }} /></label> : <h2 className="topbar-title">{pageTitle}</h2>}
         {isLeadSearch && (
           <div className="topbar-context-actions">
             {user?.permissions?.includes('exports') && <button className="topbar-nav-btn" onClick={() => navigate('/lead-search/csv')}>
@@ -62,6 +64,7 @@ const Topbar = ({ user, onLogout }) => {
         <div className="topbar-avatar" title={user?.email || 'User'}>
           {initials}
         </div>
+        {isDashboard && <strong className="dashboard-user-name">{user?.name || 'NexG User'}</strong>}
       </div>
     </header>
   );

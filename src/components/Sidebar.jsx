@@ -1,10 +1,10 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Users, Database, Settings, ChevronLeft, ChevronRight, ShieldCheck, FileSpreadsheet, History, Send, BarChart3 } from 'lucide-react';
 import nexgToolLogo from '../assets/nexgtool-removebg-preview.png';
 
 const navItems = [
-  { path: '/', label: 'Home', icon: LayoutDashboard },
+  { path: '/', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/lead-search', label: 'Lead Search', icon: Users, permission: 'lead_search' },
   { path: '/lead-search/history', label: 'Lead Search History', icon: History, permission: 'lead_search_history' },
   { path: '/lead-search/csv', label: 'Lead CSV History', icon: FileSpreadsheet, permission: 'exports' },
@@ -14,6 +14,7 @@ const navItems = [
 ];
 
 const Sidebar = ({ collapsed, onToggle, permissions = [], isNexgAdmin = false }) => {
+  const isDashboard = useLocation().pathname === '/';
   const visibleNavItems = [
     ...navItems.filter((item) => !item.permission || isNexgAdmin || permissions.includes(item.permission)),
     // The page itself requires an admin-password session. Keep this entry point
@@ -22,7 +23,7 @@ const Sidebar = ({ collapsed, onToggle, permissions = [], isNexgAdmin = false })
   ];
 
   return (
-    <aside className={`sidebar ${collapsed ? 'sidebar-collapsed' : ''}`}>
+    <aside className={`sidebar ${collapsed ? 'sidebar-collapsed' : ''} ${isDashboard ? 'sidebar-dashboard' : ''}`}>
       <div className="sidebar-brand">
         {collapsed ? (
           <div className="sidebar-logo-mini" title="NexG Tools">
@@ -55,8 +56,9 @@ const Sidebar = ({ collapsed, onToggle, permissions = [], isNexgAdmin = false })
         ))}
       </nav>
 
+      {isDashboard && !collapsed && <div className="sidebar-growth-note"><strong>Turn data<br />into opportunity</strong><p>Intelligent tools for a brighter tomorrow.</p></div>}
       <div className="sidebar-bottom">
-        {(isNexgAdmin || permissions.includes('settings')) && <NavLink to="/settings" className="sidebar-link" title="Settings">
+        {(isNexgAdmin || permissions.includes('settings')) && <NavLink to="/settings" className={({ isActive }) => `sidebar-link ${isActive ? 'sidebar-link-active' : ''}`} title="Settings">
           <Settings size={20} />
           {!collapsed && <span>Settings</span>}
         </NavLink>}

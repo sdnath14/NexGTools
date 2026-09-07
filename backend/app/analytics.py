@@ -16,7 +16,7 @@ from .config import settings
 
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 FORBIDDEN_SQL_RE = re.compile(
-    r"\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|load|outfile|into\s+dumpfile|set|call)\b",
+    r"\b(insert|update|delete|drop|alter|create|truncate|replace(?!\s*\()|grant|revoke|load|outfile|into\s+dumpfile|set|call)\b",
     re.IGNORECASE,
 )
 
@@ -33,13 +33,19 @@ def _quote_identifier(identifier: str) -> str:
     return f"`{identifier}`"
 
 
-def _mask_sql_literals(sql: str) -> str:
+def _mask_sql_literals(sql: str, *, mask_identifiers: bool = True) -> str:
     masked = []
     index = 0
     quote = ""
     while index < len(sql):
         char = sql[index]
         if quote:
+            if quote == "`" and not mask_identifiers:
+                masked.append(char)
+                if char == quote:
+                    quote = ""
+                index += 1
+                continue
             if char == "\\" and quote in {"'", '"'} and index + 1 < len(sql):
                 masked.extend("  ")
                 index += 2
@@ -51,7 +57,7 @@ def _mask_sql_literals(sql: str) -> str:
             continue
         if char in {"'", '"', "`"}:
             quote = char
-            masked.append(" ")
+            masked.append(char if char == "`" and not mask_identifiers else " ")
             index += 1
             continue
         masked.append(char)
@@ -257,6 +263,22 @@ def get_dataset(user_id: int, dataset_id: int) -> dict[str, Any]:
     return dataset
 
 
+def delete_dataset(user_id: int, dataset_id: int) -> None:
+    dataset = get_dataset(user_id, dataset_id)
+    # Resolve tables from owned metadata only; never accept table names from the client.
+    names = [table["table_name"] for table in dataset["tables"]]
+    if any(not name.startswith(f"analytics_data_{dataset_id}_") or not IDENTIFIER_RE.fullmatch(name) for name in names):
+        raise RuntimeError("Dataset table metadata is invalid.")
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            # MySQL DDL commits independently. Keep metadata until all sheet tables
+            # are removed, so a failed deletion can be retried using IF EXISTS.
+            if names:
+                cursor.execute("DROP TABLE IF EXISTS " + ", ".join(_quote_identifier(name) for name in names))
+            cursor.execute("DELETE FROM analytics_datasets WHERE id = %s AND user_id = %s", (dataset_id, user_id))
+            # analytics_tables metadata is removed by its ON DELETE CASCADE FK.
+
+
 def preview_table(user_id: int, dataset_id: int, table_name: str, limit: int = 50) -> dict[str, Any]:
     dataset = get_dataset(user_id, dataset_id)
     table = next((item for item in dataset["tables"] if item["table_name"] == table_name), None)
@@ -398,19 +420,24 @@ def schema_for_dataset(user_id: int, dataset_id: int) -> dict[str, Any]:
 
 def validate_sql(sql: str, allowed_tables: set[str]) -> str:
     clean = sql.strip().rstrip(";").strip()
-    if not clean.lower().startswith("select"):
+    if not re.match(r"^select\b", clean, re.IGNORECASE):
         raise ValueError("Only SELECT queries are allowed.")
-    if ";" in clean or "--" in clean or "/*" in clean:
+    code = _mask_sql_literals(clean)
+    if ";" in code or "--" in code or "/*" in code or "#" in code:
         raise ValueError("Multiple statements and comments are not allowed.")
-    forbidden = FORBIDDEN_SQL_RE.search(_mask_sql_literals(clean))
+    forbidden = FORBIDDEN_SQL_RE.search(code)
     if forbidden:
         raise ValueError(f"Generated SQL used a forbidden operation: {forbidden.group(1).upper()}.")
-    referenced = set(re.findall(r"(?:from|join)\s+`?([A-Za-z_][A-Za-z0-9_]*)`?", clean, flags=re.IGNORECASE))
+    table_code = _mask_sql_literals(clean, mask_identifiers=False)
+    table_refs = list(re.finditer(r"\b(?:from|join)\s+`?([A-Za-z_][A-Za-z0-9_]*)`?", table_code, flags=re.IGNORECASE))
+    if any(table_code[match.end():].lstrip().startswith(".") for match in table_refs):
+        raise ValueError("Database-qualified tables are not allowed.")
+    referenced = {match.group(1) for match in table_refs}
     if not referenced:
         raise ValueError("Generated SQL must read from an uploaded analytics table.")
     if not referenced.issubset(allowed_tables):
         raise ValueError("Generated SQL referenced a table outside this dataset.")
-    if not re.search(r"\blimit\s+\d+\b", clean, re.IGNORECASE):
+    if not re.search(r"\blimit\s+\d+\b", code, re.IGNORECASE):
         clean = f"{clean} LIMIT 1000"
     return clean
 

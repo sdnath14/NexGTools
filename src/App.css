@@ -48,7 +48,7 @@
   left: 0;
   bottom: 0;
   width: 240px;
-  background: #374151;
+  background: linear-gradient(160deg, #152e4c, #213d5b 70%, #45372f);
   color: #ffffff;
   display: flex;
   flex-direction: column;
@@ -180,13 +180,14 @@
 }
 
 .sidebar-link-active {
-  background: #4b5563;
+  background: linear-gradient(105deg, #f58220 0%, #ef7b25 18%, #258be6 72%, #2563eb 100%);
+  border-radius: 8px;
   color: #ffffff;
   font-weight: 600;
 }
 
 .sidebar-link-active:hover {
-  background: #4b5563;
+  background: linear-gradient(105deg, #f58220 0%, #ef7b25 18%, #258be6 72%, #2563eb 100%);
   color: #ffffff;
 }
 

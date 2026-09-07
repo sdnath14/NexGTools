@@ -25,6 +25,7 @@ import requests
 from .auth import create_token, hash_password, verify_password
 from .analytics import (
     analytics_summary,
+    delete_dataset,
     execute_sql,
     get_dataset,
     list_datasets,
@@ -291,6 +292,7 @@ class DocumentQueryRequest(BaseModel):
 class AnalyticsChatRequest(BaseModel):
     dataset_id: int
     question: str
+    table_name: str = ""
     history: list[ChatMessage] = Field(default_factory=list)
 
 
@@ -1280,7 +1282,7 @@ def _business_places_results(query: str, location: str, limit: int, radius_km: i
     }
 
 
-def _chat_completion(messages: list[dict[str, str]]) -> str:
+def _chat_completion(messages: list[dict[str, str]], *, response_format: dict[str, Any] | None = None, max_tokens: int = 750) -> str:
     if not settings.openai_api_key:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
 
@@ -1288,8 +1290,10 @@ def _chat_completion(messages: list[dict[str, str]]) -> str:
         "model": settings.openai_model,
         "messages": messages,
         "temperature": 0.2,
-        "max_tokens": 750,
+        "max_tokens": max_tokens,
     }
+    if response_format is not None:
+        request_body["response_format"] = response_format
     request = Request(
         "https://api.openai.com/v1/chat/completions",
         data=json.dumps(request_body).encode("utf-8"),
@@ -1315,6 +1319,8 @@ def _chat_completion(messages: list[dict[str, str]]) -> str:
         raise HTTPException(status_code=502, detail=f"Could not reach OpenAI: {exc.reason}") from exc
 
     try:
+        if data["choices"][0].get("finish_reason") == "length":
+            raise HTTPException(status_code=502, detail="The AI response was cut short. Please simplify the question and try again.")
         return data["choices"][0]["message"]["content"].strip()
     except (KeyError, IndexError, TypeError) as exc:
         raise HTTPException(status_code=502, detail="OpenAI returned an unexpected response.") from exc
@@ -1839,6 +1845,18 @@ def get_analytics_dataset(dataset_id: int, authorization: str | None = Header(de
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.delete("/api/analytics/datasets/{dataset_id}")
+def delete_analytics_dataset(dataset_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "data_analytics")
+    try:
+        delete_dataset(user["id"], dataset_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Could not finish deleting the dataset. Please try again.") from exc
+    return {"deleted": True, "dataset_id": dataset_id}
+
+
 @app.get("/api/analytics/datasets/{dataset_id}/summary")
 def get_analytics_summary(dataset_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     user = _require_permission(authorization, "data_analytics")
@@ -1862,6 +1880,37 @@ def get_analytics_table_preview(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+ANALYTICS_QUERY_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "analytics_query",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {"sql": {"type": ["string", "null"]}, "notes": {"type": "string"}},
+            "required": ["sql", "notes"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+def _analytics_query_plan(value: str) -> tuple[str | None, str]:
+    try:
+        plan = _parse_json_object(value)
+    except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=502, detail="The analyst returned an invalid query plan. Please try again.") from exc
+    if not isinstance(plan, dict) or "sql" not in plan:
+        raise HTTPException(status_code=502, detail="The analyst returned an incomplete query plan. Please try again.")
+    sql = plan["sql"]
+    notes = plan.get("notes")
+    if sql is None and isinstance(notes, str) and notes.strip():
+        return None, notes.strip()
+    if isinstance(sql, str) and sql.strip():
+        return sql.strip(), ""
+    raise HTTPException(status_code=502, detail="The analyst returned an empty query plan. Please try again.")
+
+
 @app.post("/api/analytics/chat")
 def analytics_chat(payload: AnalyticsChatRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     user = _require_permission(authorization, "data_analytics")
@@ -1871,8 +1920,31 @@ def analytics_chat(payload: AnalyticsChatRequest, authorization: str | None = He
 
     try:
         schema = schema_for_dataset(user["id"], payload.dataset_id)
+        selected_table_name = payload.table_name.strip()
+        if selected_table_name:
+            selected_tables = [table for table in schema["tables"] if table["table_name"] == selected_table_name]
+            if not selected_tables:
+                raise ValueError("Selected table was not found in this dataset.")
+            schema = {**schema, "tables": selected_tables}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    schema = {**schema, "tables": [{**table, "column_count": len(table["columns"])} for table in schema["tables"]]}
+    sample_rows = []
+    for table in schema["tables"][:3]:
+        try:
+            preview = preview_table(user["id"], payload.dataset_id, table["table_name"], 5)
+            sample_rows.append({
+                "sheet_name": table["sheet_name"],
+                "table_name": table["table_name"],
+                "sample_rows": preview.get("rows", []),
+            })
+        except Exception:
+            sample_rows.append({
+                "sheet_name": table["sheet_name"],
+                "table_name": table["table_name"],
+                "sample_rows": [],
+            })
 
     recent_history = [
         {"role": message.role, "content": message.content}
@@ -1884,26 +1956,43 @@ def analytics_chat(payload: AnalyticsChatRequest, authorization: str | None = He
             "role": "system",
             "content": (
                 "You generate MySQL SELECT statements for NexGTools AI Business Analytics. "
-                "Use only the provided schema table_name and column name values. "
+                "Use only the selected uploaded dataset and the provided schema table_name and column name values. "
                 "Never use INSERT, UPDATE, DELETE, ALTER, DROP, CREATE, SET, CALL, comments, or multiple statements. "
-                "Return strict JSON only with keys sql and notes. The sql value must be one valid MySQL SELECT. "
+                "Return strict JSON only with keys sql and notes. For answerable data questions, sql must be one valid MySQL SELECT "
+                "with a FROM clause referencing an exact table_name from the selected schema. Never encode an explanation as SELECT 'text'. "
+                "Inspect every column name and type in the supplied schema before choosing the relevant fields. "
+                "Understand free-form questions including Hindi, English and Hinglish, using original_name to map business terms "
+                "to the actual SQL column name. Handle counts, totals, averages, min/max, rankings, grouping, date ranges, "
+                "comparisons, duplicates, missing values and record lookups when the schema supports them. "
+                "Preserve every requested filter and sort condition. Compute totals over the full selected table, never sample rows. "
+                "Samples describe formats only; a value absent from samples may still exist elsewhere in the table. "
+                "Quote column and table identifiers with backticks. Use native numeric columns directly; for text numbers "
+                "use REPLACE and CAST as needed. Use SELECT with derived subqueries rather than WITH statements. "
+                "Column-count questions ARE answerable: use the supplied column_count metadata as an integer literal "
+                "and query the selected table, for example SELECT 21 AS column_count, COUNT(*) AS row_count FROM `actual_table_name`. "
+                "Replace 21 and actual_table_name with the exact schema values; COUNT(*) ensures a result even for an empty table. "
+                "Do not query information_schema or other tables outside the selected dataset. "
+                "For greetings, questions about your identity, ambiguous requests, or requests requiring unavailable columns, "
+                "return sql: null and use notes to reply or ask a specific clarification in plain language. "
+                "You are Neha from NexG Analyst. Do not invent data or claim a query ran when sql is null. "
                 "For multi-part questions, combine the answer into one SELECT using scalar subqueries or UNION ALL. "
                 "For mixed summaries plus lists, return columns named section, label, and value so the result table is clear. "
+                "For lookup questions about a named dealer, customer, company, GSTIN, city, state, phone, product, or status, "
+                "filter the most relevant text column with case-insensitive LIKE/LOWER instead of returning unrelated rows. "
+                "When the question asks for one entity's details, select the identifying column plus the requested detail columns and use a small LIMIT. "
                 "For distinct text counts, use COUNT(DISTINCT NULLIF(TRIM(column), '')). "
                 "For numeric totals, cast text-like numeric columns after removing commas. "
                 "If the user asks to show records, include enough selected columns and add LIMIT 1000."
             ),
         },
-        {"role": "user", "content": f"Database schema:\n{_trim_json(schema, 18000)}"},
+        {"role": "user", "content": f"Selected dataset schema:\n{json.dumps(schema, ensure_ascii=False, default=str)}\n\nSample rows from selected table(s):\n{_trim_json(sample_rows, 12000)}"},
         *recent_history,
         {"role": "user", "content": question},
     ]
-    generated = _chat_completion(sql_messages)
-    try:
-        parsed = _parse_json_object(generated)
-        sql = str(parsed.get("sql") or "").strip()
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=502, detail="OpenAI did not return valid SQL JSON.") from exc
+    generated = _chat_completion(sql_messages, response_format=ANALYTICS_QUERY_FORMAT, max_tokens=1800)
+    sql, clarification = _analytics_query_plan(generated)
+    if sql is None:
+        return {"answer": clarification, "sql": None, "rows": [], "model": settings.openai_model}
     allowed_tables = {table["table_name"] for table in schema["tables"]}
     result = None
     validation_error = ""
@@ -1921,12 +2010,21 @@ def analytics_chat(payload: AnalyticsChatRequest, authorization: str | None = He
                     "role": "system",
                     "content": (
                         "Repair this MySQL analytics query. Return strict JSON only with keys sql and notes. "
-                        "The sql must be exactly one safe SELECT statement, with no comments and no semicolon. "
+                        "The sql must be exactly one safe SELECT statement with a FROM clause referencing an exact table_name "
+                        "from the schema, with no comments and no semicolon. Never use SELECT 'explanation' without a data table. "
+                        "If this is a greeting, identity question, ambiguous request or the schema lacks required fields, "
+                        "return sql: null and notes containing a helpful reply or specific clarification as Neha from NexG Analyst. "
+                        "Do not invent data or claim a query ran when sql is null. "
                         "Use only the provided table and column names. Use UNION ALL or scalar subqueries if needed. "
+                        "For column counts, use the exact column_count from the schema as a literal alongside COUNT(*), "
+                        "for example SELECT 21 AS column_count, COUNT(*) AS row_count FROM `actual_table_name`, "
+                        "substituting the actual schema values. Inspect all columns before repairing other queries. "
+                        "For lookup questions, preserve the user's named value in a case-insensitive filter. "
                         "For mixed summaries plus lists, return clear columns named section, label, and value."
                     ),
                 },
-                {"role": "user", "content": f"Schema:\n{_trim_json(schema, 18000)}"},
+                {"role": "user", "content": f"Schema:\n{json.dumps(schema, ensure_ascii=False, default=str)}\n\nSample rows:\n{_trim_json(sample_rows, 12000)}"},
+                *recent_history,
                 {
                     "role": "user",
                     "content": (
@@ -1936,16 +2034,15 @@ def analytics_chat(payload: AnalyticsChatRequest, authorization: str | None = He
                     ),
                 },
             ]
-            repaired = _chat_completion(repair_messages)
-            try:
-                sql = str(_parse_json_object(repaired).get("sql") or "").strip()
-            except json.JSONDecodeError as parse_exc:
-                raise HTTPException(status_code=502, detail="OpenAI did not return valid repaired SQL JSON.") from parse_exc
+            repaired = _chat_completion(repair_messages, response_format=ANALYTICS_QUERY_FORMAT, max_tokens=1800)
+            sql, clarification = _analytics_query_plan(repaired)
+            if sql is None:
+                return {"answer": clarification, "sql": None, "rows": [], "model": settings.openai_model}
     if result is None:
         raise HTTPException(
             status_code=400,
             detail={
-                "message": f"Generated SQL was rejected: {validation_error}",
+                "message": "I couldn't create a valid query for this dataset. Please specify the field or records you want to analyze.",
                 "sql": sql,
             },
         )
@@ -1954,8 +2051,10 @@ def analytics_chat(payload: AnalyticsChatRequest, authorization: str | None = He
         {
             "role": "system",
             "content": (
-                "You are AI Business Analytics for NexGTools. Explain SQL query results in practical business language. "
-                "Use only the query result and schema. Do not invent missing facts. Keep the answer concise, include the key number, "
+                "You are Neha from NexG Analyst. Explain the SQL results returned by FastAPI in the user's language. "
+                "Answer the exact question first and preserve the units and requested filters. "
+                "When there are no result rows, say no matching records were found; do not substitute sample records. "
+                "Use only the query result and selected dataset schema. Do not invent missing facts. Keep the answer concise, include the key number, "
                 "and mention when the result is limited by the returned rows."
             ),
         },

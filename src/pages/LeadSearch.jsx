@@ -1051,17 +1051,17 @@ const LeadSearch = () => {
                   {message.content}
                 </div>
               ) : (
-              <div className={`ls-ai-bubble ${message.role === 'user' ? 'ls-ai-bubble-user' : ''}`} key={message.id || `${message.role}-${index}`}>
-                {message.role === 'assistant' ? (
-                  <div className="ls-ai-avatar">
-                    <Bot size={18} />
+                <div className={`ls-ai-bubble ${message.role === 'user' ? 'ls-ai-bubble-user' : ''}`} key={message.id || `${message.role}-${index}`}>
+                  {message.role === 'assistant' ? (
+                    <div className="ls-ai-avatar">
+                      <Bot size={18} />
+                    </div>
+                  ) : null}
+                  <div className="ls-ai-bubble-content">
+                    <p className="ls-ai-bubble-text">{message.content}</p>
+                    <span className="ls-ai-bubble-status">{message.role === 'user' ? message.status || 'Seen' : 'Lead AI'}</span>
                   </div>
-                ) : null}
-                <div className="ls-ai-bubble-content">
-                  <p className="ls-ai-bubble-text">{message.content}</p>
-                  <span className="ls-ai-bubble-status">{message.role === 'user' ? message.status || 'Seen' : 'Lead AI'}</span>
                 </div>
-              </div>
               )
             ))}
             {isAiThinking ? (
