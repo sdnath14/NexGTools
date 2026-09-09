@@ -201,6 +201,21 @@ def focused_schema(table_names: set[str]) -> dict[str, Any]:
     return {**full, "tables": tables, "relationships": relationships}
 
 
+def schema_summary() -> dict[str, Any]:
+    overview = schema_overview()
+    table_count = len(overview["tables"])
+    relationship_count = len(overview["relationships"])
+    column_count = sum(table["column_count"] for table in overview["tables"])
+    estimated_rows = sum(int(table["estimated_rows"] or 0) for table in overview["tables"])
+    return {
+        "database": overview["database"],
+        "table_count": table_count,
+        "column_count": column_count,
+        "relationship_count": relationship_count,
+        "estimated_rows": estimated_rows,
+    }
+
+
 def sample_rows(table_names: list[str], limit: int = 3) -> list[dict[str, Any]]:
     samples = []
     for table_name in table_names[:8]:
@@ -213,6 +228,65 @@ def sample_rows(table_names: list[str], limit: int = 3) -> list[dict[str, Any]]:
                 rows = _json_rows(cursor.fetchall())
         samples.append({"table_name": table_name, "rows": rows})
     return samples
+
+
+def question_keywords(question: str) -> list[str]:
+    stop_words = {
+        "a", "an", "and", "any", "are", "as", "at", "be", "by", "can", "could", "data", "database",
+        "detail", "details", "do", "find", "for", "from", "get", "give", "how", "i", "in", "info",
+        "information", "informations", "is", "it", "list", "me", "of", "on", "or", "please", "record",
+        "records", "show", "table", "tables", "tell", "that", "the", "their", "there", "this", "to",
+        "what", "when", "where", "which", "who", "with",
+    }
+    keywords = []
+    for word in re.findall(r"[A-Za-z0-9][A-Za-z0-9@._+-]*", question.lower()):
+        if len(word) < 3 or word in stop_words:
+            continue
+        if word not in keywords:
+            keywords.append(word)
+    return keywords[:8]
+
+
+def search_all_tables(question: str, *, per_table_limit: int = 3, max_tables: int = 20) -> dict[str, Any]:
+    keywords = question_keywords(question)
+    if not keywords:
+        return {"keywords": [], "matches": []}
+    tables = list_tables()
+    matches: list[dict[str, Any]] = []
+    text_types = {"char", "varchar", "text", "tinytext", "mediumtext", "longtext", "json", "enum", "set"}
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            for table in tables:
+                table_name = table["table_name"]
+                cursor.execute(
+                    """
+                    SELECT column_name, data_type
+                    FROM information_schema.columns
+                    WHERE table_schema = %s AND table_name = %s
+                    ORDER BY ordinal_position
+                    """,
+                    (settings.mysql_database, table_name),
+                )
+                columns = [
+                    row.get("column_name") or row.get("COLUMN_NAME")
+                    for row in cursor.fetchall()
+                    if (row.get("data_type") or row.get("DATA_TYPE") or "").lower() in text_types
+                ]
+                if not columns:
+                    continue
+                column_terms = []
+                params: list[Any] = []
+                for keyword in keywords[:5]:
+                    column_terms.append("(" + " OR ".join(f"LOWER(CAST(`{column}` AS CHAR)) LIKE %s" for column in columns) + ")")
+                    params.extend([f"%{keyword}%"] * len(columns))
+                where = " AND ".join(column_terms)
+                cursor.execute(f"SELECT * FROM `{table_name}` WHERE {where} LIMIT %s", [*params, per_table_limit])
+                rows = _json_rows(cursor.fetchall())
+                if rows:
+                    matches.append({"table_name": table_name, "matched_columns": columns, "rows": rows})
+                    if len(matches) >= max_tables:
+                        break
+    return {"keywords": keywords, "matches": matches}
 
 
 def validate_select(sql: str, allowed_tables: set[str]) -> str:
@@ -231,8 +305,6 @@ def validate_select(sql: str, allowed_tables: set[str]) -> str:
         raise ValueError("Generated SQL must read from Used Oil India tables.")
     if not references.issubset(allowed_tables):
         raise ValueError("Generated SQL referenced a table outside Used Oil India data.")
-    if not re.search(r"\blimit\s+\d+\b", masked, re.IGNORECASE):
-        clean = f"{clean} LIMIT 1000"
     return clean
 
 
@@ -243,6 +315,65 @@ def execute_select(sql: str, allowed_tables: set[str]) -> dict[str, Any]:
             cursor.execute(clean)
             rows = _json_rows(cursor.fetchall())
     return {"sql": clean, "rows": rows}
+
+
+def lookup_recycler_company(term: str) -> dict[str, Any] | None:
+    words = [
+        word
+        for word in re.findall(r"[A-Za-z0-9]+", term.lower())
+        if word not in {"give", "me", "about", "for", "of", "pvt", "ltd", "private", "limited", "company", "the", "please"}
+        and not re.match(r"^(info|information|informations|detail|details)$", word)
+    ]
+    clean = " ".join(words).strip()
+    if len(clean) < 3:
+        return None
+    like = f"%{clean}%"
+    compact_like = f"%{clean.replace(' ', '')}%"
+    word_filters = " AND ".join("LOWER(r.`companyName`) LIKE %s" for _ in words[:5])
+    word_params = [f"%{word}%" for word in words[:5]]
+    sql = """
+        SELECT
+            r.id,
+            r.companyName,
+            r.shortName,
+            r.recyclerCode,
+            r.gstNumber,
+            r.panNumber,
+            r.cinNumber,
+            r.city,
+            r.state,
+            r.factoryAddress,
+            r.wasteOilType,
+            r.wasteCategories,
+            r.wasteOilTypes,
+            r.annualCapacityTon,
+            r.accountHolderName,
+            r.authorizationNumber,
+            r.ctoDocumentNumber,
+            r.ctoExpiryDate,
+            r.eprCertificateNumber,
+            r.eprCertificateExpiryDate,
+            r.hazardousWasteAuthorizationNumber,
+            r.hazardousWasteAuthorizationExpiryDate,
+            u.email,
+            u.phone,
+            u.status,
+            u.role
+        FROM `uoi_recyclers` r
+        LEFT JOIN `uoi_users` u ON r.`userId` = u.`id`
+        WHERE LOWER(r.`companyName`) LIKE LOWER(%s)
+           OR LOWER(REPLACE(r.`companyName`, ' ', '')) LIKE LOWER(%s)
+           OR LOWER(r.`shortName`) LIKE LOWER(%s)
+           OR ({word_filters})
+        LIMIT 10
+    """.format(word_filters=word_filters or "1 = 0")
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, (like, compact_like, like, *word_params))
+            rows = _json_rows(cursor.fetchall())
+    if not rows:
+        return None
+    return {"sql": " ".join(sql.split()), "rows": rows}
 
 
 def _json_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
