@@ -14,7 +14,7 @@ from pymysql.cursors import DictCursor
 from .auth import create_token, hash_password, verify_password
 from .config import settings
 
-TOOL_PERMISSIONS = ["dashboard", "lead_search", "lead_search_history", "business_search", "business_search_history", "outreach", "data_library", "data_analytics", "exports", "settings"]
+TOOL_PERMISSIONS = ["dashboard", "lead_search", "lead_search_history", "business_search", "business_search_history", "outreach", "data_library", "data_analytics", "used_oil_india", "exports", "settings"]
 
 
 def _connect(database: str | None = None):

@@ -18,6 +18,7 @@ const permissionLabels = {
   outreach: 'Business Outreach',
   data_library: 'Data Library',
   data_analytics: 'Business Analytics Platform',
+  used_oil_india: 'Used Oil India Data',
   exports: 'CSV History',
   settings: 'Settings',
 };
@@ -30,6 +31,7 @@ const adminTools = [
   { permission: 'outreach', label: 'Business Outreach', description: 'Generate and send outreach', path: '/business-outreach', icon: Send, color: '#e76a14', soft: '#fff2e5', accent: '#ffd1a6' },
   { permission: 'data_library', label: 'Data Library', description: 'Search uploaded data', path: '/data-library', icon: Database, color: '#1878c9', soft: '#e8f4ff', accent: '#b8dcfa' },
   { permission: 'data_analytics', label: 'Chat with your database', description: 'Turn your data into business insights', path: '/data-analytics', icon: BarChart3, color: '#d8631b', soft: '#fff1e5', accent: '#ffdab9' },
+  { permission: 'used_oil_india', label: 'Used Oil India Data', description: 'View and maintain imported records', path: '/used-oil-india', icon: Database, color: '#0f766e', soft: '#ecfdf5', accent: '#99f6e4' },
 ];
 
 const todayLabel = new Intl.DateTimeFormat(undefined, {

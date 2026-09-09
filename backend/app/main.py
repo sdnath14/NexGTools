@@ -77,6 +77,7 @@ from .database import (
 )
 from .scraper import CrawlOptions, EMAIL_RE, PHONE_RE, scrape_website
 from .documents import answer as answer_documents, create_file, delete_file, delete_record, file_contents, file_download, ingest, list_files, run_diagnostics, search as search_documents, update_cell, update_file_tag, update_record_tag, validate_upload, validate_workbook
+from .used_oil_india import create_row as create_used_oil_row, delete_row as delete_used_oil_row, execute_select as execute_used_oil_select, focused_schema as used_oil_focused_schema, list_rows as list_used_oil_rows, list_tables as list_used_oil_tables, sample_rows as sample_used_oil_rows, schema_overview as used_oil_schema_overview, table_schema as used_oil_table_schema, update_row as update_used_oil_row, validate_select as validate_used_oil_select
 
 
 app = FastAPI(title="NexGTools API", version="0.1.0")
@@ -220,6 +221,16 @@ class LeadAiChatRequest(BaseModel):
     question: str
     lead: dict[str, Any] | None = None
     scrape: dict[str, Any] | None = None
+    history: list[ChatMessage] = Field(default_factory=list)
+
+
+class UsedOilRowRequest(BaseModel):
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
+class UsedOilChatRequest(BaseModel):
+    question: str
+    table_name: str = ""
     history: list[ChatMessage] = Field(default_factory=list)
 
 
@@ -1615,6 +1626,179 @@ def logout(authorization: str | None = Header(default=None)) -> dict[str, bool]:
     return {"ok": True}
 
 
+@app.get("/api/used-oil-india/tables")
+def used_oil_india_tables(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_permission(authorization, "used_oil_india")
+    return {"tables": list_used_oil_tables()}
+
+
+@app.get("/api/used-oil-india/tables/{table_name}/schema")
+def used_oil_india_schema(table_name: str, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_permission(authorization, "used_oil_india")
+    return used_oil_table_schema(table_name)
+
+
+@app.get("/api/used-oil-india/tables/{table_name}/rows")
+def used_oil_india_rows(table_name: str, limit: int = Query(default=50, ge=1, le=200), offset: int = Query(default=0, ge=0), search: str = "", authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_permission(authorization, "used_oil_india")
+    return list_used_oil_rows(table_name, limit, offset, search)
+
+
+@app.post("/api/used-oil-india/tables/{table_name}/rows")
+def used_oil_india_create_row(table_name: str, payload: UsedOilRowRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_permission(authorization, "used_oil_india")
+    return create_used_oil_row(table_name, payload.values)
+
+
+@app.put("/api/used-oil-india/tables/{table_name}/rows/{row_id}")
+def used_oil_india_update_row(table_name: str, row_id: str, payload: UsedOilRowRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_permission(authorization, "used_oil_india")
+    return update_used_oil_row(table_name, row_id, payload.values)
+
+
+@app.delete("/api/used-oil-india/tables/{table_name}/rows/{row_id}")
+def used_oil_india_delete_row(table_name: str, row_id: str, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_permission(authorization, "used_oil_india")
+    return delete_used_oil_row(table_name, row_id)
+
+
+@app.post("/api/used-oil-india/chat")
+def used_oil_india_chat(payload: UsedOilChatRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_permission(authorization, "used_oil_india")
+    question = payload.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="A question is required.")
+    if not settings.openai_api_key or settings.openai_api_key.startswith("your_"):
+        return {
+            "answer": "Neha is connected to the Used Oil India database, but the OpenAI API key is not configured yet. Add a real OPENAI_API_KEY in .env, restart the backend, and I can answer questions from these tables.",
+            "sql": None,
+            "rows": [],
+            "model": settings.openai_model,
+        }
+
+    selected_table = payload.table_name.strip()
+    catalog = used_oil_schema_overview()
+    all_allowed_tables = {table["table_name"] for table in catalog["tables"]}
+    relation_hints = [
+        f"{item['source_table']}.{item['source_column']} -> {item['target_table']}.{item['target_column']}"
+        for item in catalog["relationships"]
+    ]
+    selection_messages = [
+        {
+            "role": "system",
+            "content": (
+                "You select the Used Oil India MySQL tables needed to answer a user question. "
+                "Return strict JSON with tables and notes. Choose exact table_name values only. "
+                "Include bridge/parent tables required for joins using the relationship map. "
+                "Prefer 1 to 8 tables. Include the currently viewed table when it is relevant. "
+                "If the question is a greeting or not data-related, return an empty tables array."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Currently viewed table: {selected_table or 'none'}\n\n"
+                f"Tables and columns:\n{_trim_json([{k: v for k, v in table.items() if k != 'primary_key'} for table in catalog['tables']], 22000)}\n\n"
+                f"Relationships:\n{_trim_json(relation_hints, 12000)}\n\n"
+                f"Question: {question}"
+            ),
+        },
+    ]
+    selection_raw = _chat_completion(selection_messages, response_format=USED_OIL_TABLE_SELECTION_FORMAT, max_tokens=1200)
+    try:
+        selection = _parse_json_object(selection_raw)
+    except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=502, detail="Neha could not identify the relevant Used Oil India tables.") from exc
+    selected_tables = [table for table in selection.get("tables", []) if table in all_allowed_tables]
+    if selected_table in all_allowed_tables and selected_table not in selected_tables:
+        selected_tables.insert(0, selected_table)
+    if not selected_tables:
+        return {"answer": selection.get("notes") or "Ask me about a Used Oil India table, user, job, generator, recycler, city, or status.", "sql": None, "rows": [], "model": settings.openai_model}
+
+    planning_schema = used_oil_focused_schema(set(selected_tables[:10]))
+    allowed_tables = {table["table_name"] for table in planning_schema["tables"]}
+    sample_table_names = [table["table_name"] for table in planning_schema["tables"][:8]]
+    samples = sample_used_oil_rows(sample_table_names, 3)
+    recent_history = [
+        {"role": message.role, "content": message.content}
+        for message in payload.history[-6:]
+        if message.role in {"user", "assistant"} and message.content.strip()
+    ]
+
+    sql_messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are Neha, the Used Oil India data assistant inside NexGTools. "
+                "Generate one safe MySQL SELECT statement to answer the user's question from imported relational Used Oil India tables. "
+                "Use only exact table_name values that start with uoi_ and exact column names from the provided schema. "
+                "Never use INSERT, UPDATE, DELETE, ALTER, DROP, CREATE, SET, CALL, comments, multiple statements, information_schema, or non-uoi tables. "
+                "Return strict JSON only with keys sql and notes. For greetings, identity questions, or questions that need clarification, return sql:null and answer in notes. "
+                "Use the provided relationships for joins. Join source_table.source_column to target_table.target_column exactly as shown. "
+                "Use aliases for joined tables. When joining users multiple times, choose meaningful aliases such as generator_user, recycler_user, agent_user, retail_user, or agency_user. "
+                "For broad questions, prefer useful summaries with counts, totals, statuses, cities, roles, jobs, generators, recyclers, agents, requirements, wallets, or recent records. "
+                "For lookup questions about a person, company, phone, email, city, state, job code, GSTIN, PAN, recycler, generator, or agent, filter relevant text columns with LOWER(column) LIKE LOWER('%value%'). "
+                "When showing records, select identifying columns and add LIMIT 100. For counts, totals, groups, and rankings, query the full table. "
+                "Quote identifiers with backticks. Use CAST(REPLACE(column, ',', '') AS DECIMAL(18,2)) for numeric-looking text when needed. Do not invent data."
+            ),
+        },
+        {"role": "user", "content": f"Relevant relational schema:\n{_trim_json(planning_schema, 24000)}\n\nSample rows:\n{_trim_json(samples, 12000)}"},
+        *recent_history,
+        {"role": "user", "content": question},
+    ]
+    generated = _chat_completion(sql_messages, response_format=ANALYTICS_QUERY_FORMAT, max_tokens=1800)
+    sql, clarification = _analytics_query_plan(generated)
+    if sql is None:
+        return {"answer": clarification, "sql": None, "rows": [], "model": settings.openai_model}
+
+    result = None
+    validation_error = ""
+    for attempt in range(2):
+        try:
+            sql = validate_used_oil_select(sql, allowed_tables)
+            result = execute_used_oil_select(sql, allowed_tables)
+            break
+        except Exception as exc:
+            validation_error = str(exc)
+            if attempt == 1:
+                break
+            repair = _chat_completion(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Repair the MySQL SELECT for Used Oil India data. Return strict JSON with sql and notes. "
+                            "Use only uoi_ tables, schema columns, and provided relationships for joins. If the question cannot be answered, return sql:null with a concise clarification."
+                        ),
+                    },
+                    {"role": "user", "content": f"Relevant relational schema:\n{_trim_json(planning_schema, 24000)}\n\nQuestion: {question}\n\nRejected SQL:\n{sql}\n\nError: {validation_error}"},
+                ],
+                response_format=ANALYTICS_QUERY_FORMAT,
+                max_tokens=1800,
+            )
+            sql, clarification = _analytics_query_plan(repair)
+            if sql is None:
+                return {"answer": clarification, "sql": None, "rows": [], "model": settings.openai_model}
+    if result is None:
+        raise HTTPException(status_code=400, detail={"message": "Neha could not create a valid Used Oil India query. Please ask about a specific table, city, user, job, wallet, generator, recycler, or status.", "sql": sql, "error": validation_error})
+
+    answer = _chat_completion(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "You are Neha, the Used Oil India data assistant. Explain the executed query results in the user's language. "
+                    "Answer directly, use only the rows provided, mention if no rows matched, and keep it concise. "
+                    "If rows are limited, say the result is showing a limited set. Mention relevant joined context when it appears in the rows."
+                ),
+            },
+            {"role": "user", "content": f"Question: {question}\n\nSQL executed:\n{result['sql']}\n\nRows:\n{_trim_json(result['rows'], 12000)}"},
+        ],
+        max_tokens=900,
+    )
+    return {"answer": answer, "sql": result["sql"], "rows": result["rows"], "model": settings.openai_model}
+
+
 
 def _process_document(file_id: str, job_id: str) -> None:
     from .database import db_connection
@@ -1889,6 +2073,23 @@ ANALYTICS_QUERY_FORMAT = {
             "type": "object",
             "properties": {"sql": {"type": ["string", "null"]}, "notes": {"type": "string"}},
             "required": ["sql", "notes"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+USED_OIL_TABLE_SELECTION_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "used_oil_table_selection",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "tables": {"type": "array", "items": {"type": "string"}},
+                "notes": {"type": "string"},
+            },
+            "required": ["tables", "notes"],
             "additionalProperties": False,
         },
     },
@@ -2186,7 +2387,7 @@ def admin_create_user(
 @app.get("/api/admin/roles")
 def admin_roles(authorization: str | None = Header(default=None), x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     _require_admin(authorization, x_admin_token)
-    return {"roles": list_roles(), "permissions": ["dashboard", "lead_search", "lead_search_history", "business_search", "business_search_history", "outreach", "data_library", "exports", "settings"]}
+    return {"roles": list_roles(), "permissions": ["dashboard", "lead_search", "lead_search_history", "business_search", "business_search_history", "outreach", "data_library", "data_analytics", "used_oil_india", "exports", "settings"]}
 
 
 @app.get("/api/admin/users-with-roles")

@@ -12,6 +12,7 @@ const pageTitles = {
   '/business-outreach': 'Business Outreach',
   '/data-library': 'Data Library',
   '/data-analytics': 'Data AI',
+  '/used-oil-india': 'Used Oil India Data',
   '/admin': 'Admin',
   '/tender-ai': 'TenderAI',
   '/settings': 'Settings',
