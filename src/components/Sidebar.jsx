@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Users, Database, Settings, ChevronLeft, ChevronRight, ShieldCheck, FileSpreadsheet, History, Send, BarChart3, Table2 } from 'lucide-react';
+import { LayoutDashboard, Users, Database, Settings, ChevronLeft, ChevronRight, ShieldCheck, FileSpreadsheet, History, Send, BarChart3, Table2, ClipboardList } from 'lucide-react';
 import nexgToolLogo from '../assets/nexgtool-removebg-preview.png';
 
 const navItems = [
@@ -9,6 +9,7 @@ const navItems = [
   { path: '/lead-search/history', label: 'Lead Search History', icon: History, permission: 'lead_search_history' },
   { path: '/lead-search/csv', label: 'Lead CSV History', icon: FileSpreadsheet, permission: 'exports' },
   { path: '/business-outreach', label: 'Business Outreach', icon: Send, permission: 'outreach' },
+  { path: '/work-assignments', label: 'Work Assignments', icon: ClipboardList, permission: 'work_assignments' },
   { path: '/data-library', label: 'Data Library', icon: Database, permission: 'data_library' },
   { path: '/data-analytics', label: 'Business Analytics Platform', icon: BarChart3, permission: 'data_analytics' },
   { path: '/used-oil-india', label: 'Used Oil India Data', icon: Table2, permission: 'used_oil_india' },

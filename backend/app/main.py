@@ -84,12 +84,7 @@ app = FastAPI(title="NexGTools API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-    ],
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):517\d$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -2504,7 +2499,7 @@ def admin_create_user(
 @app.get("/api/admin/roles")
 def admin_roles(authorization: str | None = Header(default=None), x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     _require_admin(authorization, x_admin_token)
-    return {"roles": list_roles(), "permissions": ["dashboard", "lead_search", "lead_search_history", "business_search", "business_search_history", "outreach", "data_library", "data_analytics", "used_oil_india", "exports", "settings"]}
+    return {"roles": list_roles(), "permissions": ["dashboard", "lead_search", "lead_search_history", "business_search", "business_search_history", "outreach", "work_assignments", "data_library", "data_analytics", "used_oil_india", "exports", "settings"]}
 
 
 @app.get("/api/admin/users-with-roles")

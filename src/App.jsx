@@ -14,6 +14,7 @@ import DataLibrary from './pages/DataLibrary';
 import DataAnalytics from './pages/DataAnalytics';
 import BusinessOutreach from './pages/BusinessOutreach';
 import UsedOilIndia from './pages/UsedOilIndia';
+import WorkAssignments from './pages/WorkAssignments';
 import { ADMIN_TOKEN_KEY, API_BASE_URL, AUTH_TOKEN_KEY, adminHeaders, authHeaders } from './auth';
 import { applyAppearance, loadAppearance, saveAppearance } from './appearance';
 import './App.css';
@@ -116,6 +117,7 @@ function App() {
               <Route path="/business-search" element={hasPermission('business_search') ? <BusinessSearch /> : <Navigate to="/" replace />} />
               <Route path="/business-search/csv" element={hasPermission('exports') ? <CsvHistory type="business_search" /> : <Navigate to="/" replace />} />
               <Route path="/business-outreach" element={hasPermission('outreach') ? <BusinessOutreach /> : <Navigate to="/" replace />} />
+              <Route path="/work-assignments" element={hasPermission('work_assignments') ? <WorkAssignments /> : <Navigate to="/" replace />} />
               <Route path="/data-library" element={hasPermission('data_library') ? <DataLibrary /> : <Navigate to="/" replace />} />
               <Route path="/data-analytics" element={hasPermission('data_analytics') ? <DataAnalytics /> : <Navigate to="/" replace />} />
               <Route path="/used-oil-india" element={hasPermission('used_oil_india') ? <UsedOilIndia /> : <Navigate to="/" replace />} />

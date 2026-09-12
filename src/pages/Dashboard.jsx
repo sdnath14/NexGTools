@@ -7,6 +7,7 @@ import {
   Search,
   Send,
   Leaf,
+  ClipboardList,
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { API_BASE_URL, authHeaders } from '../auth';
@@ -16,6 +17,7 @@ const permissionLabels = {
   lead_search: 'Lead Search',
   lead_search_history: 'Lead Search History',
   outreach: 'Business Outreach',
+  work_assignments: 'Work Assignments',
   data_library: 'Data Library',
   data_analytics: 'Business Analytics Platform',
   used_oil_india: 'Used Oil India Data',
@@ -29,6 +31,7 @@ const EMPTY_PERMISSIONS = [];
 const adminTools = [
   { permission: 'lead_search', label: 'Lead Search', description: 'Find business leads quickly', path: '/lead-search', icon: Search, color: '#2260ed', soft: '#e8f3ff', accent: '#bbdcff' },
   { permission: 'outreach', label: 'Business Outreach', description: 'Generate and send outreach', path: '/business-outreach', icon: Send, color: '#e76a14', soft: '#fff2e5', accent: '#ffd1a6' },
+  { permission: 'work_assignments', label: 'Work Assignments', description: 'Assign employee tasks with voice input', path: '/work-assignments', icon: ClipboardList, color: '#0f766e', soft: '#ecfdf5', accent: '#99f6e4' },
   { permission: 'data_library', label: 'Data Library', description: 'Search uploaded data', path: '/data-library', icon: Database, color: '#1878c9', soft: '#e8f4ff', accent: '#b8dcfa' },
   { permission: 'data_analytics', label: 'Chat with your database', description: 'Turn your data into business insights', path: '/data-analytics', icon: BarChart3, color: '#d8631b', soft: '#fff1e5', accent: '#ffdab9' },
   { permission: 'used_oil_india', label: 'Used Oil India Data', description: 'View and maintain imported records', path: '/used-oil-india', icon: Database, color: '#0f766e', soft: '#ecfdf5', accent: '#99f6e4' },
