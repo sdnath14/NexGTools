@@ -1356,7 +1356,11 @@ async def transcribe_work_assignment_voice(file: UploadFile = File(...)) -> dict
         transcript = OpenAI(api_key=settings.openai_api_key, timeout=30).audio.transcriptions.create(
             model="gpt-4o-transcribe",
             file=audio_file,
-            prompt="Transcribe a workplace task assignment command. Names may be Indian names. Keep employee names, dates, numbers, and task wording exact.",
+            prompt=(
+                "Transcribe a workplace task assignment command. The speaker may use English, Hindi, Bengali, "
+                "or a mix such as Hinglish or Banglish. Keep employee names, dates, numbers, and task wording exact. "
+                "Preserve the spoken language instead of translating unless the audio itself mixes languages."
+            ),
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"OpenAI voice transcription failed: {exc}") from exc
@@ -1394,10 +1398,16 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest) -> dict[str, Any
         {
             "role": "system",
             "content": (
-                "You interpret voice commands for a work assignment app. Return only JSON. "
+                "You interpret multilingual voice commands for a work assignment app. Return only JSON. "
+                "The transcript may be in English, Hindi, Bengali, romanized Hindi, romanized Bengali, "
+                "or mixed language. Understand commands such as assign/give/tell/ask/add, "
+                "kaam do, task do, bol do, bolo, kaj dao, kaj korte bolo, and equivalent wording. "
                 "Choose one action: assign_task, add_employee, update_status, clarify, or none. "
                 "Use employeeId only when it clearly matches the supplied employees. "
-                "Resolve relative dates using today. Keep task titles short and action-oriented. "
+                "Resolve relative dates using today, including aaj/today, kal/tomorrow when it clearly means tomorrow, "
+                "agami kal, parshu, aj, kal, aajke, agamikal, porshu, next week, and similar phrases. "
+                "Normalize taskTitle into concise English for storing in the app, but keep proper names exact. "
+                "Make reply short and in the user's main spoken language when possible. "
                 "Schema: {\"action\":\"assign_task|add_employee|update_status|clarify|none\","
                 "\"employeeId\":\"\",\"employeeName\":\"\",\"phone\":\"\",\"taskTitle\":\"\","
                 "\"quantity\":1,\"dueDate\":\"YYYY-MM-DD or empty\",\"priority\":\"Low|Medium|High\","

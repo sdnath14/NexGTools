@@ -198,7 +198,7 @@ export default function WorkAssignments() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [voiceText, setVoiceText] = useState('');
   const [chatMessages, setChatMessages] = useState([
-    { id: 'welcome', role: 'assistant', text: 'Hi. Tell me who should do what, and I will create the assignment for you.' },
+    { id: 'welcome', role: 'assistant', text: 'Hi. Speak in English, Hindi, Bengali, or mixed language. Tell me who should do what, and I will create the assignment for you.' },
   ]);
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
@@ -620,7 +620,7 @@ export default function WorkAssignments() {
         <div>
           <span>Team Workboard</span>
           <h1>Assign work by employee, number, and task</h1>
-          <p>Create employees, assign measurable tasks, edit progress, and use the voice assistant for quick commands.</p>
+          <p>Create employees, assign measurable tasks, edit progress, and use the multilingual voice assistant for quick commands.</p>
         </div>
         <div className="work-hero-stats">
           <div><Users size={18} /><strong>{employees.length}</strong><small>Employees</small></div>
@@ -630,7 +630,7 @@ export default function WorkAssignments() {
       </header>
 
       <section className="work-assistant">
-        <div className="work-assistant-head"><Bot size={20} /><div><h2>Work Agent</h2><p>Talk naturally. The agent listens, replies, and completes task actions.</p></div><span className={listening ? 'work-voice-state work-voice-listening' : speaking ? 'work-voice-state work-voice-speaking' : processingVoice ? 'work-voice-state work-voice-processing' : 'work-voice-state'}>{listening ? <Mic size={14} /> : speaking ? <Volume2 size={14} /> : processingVoice ? <LoaderCircle size={14} /> : <Sparkles size={14} />}{listening ? 'Listening' : speaking ? 'Speaking' : processingVoice ? 'Thinking' : voiceMode ? 'Voice Mode' : 'Ready'}</span></div>
+        <div className="work-assistant-head"><Bot size={20} /><div><h2>Work Agent</h2><p>Talk naturally in English, Hindi, Bengali, or mixed language. The agent listens, replies, and completes task actions.</p></div><span className={listening ? 'work-voice-state work-voice-listening' : speaking ? 'work-voice-state work-voice-speaking' : processingVoice ? 'work-voice-state work-voice-processing' : 'work-voice-state'}>{listening ? <Mic size={14} /> : speaking ? <Volume2 size={14} /> : processingVoice ? <LoaderCircle size={14} /> : <Sparkles size={14} />}{listening ? 'Listening' : speaking ? 'Speaking' : processingVoice ? 'Thinking' : voiceMode ? 'Voice Mode' : 'Ready'}</span></div>
         <div className="work-agent-layout">
           <div className={listening ? 'work-voice-orb is-listening' : speaking || processingVoice ? 'work-voice-orb is-speaking' : 'work-voice-orb'}>
             <div className="work-orb-rings"><span /><span /><span /></div>
@@ -646,7 +646,7 @@ export default function WorkAssignments() {
               <div ref={chatEndRef} />
             </div>
             <div className="work-command-row">
-              <input value={voiceText} onChange={(event) => setVoiceText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') runAssistantCommand(); }} placeholder="Please ask Srabani to call the vendors tomorrow" />
+              <input value={voiceText} onChange={(event) => setVoiceText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') runAssistantCommand(); }} placeholder="Ask Srabani to call vendors tomorrow / Srabani ko kal vendors call karne bolo" />
               <button type="button" className="work-send-btn" onClick={() => runAssistantCommand()} title="Send command"><Send size={18} /></button>
             </div>
           </div>
