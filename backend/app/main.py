@@ -200,6 +200,24 @@ def ensure_work_assignment_tables() -> None:
             )
             cursor.execute(
                 """
+                CREATE TABLE IF NOT EXISTS work_task_notifications (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    task_id BIGINT UNSIGNED NOT NULL,
+                    recipient_user_id BIGINT UNSIGNED NOT NULL,
+                    actor_user_id BIGINT UNSIGNED NOT NULL,
+                    event_type VARCHAR(64) NOT NULL,
+                    message TEXT NOT NULL,
+                    read_at TIMESTAMP NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_work_notifications_recipient (recipient_user_id, read_at, created_at),
+                    CONSTRAINT fk_work_notification_task FOREIGN KEY (task_id) REFERENCES work_tasks(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_work_notification_recipient FOREIGN KEY (recipient_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_work_notification_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+            cursor.execute(
+                """
                 INSERT IGNORE INTO work_task_assignees (task_id, user_id, assigned_by_user_id)
                 SELECT work_tasks.id, users.id, work_tasks.created_by_user_id
                 FROM work_tasks
@@ -1711,17 +1729,71 @@ def update_work_task_status(task_id: int, payload: WorkTaskStatusRequest, author
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT work_tasks.id
+                SELECT work_tasks.id, work_tasks.title, work_tasks.status, work_tasks.created_by_user_id,
+                       work_employees.name AS employee_name
                 FROM work_tasks
+                JOIN work_employees ON work_employees.id = work_tasks.employee_id
                 LEFT JOIN work_task_assignees ON work_task_assignees.task_id = work_tasks.id
                 WHERE work_tasks.id = %s
                   AND (work_tasks.created_by_user_id = %s OR work_task_assignees.user_id = %s OR work_tasks.employee_user_id = %s OR %s)
                 """,
                 (task_id, user["id"], user["id"], user["id"], bool(user.get("is_nexg_admin"))),
             )
-            if not cursor.fetchone():
+            task = cursor.fetchone()
+            if not task:
                 raise HTTPException(status_code=404, detail="Task not found.")
             cursor.execute("UPDATE work_tasks SET status = %s WHERE id = %s", (status, task_id))
+            if status == "Done" and task.get("status") != "Done" and int(task["created_by_user_id"]) != int(user["id"]):
+                message = f"{task.get('employee_name') or user.get('name') or 'Employee'} completed: {task.get('title') or 'Task'}"
+                cursor.execute(
+                    """
+                    INSERT INTO work_task_notifications (task_id, recipient_user_id, actor_user_id, event_type, message)
+                    VALUES (%s, %s, %s, 'task_completed', %s)
+                    """,
+                    (task_id, task["created_by_user_id"], user["id"], message),
+                )
+    return {"updated": True}
+
+
+@app.get("/api/work-assignments/notifications")
+def work_task_notifications(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, task_id, event_type, message, created_at
+                FROM work_task_notifications
+                WHERE recipient_user_id = %s AND read_at IS NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT 20
+                """,
+                (user["id"],),
+            )
+            rows = cursor.fetchall()
+    return {
+        "notifications": [
+            {
+                "id": row["id"],
+                "taskId": str(row["task_id"]),
+                "eventType": row["event_type"],
+                "message": row["message"],
+                "createdAt": row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else str(row["created_at"]),
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.post("/api/work-assignments/notifications/read")
+def mark_work_task_notifications_read(authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    user = _require_user(authorization)
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE work_task_notifications SET read_at = CURRENT_TIMESTAMP WHERE recipient_user_id = %s AND read_at IS NULL",
+                (user["id"],),
+            )
     return {"updated": True}
 
 
