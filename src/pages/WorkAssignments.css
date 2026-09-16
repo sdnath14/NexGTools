@@ -304,6 +304,17 @@
   color: #047857;
 }
 
+.work-voice-processing {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.work-voice-processing svg,
+.work-mic svg[data-lucide='loader-circle'] {
+  animation: workSpin .9s linear infinite;
+}
+
 .work-assistant h2,
 .work-panel h2,
 .work-table-toolbar h2 {
@@ -700,6 +711,10 @@ html[data-theme='dark'] .work-chat-user p {
 @keyframes workWave {
   from { height: 7px; }
   to { height: 34px; }
+}
+
+@keyframes workSpin {
+  to { transform: rotate(360deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {

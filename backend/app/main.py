@@ -236,6 +236,13 @@ class BusinessAiChatRequest(BaseModel):
     history: list[ChatMessage] = Field(default_factory=list)
 
 
+class WorkVoiceParseRequest(BaseModel):
+    transcript: str
+    employees: list[dict[str, Any]] = Field(default_factory=list)
+    tasks: list[dict[str, Any]] = Field(default_factory=list)
+    last_employee_id: str = ""
+
+
 class AuthRequest(BaseModel):
     email: str
     password: str
@@ -1330,6 +1337,98 @@ def _chat_completion(messages: list[dict[str, str]], *, response_format: dict[st
         return data["choices"][0]["message"]["content"].strip()
     except (KeyError, IndexError, TypeError) as exc:
         raise HTTPException(status_code=502, detail="OpenAI returned an unexpected response.") from exc
+
+
+@app.post("/api/work-assignments/voice/transcribe")
+async def transcribe_work_assignment_voice(file: UploadFile = File(...)) -> dict[str, str]:
+    if not settings.openai_api_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
+
+    audio_bytes = await file.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="No audio was received.")
+
+    try:
+        from openai import OpenAI
+
+        audio_file = BytesIO(audio_bytes)
+        audio_file.name = file.filename or "work-command.webm"
+        transcript = OpenAI(api_key=settings.openai_api_key, timeout=30).audio.transcriptions.create(
+            model="gpt-4o-transcribe",
+            file=audio_file,
+            prompt="Transcribe a workplace task assignment command. Names may be Indian names. Keep employee names, dates, numbers, and task wording exact.",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"OpenAI voice transcription failed: {exc}") from exc
+
+    text = getattr(transcript, "text", "") or ""
+    return {"text": text.strip()}
+
+
+@app.post("/api/work-assignments/voice/parse")
+def parse_work_assignment_voice(payload: WorkVoiceParseRequest) -> dict[str, Any]:
+    transcript = payload.transcript.strip()
+    if not transcript:
+        raise HTTPException(status_code=400, detail="Transcript is required.")
+
+    employee_context = [
+        {
+            "id": str(employee.get("id", "")),
+            "name": str(employee.get("name", "")),
+            "phone": str(employee.get("phone", "")),
+            "role": str(employee.get("role", "")),
+        }
+        for employee in payload.employees[:80]
+    ]
+    task_context = [
+        {
+            "id": str(task.get("id", "")),
+            "title": str(task.get("title", "")),
+            "employeeId": str(task.get("employeeId", "")),
+            "status": str(task.get("status", "")),
+        }
+        for task in payload.tasks[:120]
+    ]
+    today = time.strftime("%Y-%m-%d")
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You interpret voice commands for a work assignment app. Return only JSON. "
+                "Choose one action: assign_task, add_employee, update_status, clarify, or none. "
+                "Use employeeId only when it clearly matches the supplied employees. "
+                "Resolve relative dates using today. Keep task titles short and action-oriented. "
+                "Schema: {\"action\":\"assign_task|add_employee|update_status|clarify|none\","
+                "\"employeeId\":\"\",\"employeeName\":\"\",\"phone\":\"\",\"taskTitle\":\"\","
+                "\"quantity\":1,\"dueDate\":\"YYYY-MM-DD or empty\",\"priority\":\"Low|Medium|High\","
+                "\"status\":\"Pending|In Progress|Done\",\"taskId\":\"\",\"reply\":\"short spoken response\"}."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "today": today,
+                    "transcript": transcript,
+                    "employees": employee_context,
+                    "tasks": task_context,
+                    "lastEmployeeId": payload.last_employee_id,
+                },
+                ensure_ascii=True,
+            ),
+        },
+    ]
+    raw = _chat_completion(messages, response_format={"type": "json_object"}, max_tokens=450)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail="OpenAI returned an unreadable voice action.") from exc
+
+    action = str(parsed.get("action", "none"))
+    if action not in {"assign_task", "add_employee", "update_status", "clarify", "none"}:
+        parsed["action"] = "none"
+    parsed["transcript"] = transcript
+    return parsed
 
 
 def _find_company_website_with_places(name: str, address: str = "") -> str:

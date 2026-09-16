@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Edit3,
+  LoaderCircle,
   Mic,
   MicOff,
   Phone,
@@ -25,7 +26,7 @@ const STORAGE_KEY = 'nexgtools_work_assignments';
 
 const emptyEmployee = { name: '', phone: '', role: '' };
 const emptyTask = { employeeId: '', title: '', quantity: 1, dueDate: '', priority: 'Medium', status: 'Pending', notes: '' };
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const canRecordVoice = 'MediaRecorder' in window && navigator.mediaDevices?.getUserMedia;
 const canSpeak = 'speechSynthesis' in window;
 
 const femaleVoiceNames = [
@@ -201,9 +202,15 @@ export default function WorkAssignments() {
   ]);
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [processingVoice, setProcessingVoice] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false);
   const [voiceError, setVoiceError] = useState('');
   const [speechVoices, setSpeechVoices] = useState([]);
-  const recognitionRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const mediaStreamRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const silenceTimerRef = useRef(null);
+  const voiceModeRef = useRef(false);
   const chatEndRef = useRef(null);
   const lastEmployeeRef = useRef('');
 
@@ -213,8 +220,16 @@ export default function WorkAssignments() {
 
   useEffect(() => () => {
     window.speechSynthesis?.cancel();
-    recognitionRef.current?.stop();
+    voiceModeRef.current = false;
+    window.clearTimeout(silenceTimerRef.current);
+    if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    audioContextRef.current?.close();
   }, []);
+
+  useEffect(() => {
+    voiceModeRef.current = voiceMode;
+  }, [voiceMode]);
 
   useEffect(() => {
     if (!canSpeak) return undefined;
@@ -304,9 +319,29 @@ export default function WorkAssignments() {
     setChatMessages((current) => [...current, { id: uid(), role, text }]);
   };
 
+  const stopVoiceCapture = () => {
+    window.clearTimeout(silenceTimerRef.current);
+    silenceTimerRef.current = null;
+    if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
+  };
+
+  const stopVoiceMode = () => {
+    voiceModeRef.current = false;
+    setVoiceMode(false);
+    setListening(false);
+    stopVoiceCapture();
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
+    audioContextRef.current?.close();
+    audioContextRef.current = null;
+  };
+
   const speak = async (message) => {
     addChatMessage('assistant', message);
-    if (!canSpeak) return;
+    if (!canSpeak) {
+      if (voiceModeRef.current) window.setTimeout(() => startVoiceCapture(), 350);
+      return;
+    }
     const availableVoices = speechVoices.length ? speechVoices : await getBrowserVoices();
     const femaleVoice = chooseFemaleVoice(availableVoices);
     if (!speechVoices.length && availableVoices.length) setSpeechVoices(availableVoices);
@@ -317,12 +352,93 @@ export default function WorkAssignments() {
     utterance.rate = 0.88;
     utterance.pitch = 1.35;
     utterance.onstart = () => setSpeaking(true);
-    utterance.onend = () => setSpeaking(false);
+    utterance.onend = () => {
+      setSpeaking(false);
+      if (voiceModeRef.current) window.setTimeout(() => startVoiceCapture(), 350);
+    };
     utterance.onerror = () => setSpeaking(false);
     window.speechSynthesis.speak(utterance);
   };
 
-  const runAssistantCommand = (commandText = voiceText) => {
+  const applyAiAction = (command, action) => {
+    if (!action || action.action === 'none') return false;
+
+    if (action.action === 'add_employee') {
+      const name = normalize(action.employeeName);
+      const phone = normalize(action.phone).replace(/\s+/g, '');
+      if (!name || !phone) {
+        speak(action.reply || 'I can add the employee, but I need both name and phone number.');
+        return true;
+      }
+      const employee = { id: uid(), name, phone, role: '' };
+      setEmployees((current) => [employee, ...current]);
+      speak(action.reply || `Okay. I added ${employee.name} with number ${employee.phone}.`);
+      return true;
+    }
+
+    if (action.action === 'update_status') {
+      const status = ['Pending', 'In Progress', 'Done'].includes(action.status) ? action.status : 'Done';
+      const taskId = normalize(action.taskId);
+      const taskNeedle = normalize(action.taskTitle).toLowerCase();
+      const target = tasks.find((task) => task.id === taskId) || tasks.find((task) => task.title.toLowerCase().includes(taskNeedle));
+      if (!target) {
+        speak(action.reply || 'I could not find that task. Please say a few exact words from the task title.');
+        return true;
+      }
+      setTasks((current) => current.map((task) => task.id === target.id ? { ...task, status } : task));
+      speak(action.reply || `Updated ${target.title} to ${status}.`);
+      return true;
+    }
+
+    if (action.action === 'assign_task') {
+      const employee = employees.find((item) => item.id === action.employeeId)
+        || findEmployeeFromCommand(`${action.employeeName || ''} ${command}`, employees, lastEmployeeRef.current);
+      const title = cleanTaskTitle(action.taskTitle || '');
+      if (!employee || !title) {
+        speak(action.reply || 'I need the employee and task before I can assign it.');
+        return true;
+      }
+      lastEmployeeRef.current = employee.id;
+      const task = {
+        id: uid(),
+        employeeId: employee.id,
+        title,
+        quantity: Math.max(1, Number(action.quantity) || 1),
+        dueDate: normalize(action.dueDate) || parseDate(command),
+        priority: ['Low', 'Medium', 'High'].includes(action.priority) ? action.priority : 'Medium',
+        status: 'Pending',
+        notes: `Created by OpenAI voice assistant from: "${command}"`,
+      };
+      setTasks((current) => [task, ...current]);
+      speak(action.reply || `Okay, assigning ${task.title} to ${employee.name}.`);
+      return true;
+    }
+
+    if (action.action === 'clarify') {
+      speak(action.reply || 'Please tell me a little more so I can assign it correctly.');
+      return true;
+    }
+
+    return false;
+  };
+
+  const parseCommandWithOpenAi = async (command) => {
+    const response = await fetch('/api/work-assignments/voice/parse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transcript: command,
+        employees,
+        tasks,
+        last_employee_id: lastEmployeeRef.current,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'OpenAI could not analyze the command.');
+    return data;
+  };
+
+  const runAssistantCommand = async (commandText = voiceText, options = {}) => {
     const command = normalize(commandText);
     const lower = command.toLowerCase();
     if (!command) {
@@ -332,6 +448,15 @@ export default function WorkAssignments() {
 
     addChatMessage('user', command);
     setVoiceText('');
+
+    if (!options.skipAi) {
+      try {
+        const action = await parseCommandWithOpenAi(command);
+        if (applyAiAction(command, action)) return;
+      } catch (error) {
+        setVoiceError(error.message || 'OpenAI could not analyze the command. Using the local fallback.');
+      }
+    }
 
     const employeeMatch = lower.match(/add employee\s+([a-z\s]+?)(?:\s+(?:number|phone|mobile)\s+|\s+)(\+?\d[\d\s-]{6,})/i);
     if (employeeMatch) {
@@ -391,39 +516,102 @@ export default function WorkAssignments() {
     speak('I heard you, but I need an employee and a task. Try saying, please ask Amit to call the vendors tomorrow.');
   };
 
+  const submitVoiceAudio = async (audioBlob) => {
+    if (!audioBlob.size) return;
+    setProcessingVoice(true);
+    setVoiceError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', audioBlob, 'work-command.webm');
+      const response = await fetch('/api/work-assignments/voice/transcribe', { method: 'POST', body: formData });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'OpenAI could not transcribe the voice command.');
+      const transcript = normalize(data.text);
+      if (!transcript) {
+        if (voiceModeRef.current) window.setTimeout(() => startVoiceCapture(), 350);
+        return;
+      }
+      setVoiceText(transcript);
+      await runAssistantCommand(transcript);
+    } catch (error) {
+      setVoiceError(error.message || 'Could not process the voice command.');
+      if (voiceModeRef.current) window.setTimeout(() => startVoiceCapture(), 700);
+    } finally {
+      setProcessingVoice(false);
+    }
+  };
+
+  const startVoiceCapture = async () => {
+    if (!voiceModeRef.current || listening || speaking || processingVoice) return;
+    if (!canRecordVoice) {
+      setVoiceError('Voice mode needs microphone recording support in this browser. You can still type the command.');
+      setVoiceMode(false);
+      voiceModeRef.current = false;
+      return;
+    }
+    try {
+      window.speechSynthesis?.cancel();
+      const stream = mediaStreamRef.current || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      mediaStreamRef.current = stream;
+      const chunks = [];
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+      const recorder = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef.current = recorder;
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) chunks.push(event.data);
+      };
+      recorder.onstop = () => {
+        setListening(false);
+        window.clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+        submitVoiceAudio(new Blob(chunks, { type: mimeType }));
+      };
+
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      const audioContext = audioContextRef.current || new AudioContextClass();
+      audioContextRef.current = audioContext;
+      if (audioContext.state === 'suspended') await audioContext.resume();
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 1024;
+      const source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyser);
+      const samples = new Uint8Array(analyser.fftSize);
+      const watchSilence = () => {
+        if (!voiceModeRef.current || recorder.state !== 'recording') return;
+        analyser.getByteTimeDomainData(samples);
+        const volume = samples.reduce((total, sample) => total + Math.abs(sample - 128), 0) / samples.length;
+        if (volume < 2.8) {
+          if (!silenceTimerRef.current) silenceTimerRef.current = window.setTimeout(() => stopVoiceCapture(), 1250);
+        } else {
+          window.clearTimeout(silenceTimerRef.current);
+          silenceTimerRef.current = null;
+        }
+        window.requestAnimationFrame(watchSilence);
+      };
+
+      setListening(true);
+      recorder.start();
+      window.setTimeout(() => {
+        if (recorder.state === 'recording') stopVoiceCapture();
+      }, 14000);
+      window.requestAnimationFrame(watchSilence);
+    } catch (error) {
+      setListening(false);
+      setVoiceMode(false);
+      voiceModeRef.current = false;
+      setVoiceError(error.message || 'Microphone permission was not granted.');
+    }
+  };
+
   const toggleListening = () => {
     setVoiceError('');
-    if (!SpeechRecognition) {
-      setVoiceError('Voice input is not supported in this browser. You can still type the command.');
+    if (voiceModeRef.current || listening) {
+      stopVoiceMode();
       return;
     }
-    if (listening) {
-      recognitionRef.current?.stop();
-      setListening(false);
-      return;
-    }
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'en-IN';
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    recognition.onstart = () => {
-      window.speechSynthesis?.cancel();
-      setSpeaking(false);
-    };
-    recognition.onresult = (event) => {
-      const transcript = Array.from(event.results).map((result) => result[0].transcript).join(' ');
-      setVoiceText(transcript);
-      const finalResult = Array.from(event.results).every((result) => result.isFinal);
-      if (finalResult) runAssistantCommand(transcript);
-    };
-    recognition.onerror = () => {
-      setVoiceError('Could not capture voice clearly. Please try again.');
-      setListening(false);
-    };
-    recognition.onend = () => setListening(false);
-    recognitionRef.current = recognition;
-    setListening(true);
-    recognition.start();
+    voiceModeRef.current = true;
+    setVoiceMode(true);
+    startVoiceCapture();
   };
 
   return (
@@ -442,14 +630,14 @@ export default function WorkAssignments() {
       </header>
 
       <section className="work-assistant">
-        <div className="work-assistant-head"><Bot size={20} /><div><h2>Work Agent</h2><p>Talk naturally. The agent listens, replies, and completes task actions.</p></div><span className={listening ? 'work-voice-state work-voice-listening' : speaking ? 'work-voice-state work-voice-speaking' : 'work-voice-state'}>{listening ? <Mic size={14} /> : speaking ? <Volume2 size={14} /> : <Sparkles size={14} />}{listening ? 'Listening' : speaking ? 'Speaking' : 'Ready'}</span></div>
+        <div className="work-assistant-head"><Bot size={20} /><div><h2>Work Agent</h2><p>Talk naturally. The agent listens, replies, and completes task actions.</p></div><span className={listening ? 'work-voice-state work-voice-listening' : speaking ? 'work-voice-state work-voice-speaking' : processingVoice ? 'work-voice-state work-voice-processing' : 'work-voice-state'}>{listening ? <Mic size={14} /> : speaking ? <Volume2 size={14} /> : processingVoice ? <LoaderCircle size={14} /> : <Sparkles size={14} />}{listening ? 'Listening' : speaking ? 'Speaking' : processingVoice ? 'Thinking' : voiceMode ? 'Voice Mode' : 'Ready'}</span></div>
         <div className="work-agent-layout">
-          <div className={listening ? 'work-voice-orb is-listening' : speaking ? 'work-voice-orb is-speaking' : 'work-voice-orb'}>
+          <div className={listening ? 'work-voice-orb is-listening' : speaking || processingVoice ? 'work-voice-orb is-speaking' : 'work-voice-orb'}>
             <div className="work-orb-rings"><span /><span /><span /></div>
             <div className="work-wave" aria-hidden="true">{Array.from({ length: 9 }).map((_, index) => <i key={index} />)}</div>
-            <strong>{listening ? 'I am listening' : speaking ? 'Responding' : 'Tap to talk'}</strong>
+            <strong>{listening ? 'Listening until you pause' : processingVoice ? 'Analyzing with OpenAI' : speaking ? 'Responding' : voiceMode ? 'Voice mode on' : 'Start voice mode'}</strong>
             <button type="button" className={listening ? 'work-mic work-mic-live' : 'work-mic'} onClick={toggleListening} title={listening ? 'Stop listening' : 'Start voice input'}>
-              {listening ? <MicOff size={21} /> : <Mic size={21} />}
+              {processingVoice ? <LoaderCircle size={21} /> : listening || voiceMode ? <MicOff size={21} /> : <Mic size={21} />}
             </button>
           </div>
           <div className="work-chatbot">
