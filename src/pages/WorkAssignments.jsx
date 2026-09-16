@@ -20,11 +20,12 @@ import {
   Volume2,
   X,
 } from 'lucide-react';
+import { API_BASE_URL, authHeaders } from '../auth';
 import './WorkAssignments.css';
 
 const STORAGE_KEY = 'nexgtools_work_assignments';
 
-const emptyEmployee = { name: '', phone: '', role: '' };
+const emptyEmployee = { name: '', phone: '', role: '', email: '' };
 const emptyTask = { employeeId: '', title: '', quantity: 1, dueDate: '', priority: 'Medium', status: 'Pending', notes: '' };
 const canRecordVoice = 'MediaRecorder' in window && navigator.mediaDevices?.getUserMedia;
 const canSpeak = 'speechSynthesis' in window;
@@ -262,6 +263,7 @@ export default function WorkAssignments() {
   const [voiceMode, setVoiceMode] = useState(false);
   const [voiceError, setVoiceError] = useState('');
   const [speechVoices, setSpeechVoices] = useState([]);
+  const [syncError, setSyncError] = useState('');
   const mediaRecorderRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const audioContextRef = useRef(null);
@@ -275,6 +277,22 @@ export default function WorkAssignments() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ employees, tasks }));
   }, [employees, tasks]);
+
+  useEffect(() => {
+    const loadAssignments = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/work-assignments`, { headers: authHeaders() });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'Could not load work assignments.');
+        setEmployees(data.employees || []);
+        setTasks(data.tasks || []);
+        setSyncError('');
+      } catch (error) {
+        setSyncError(error.message || 'Could not load work assignments.');
+      }
+    };
+    loadAssignments();
+  }, []);
 
   useEffect(() => () => {
     window.speechSynthesis?.cancel();
@@ -331,26 +349,60 @@ export default function WorkAssignments() {
     setEditingEmployeeId(null);
   };
 
-  const saveEmployee = (event) => {
+  const saveEmployee = async (event) => {
     event.preventDefault();
-    const nextEmployee = { ...employeeDraft, name: normalize(employeeDraft.name), phone: normalize(employeeDraft.phone), role: normalize(employeeDraft.role) };
-    if (!nextEmployee.name || !nextEmployee.phone) return;
+    const nextEmployee = { ...employeeDraft, name: normalize(employeeDraft.name), phone: normalize(employeeDraft.phone), role: normalize(employeeDraft.role), email: normalize(employeeDraft.email).toLowerCase() };
+    if (!nextEmployee.name) return;
     if (editingEmployeeId) {
       setEmployees((current) => current.map((employee) => employee.id === editingEmployeeId ? { ...employee, ...nextEmployee } : employee));
     } else {
-      setEmployees((current) => [{ id: uid(), ...nextEmployee }, ...current]);
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/work-assignments/employees`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify(nextEmployee),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'Could not save employee.');
+        setEmployees((current) => [data.employee, ...current]);
+        setSyncError('');
+      } catch (error) {
+        setSyncError(error.message || 'Could not save employee.');
+        return;
+      }
     }
     resetEmployeeDraft();
   };
 
-  const saveTask = (event) => {
+  const saveTask = async (event) => {
     event.preventDefault();
     if (!taskDraft.employeeId || !normalize(taskDraft.title)) return;
     const nextTask = { ...taskDraft, title: normalize(taskDraft.title), quantity: Math.max(1, Number(taskDraft.quantity) || 1), notes: normalize(taskDraft.notes) };
     if (editingTaskId) {
       setTasks((current) => current.map((task) => task.id === editingTaskId ? { ...task, ...nextTask } : task));
     } else {
-      setTasks((current) => [{ id: uid(), ...nextTask }, ...current]);
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({
+            employee_id: Number(nextTask.employeeId),
+            title: nextTask.title,
+            quantity: nextTask.quantity,
+            due_date: nextTask.dueDate,
+            priority: nextTask.priority,
+            status: nextTask.status,
+            notes: nextTask.notes,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'Could not assign task.');
+        setTasks((current) => [data.task, ...current]);
+        setSyncError('');
+      } catch (error) {
+        setSyncError(error.message || 'Could not assign task.');
+        return;
+      }
     }
     resetTaskDraft();
   };
@@ -366,13 +418,29 @@ export default function WorkAssignments() {
   };
 
   const editEmployee = (employee) => {
-    setEmployeeDraft({ name: employee.name, phone: employee.phone, role: employee.role || '' });
+    setEmployeeDraft({ name: employee.name, phone: employee.phone, role: employee.role || '', email: employee.email || '' });
     setEditingEmployeeId(employee.id);
   };
 
   const editTask = (task) => {
     setTaskDraft({ employeeId: task.employeeId, title: task.title, quantity: task.quantity, dueDate: task.dueDate || '', priority: task.priority, status: task.status, notes: task.notes || '' });
     setEditingTaskId(task.id);
+  };
+
+  const updateTaskStatus = async (taskId, status) => {
+    setTasks((current) => current.map((task) => task.id === taskId ? { ...task, status } : task));
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks/${taskId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ status }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || 'Could not update task status.');
+      setSyncError('');
+    } catch (error) {
+      setSyncError(error.message || 'Could not update task status.');
+    }
   };
 
   const addChatMessage = (role, text) => {
@@ -754,17 +822,19 @@ export default function WorkAssignments() {
           </div>
         </div>
         {voiceError && <p className="work-inline-error"><AlertCircle size={15} /> {voiceError}</p>}
+        {syncError && <p className="work-inline-error"><AlertCircle size={15} /> {syncError}</p>}
       </section>
 
       <div className="work-grid">
         <form className="work-panel" onSubmit={saveEmployee}>
           <div className="work-panel-head"><h2><UserPlus size={19} /> Employees</h2>{editingEmployeeId && <button type="button" onClick={resetEmployeeDraft} title="Cancel employee edit"><X size={16} /></button>}</div>
           <label>Name<input value={employeeDraft.name} onChange={(event) => setEmployeeDraft((draft) => ({ ...draft, name: event.target.value }))} placeholder="Employee name" required /></label>
+          <label>Login email<input type="email" value={employeeDraft.email} onChange={(event) => setEmployeeDraft((draft) => ({ ...draft, email: event.target.value }))} placeholder="employee@nexgpetrolube.com" /></label>
           <label>Phone number<input value={employeeDraft.phone} onChange={(event) => setEmployeeDraft((draft) => ({ ...draft, phone: event.target.value }))} placeholder="WhatsApp/mobile number" required /></label>
           <label>Role<input value={employeeDraft.role} onChange={(event) => setEmployeeDraft((draft) => ({ ...draft, role: event.target.value }))} placeholder="Sales, operations..." /></label>
           <button className="work-primary-btn" type="submit"><Plus size={17} /> {editingEmployeeId ? 'Save Employee' : 'Add Employee'}</button>
           <div className="work-employee-list">
-            {employees.map((employee) => <div key={employee.id} className="work-employee-item"><span><strong>{employee.name}</strong><small><Phone size={13} /> {employee.phone}</small>{employee.role && <em>{employee.role}</em>}</span><div><button type="button" onClick={() => editEmployee(employee)} title="Edit employee"><Edit3 size={15} /></button><button type="button" onClick={() => removeEmployee(employee.id)} title="Delete employee"><Trash2 size={15} /></button></div></div>)}
+            {employees.map((employee) => <div key={employee.id} className="work-employee-item"><span><strong>{employee.name}</strong><small><Phone size={13} /> {employee.phone || '-'}</small>{employee.email && <small>{employee.email}</small>}{employee.role && <em>{employee.role}</em>}</span><div><button type="button" onClick={() => editEmployee(employee)} title="Edit employee"><Edit3 size={15} /></button><button type="button" onClick={() => removeEmployee(employee.id)} title="Delete employee"><Trash2 size={15} /></button></div></div>)}
           </div>
         </form>
 
@@ -796,7 +866,7 @@ export default function WorkAssignments() {
             <tbody>
               {filteredTasks.map((task) => {
                 const employee = employeeById.get(task.employeeId);
-                return <tr key={task.id}><td><strong>{employee?.name || 'Unassigned'}</strong></td><td>{employee?.phone || '-'}</td><td><span>{task.title}</span>{task.notes && <small>{task.notes}</small>}</td><td>{task.quantity}</td><td><CalendarDays size={14} /> {task.dueDate || '-'}</td><td><em className={`work-priority work-priority-${task.priority.toLowerCase()}`}>{task.priority}</em></td><td><select value={task.status} onChange={(event) => setTasks((current) => current.map((item) => item.id === task.id ? { ...item, status: event.target.value } : item))}><option>Pending</option><option>In Progress</option><option>Done</option></select></td><td><div className="work-row-actions"><button type="button" onClick={() => editTask(task)} title="Edit task"><Edit3 size={15} /></button><button type="button" onClick={() => removeTask(task.id)} title="Delete task"><Trash2 size={15} /></button></div></td></tr>;
+                return <tr key={task.id}><td><strong>{employee?.name || task.employeeName || 'Unassigned'}</strong></td><td>{employee?.phone || task.employeePhone || '-'}</td><td><span>{task.title}</span>{task.notes && <small>{task.notes}</small>}</td><td>{task.quantity}</td><td><CalendarDays size={14} /> {task.dueDate || '-'}</td><td><em className={`work-priority work-priority-${task.priority.toLowerCase()}`}>{task.priority}</em></td><td><select value={task.status} onChange={(event) => updateTaskStatus(task.id, event.target.value)}><option>Pending</option><option>In Progress</option><option>Done</option></select></td><td><div className="work-row-actions"><button type="button" onClick={() => editTask(task)} title="Edit task"><Edit3 size={15} /></button><button type="button" onClick={() => removeTask(task.id)} title="Delete task"><Trash2 size={15} /></button></div></td></tr>;
               })}
             </tbody>
           </table>

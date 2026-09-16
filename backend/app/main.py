@@ -41,6 +41,7 @@ from .database import (
     create_session,
     create_admin_session,
     create_user,
+    db_connection,
     database_status,
     delete_admin_record,
     delete_outreach_contact,
@@ -95,6 +96,7 @@ app.add_middleware(
 def startup() -> None:
     try:
         initialize_database()
+        ensure_work_assignment_tables()
         ensure_default_user(
             "NexG Admin",
             settings.default_login_email,
@@ -130,6 +132,95 @@ def config_status() -> dict[str, object]:
         "mysql_database": settings.mysql_database,
         "mysql": database_status(),
     }
+
+
+def ensure_work_assignment_tables() -> None:
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS work_employees (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    created_by_user_id BIGINT UNSIGNED NOT NULL,
+                    user_id BIGINT UNSIGNED NULL,
+                    name VARCHAR(255) NOT NULL,
+                    email VARCHAR(255),
+                    phone VARCHAR(160),
+                    role VARCHAR(160),
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_work_employees_created_by (created_by_user_id),
+                    INDEX idx_work_employees_user (user_id),
+                    INDEX idx_work_employees_email (email),
+                    CONSTRAINT fk_work_employee_creator FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_work_employee_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS work_tasks (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    created_by_user_id BIGINT UNSIGNED NOT NULL,
+                    employee_id BIGINT UNSIGNED NOT NULL,
+                    employee_user_id BIGINT UNSIGNED NULL,
+                    title TEXT NOT NULL,
+                    quantity INT NOT NULL DEFAULT 1,
+                    due_date DATE NULL,
+                    priority VARCHAR(32) NOT NULL DEFAULT 'Medium',
+                    status VARCHAR(32) NOT NULL DEFAULT 'Pending',
+                    notes TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_work_tasks_creator (created_by_user_id),
+                    INDEX idx_work_tasks_employee (employee_id),
+                    INDEX idx_work_tasks_employee_user (employee_user_id),
+                    CONSTRAINT fk_work_task_creator FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_work_task_employee FOREIGN KEY (employee_id) REFERENCES work_employees(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_work_task_employee_user FOREIGN KEY (employee_user_id) REFERENCES users(id) ON DELETE SET NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+
+
+def _work_employee_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(row["id"]),
+        "databaseId": row["id"],
+        "userId": row.get("user_id"),
+        "name": row.get("name") or "",
+        "email": row.get("email") or "",
+        "phone": row.get("phone") or "",
+        "role": row.get("role") or "",
+    }
+
+
+def _work_task_row(row: dict[str, Any]) -> dict[str, Any]:
+    due_date = row.get("due_date")
+    return {
+        "id": str(row["id"]),
+        "databaseId": row["id"],
+        "employeeId": str(row["employee_id"]),
+        "employeeUserId": row.get("employee_user_id"),
+        "title": row.get("title") or "",
+        "quantity": row.get("quantity") or 1,
+        "dueDate": due_date.isoformat() if hasattr(due_date, "isoformat") else (due_date or ""),
+        "priority": row.get("priority") or "Medium",
+        "status": row.get("status") or "Pending",
+        "notes": row.get("notes") or "",
+        "employeeName": row.get("employee_name") or "",
+        "employeeEmail": row.get("employee_email") or "",
+        "employeePhone": row.get("employee_phone") or "",
+    }
+
+
+def _linked_user_id_for_email(cursor: Any, email: str) -> int | None:
+    normalized_email = email.strip().lower()
+    if not normalized_email:
+        return None
+    cursor.execute("SELECT id FROM users WHERE email = %s", (normalized_email,))
+    user = cursor.fetchone()
+    return int(user["id"]) if user else None
 
 
 class LeadSearchRequest(BaseModel):
@@ -246,6 +337,27 @@ class WorkVoiceParseRequest(BaseModel):
 class WorkVoiceSpeechRequest(BaseModel):
     text: str
     voice: str = "marin"
+
+
+class WorkEmployeeRequest(BaseModel):
+    name: str
+    phone: str = ""
+    role: str = ""
+    email: str = ""
+
+
+class WorkTaskRequest(BaseModel):
+    employee_id: int
+    title: str
+    quantity: int = Field(default=1, ge=1)
+    due_date: str = ""
+    priority: str = "Medium"
+    status: str = "Pending"
+    notes: str = ""
+
+
+class WorkTaskStatusRequest(BaseModel):
+    status: str
 
 
 class AuthRequest(BaseModel):
@@ -1446,6 +1558,153 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest) -> dict[str, Any
         parsed["action"] = "none"
     parsed["transcript"] = transcript
     return parsed
+
+
+@app.get("/api/work-assignments")
+def get_work_assignments(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "work_assignments")
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT work_employees.*
+                FROM work_employees
+                WHERE created_by_user_id = %s OR %s
+                ORDER BY name, id
+                """,
+                (user["id"], bool(user.get("is_nexg_admin"))),
+            )
+            employees = [_work_employee_row(row) for row in cursor.fetchall()]
+            cursor.execute(
+                """
+                SELECT work_tasks.*, work_employees.name AS employee_name,
+                       work_employees.email AS employee_email, work_employees.phone AS employee_phone
+                FROM work_tasks
+                JOIN work_employees ON work_employees.id = work_tasks.employee_id
+                WHERE work_tasks.created_by_user_id = %s OR %s
+                ORDER BY work_tasks.created_at DESC, work_tasks.id DESC
+                """,
+                (user["id"], bool(user.get("is_nexg_admin"))),
+            )
+            tasks = [_work_task_row(row) for row in cursor.fetchall()]
+    return {"employees": employees, "tasks": tasks}
+
+
+@app.post("/api/work-assignments/employees", status_code=201)
+def create_work_employee(payload: WorkEmployeeRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "work_assignments")
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Employee name is required.")
+    email = payload.email.strip().lower()
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            linked_user_id = _linked_user_id_for_email(cursor, email)
+            cursor.execute(
+                """
+                INSERT INTO work_employees (created_by_user_id, user_id, name, email, phone, role)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (user["id"], linked_user_id, name, email, payload.phone.strip(), payload.role.strip()),
+            )
+            employee_id = cursor.lastrowid
+            cursor.execute("SELECT * FROM work_employees WHERE id = %s", (employee_id,))
+            employee = _work_employee_row(cursor.fetchone())
+    return {"employee": employee}
+
+
+@app.post("/api/work-assignments/tasks", status_code=201)
+def create_work_task(payload: WorkTaskRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "work_assignments")
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Task title is required.")
+    priority = payload.priority if payload.priority in {"Low", "Medium", "High"} else "Medium"
+    status = payload.status if payload.status in {"Pending", "In Progress", "Done"} else "Pending"
+    due_date = payload.due_date.strip() or None
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM work_employees WHERE id = %s AND (created_by_user_id = %s OR %s)",
+                (payload.employee_id, user["id"], bool(user.get("is_nexg_admin"))),
+            )
+            employee = cursor.fetchone()
+            if not employee:
+                raise HTTPException(status_code=404, detail="Employee not found.")
+            employee_user_id = employee.get("user_id") or _linked_user_id_for_email(cursor, employee.get("email") or "")
+            if employee_user_id and not employee.get("user_id"):
+                cursor.execute("UPDATE work_employees SET user_id = %s WHERE id = %s", (employee_user_id, employee["id"]))
+            cursor.execute(
+                """
+                INSERT INTO work_tasks (created_by_user_id, employee_id, employee_user_id, title, quantity, due_date, priority, status, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (user["id"], employee["id"], employee_user_id, title, payload.quantity, due_date, priority, status, payload.notes.strip()),
+            )
+            task_id = cursor.lastrowid
+            cursor.execute(
+                """
+                SELECT work_tasks.*, work_employees.name AS employee_name,
+                       work_employees.email AS employee_email, work_employees.phone AS employee_phone
+                FROM work_tasks
+                JOIN work_employees ON work_employees.id = work_tasks.employee_id
+                WHERE work_tasks.id = %s
+                """,
+                (task_id,),
+            )
+            task = _work_task_row(cursor.fetchone())
+    return {"task": task}
+
+
+@app.patch("/api/work-assignments/tasks/{task_id}/status")
+def update_work_task_status(task_id: int, payload: WorkTaskStatusRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    status = payload.status if payload.status in {"Pending", "In Progress", "Done"} else ""
+    if not status:
+        raise HTTPException(status_code=400, detail="Invalid task status.")
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT * FROM work_tasks
+                WHERE id = %s AND (created_by_user_id = %s OR employee_user_id = %s OR %s)
+                """,
+                (task_id, user["id"], user["id"], bool(user.get("is_nexg_admin"))),
+            )
+            if not cursor.fetchone():
+                raise HTTPException(status_code=404, detail="Task not found.")
+            cursor.execute("UPDATE work_tasks SET status = %s WHERE id = %s", (status, task_id))
+    return {"updated": True}
+
+
+@app.get("/api/my-tasks")
+def my_work_tasks(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE work_tasks
+                JOIN work_employees ON work_employees.id = work_tasks.employee_id
+                SET work_tasks.employee_user_id = %s, work_employees.user_id = %s
+                WHERE LOWER(work_employees.email) = %s
+                  AND (work_tasks.employee_user_id IS NULL OR work_employees.user_id IS NULL)
+                """,
+                (user["id"], user["id"], user["email"].strip().lower()),
+            )
+            cursor.execute(
+                """
+                SELECT work_tasks.*, work_employees.name AS employee_name,
+                       work_employees.email AS employee_email, work_employees.phone AS employee_phone
+                FROM work_tasks
+                JOIN work_employees ON work_employees.id = work_tasks.employee_id
+                WHERE work_tasks.employee_user_id = %s OR LOWER(work_employees.email) = %s
+                ORDER BY work_tasks.created_at DESC, work_tasks.id DESC
+                """,
+                (user["id"], user["email"].strip().lower()),
+            )
+            tasks = [_work_task_row(row) for row in cursor.fetchall()]
+    return {"tasks": tasks}
 
 
 @app.post("/api/work-assignments/voice/speak")
