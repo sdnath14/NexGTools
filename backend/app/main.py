@@ -243,6 +243,11 @@ class WorkVoiceParseRequest(BaseModel):
     last_employee_id: str = ""
 
 
+class WorkVoiceSpeechRequest(BaseModel):
+    text: str
+    voice: str = "marin"
+
+
 class AuthRequest(BaseModel):
     email: str
     password: str
@@ -1439,6 +1444,53 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest) -> dict[str, Any
         parsed["action"] = "none"
     parsed["transcript"] = transcript
     return parsed
+
+
+@app.post("/api/work-assignments/voice/speak")
+def speak_work_assignment_voice(payload: WorkVoiceSpeechRequest) -> StreamingResponse:
+    if not settings.openai_api_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
+
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required.")
+
+    allowed_voices = {"alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse", "marin", "cedar"}
+    voice = payload.voice if payload.voice in allowed_voices else "marin"
+
+    request = Request(
+        "https://api.openai.com/v1/audio/speech",
+        data=json.dumps(
+            {
+                "model": "gpt-4o-mini-tts",
+                "voice": voice,
+                "input": text[:4096],
+                "response_format": "mp3",
+                "speed": 1,
+                "instructions": "Speak naturally and clearly like a helpful work assistant. Match the user's language when the text is Hindi, Bengali, English, or mixed.",
+            }
+        ).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {settings.openai_api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with urlopen(request, timeout=30) as response:
+            audio = response.read()
+    except HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace")
+        try:
+            message = json.loads(details).get("error", {}).get("message", "OpenAI voice generation failed.")
+        except json.JSONDecodeError:
+            message = "OpenAI voice generation failed."
+        raise HTTPException(status_code=exc.code, detail=message) from exc
+    except URLError as exc:
+        raise HTTPException(status_code=502, detail=f"Could not reach OpenAI voice generation: {exc.reason}") from exc
+
+    return StreamingResponse(BytesIO(audio), media_type="audio/mpeg")
 
 
 def _find_company_website_with_places(name: str, address: str = "") -> str:

@@ -209,6 +209,8 @@ export default function WorkAssignments() {
   const mediaRecorderRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const audioContextRef = useRef(null);
+  const replyAudioRef = useRef(null);
+  const replyAudioUrlRef = useRef('');
   const silenceTimerRef = useRef(null);
   const voiceModeRef = useRef(false);
   const chatEndRef = useRef(null);
@@ -220,6 +222,8 @@ export default function WorkAssignments() {
 
   useEffect(() => () => {
     window.speechSynthesis?.cancel();
+    replyAudioRef.current?.pause();
+    if (replyAudioUrlRef.current) URL.revokeObjectURL(replyAudioUrlRef.current);
     voiceModeRef.current = false;
     window.clearTimeout(silenceTimerRef.current);
     if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
@@ -330,14 +334,14 @@ export default function WorkAssignments() {
     setVoiceMode(false);
     setListening(false);
     stopVoiceCapture();
+    replyAudioRef.current?.pause();
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     mediaStreamRef.current = null;
     audioContextRef.current?.close();
     audioContextRef.current = null;
   };
 
-  const speak = async (message) => {
-    addChatMessage('assistant', message);
+  const speakWithBrowserFallback = async (message) => {
     if (!canSpeak) {
       if (voiceModeRef.current) window.setTimeout(() => startVoiceCapture(), 350);
       return;
@@ -358,6 +362,47 @@ export default function WorkAssignments() {
     };
     utterance.onerror = () => setSpeaking(false);
     window.speechSynthesis.speak(utterance);
+  };
+
+  const speak = async (message) => {
+    addChatMessage('assistant', message);
+    try {
+      window.speechSynthesis?.cancel();
+      replyAudioRef.current?.pause();
+      if (replyAudioUrlRef.current) URL.revokeObjectURL(replyAudioUrlRef.current);
+      setSpeaking(true);
+      const response = await fetch('/api/work-assignments/voice/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: message, voice: 'marin' }),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || 'OpenAI voice generation failed.');
+      }
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      replyAudioUrlRef.current = audioUrl;
+      const audio = new Audio(audioUrl);
+      replyAudioRef.current = audio;
+      audio.onended = () => {
+        setSpeaking(false);
+        URL.revokeObjectURL(audioUrl);
+        if (replyAudioUrlRef.current === audioUrl) replyAudioUrlRef.current = '';
+        if (voiceModeRef.current) window.setTimeout(() => startVoiceCapture(), 350);
+      };
+      audio.onerror = () => {
+        setSpeaking(false);
+        URL.revokeObjectURL(audioUrl);
+        if (replyAudioUrlRef.current === audioUrl) replyAudioUrlRef.current = '';
+        speakWithBrowserFallback(message);
+      };
+      await audio.play();
+    } catch (error) {
+      setSpeaking(false);
+      setVoiceError(error.message || 'OpenAI voice generation failed. Using browser voice fallback.');
+      speakWithBrowserFallback(message);
+    }
   };
 
   const applyAiAction = (command, action) => {
