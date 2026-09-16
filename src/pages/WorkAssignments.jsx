@@ -141,10 +141,51 @@ const getBrowserVoices = () => new Promise((resolve) => {
   window.speechSynthesis.addEventListener('voiceschanged', handleVoicesChanged);
 });
 
+const normalizeForMatch = (value) => String(value || '')
+  .toLowerCase()
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-z0-9\s]/g, ' ')
+  .replace(/\b(?:ji|sir|madam|maam|dada|didi|da|di|babu|boudi|bhai|dadaji)\b/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+const editDistance = (left, right) => {
+  if (left === right) return 0;
+  if (!left) return right.length;
+  if (!right) return left.length;
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= left.length; i += 1) {
+    let lastDiagonal = previous[0];
+    previous[0] = i;
+    for (let j = 1; j <= right.length; j += 1) {
+      const oldDiagonal = previous[j];
+      previous[j] = Math.min(
+        previous[j] + 1,
+        previous[j - 1] + 1,
+        lastDiagonal + (left[i - 1] === right[j - 1] ? 0 : 1),
+      );
+      lastDiagonal = oldDiagonal;
+    }
+  }
+  return previous[right.length];
+};
+
+const wordSimilarity = (left, right) => {
+  const cleanLeft = normalizeForMatch(left);
+  const cleanRight = normalizeForMatch(right);
+  if (!cleanLeft || !cleanRight) return 0;
+  if (cleanLeft === cleanRight) return 1;
+  if (cleanLeft.includes(cleanRight) || cleanRight.includes(cleanLeft)) return 0.92;
+  const distance = editDistance(cleanLeft, cleanRight);
+  return 1 - distance / Math.max(cleanLeft.length, cleanRight.length);
+};
+
 const wordPattern = (word) => new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
 
 const findEmployeeFromCommand = (command, employees, fallbackEmployeeId = '') => {
   const lower = command.toLowerCase();
+  const normalizedCommand = normalizeForMatch(command);
   const sortedEmployees = [...employees].sort((a, b) => b.name.length - a.name.length);
   const namedEmployee = sortedEmployees.find((employee) => {
     const name = employee.name.toLowerCase();
@@ -152,6 +193,21 @@ const findEmployeeFromCommand = (command, employees, fallbackEmployeeId = '') =>
     return wordPattern(name).test(lower) || wordPattern(firstName).test(lower);
   });
   if (namedEmployee) return namedEmployee;
+
+  const scoredEmployees = sortedEmployees
+    .map((employee) => {
+      const normalizedName = normalizeForMatch(employee.name);
+      const nameParts = normalizedName.split(/\s+/).filter(Boolean);
+      const commandWords = normalizedCommand.split(/\s+/).filter(Boolean);
+      const exactPartScore = nameParts.some((part) => commandWords.includes(part)) ? 0.88 : 0;
+      const fuzzyPartScore = Math.max(0, ...nameParts.flatMap((part) => commandWords.map((word) => wordSimilarity(part, word))));
+      const fullNameScore = wordSimilarity(normalizedName, normalizedCommand);
+      return { employee, score: Math.max(exactPartScore, fuzzyPartScore, fullNameScore) };
+    })
+    .sort((a, b) => b.score - a.score);
+  if (scoredEmployees[0]?.score >= 0.78 && scoredEmployees[0].score - (scoredEmployees[1]?.score || 0) >= 0.08) {
+    return scoredEmployees[0].employee;
+  }
 
   if (/\b(?:her|him|them|that employee|same employee)\b/i.test(command)) {
     return employees.find((employee) => employee.id === fallbackEmployeeId) || (employees.length === 1 ? employees[0] : null);
@@ -437,7 +493,8 @@ export default function WorkAssignments() {
 
     if (action.action === 'assign_task') {
       const employee = employees.find((item) => item.id === action.employeeId)
-        || findEmployeeFromCommand(`${action.employeeName || ''} ${command}`, employees, lastEmployeeRef.current);
+        || findEmployeeFromCommand(action.employeeName || '', employees, lastEmployeeRef.current)
+        || findEmployeeFromCommand(command, employees, lastEmployeeRef.current);
       const title = cleanTaskTitle(action.taskTitle || '');
       if (!employee || !title) {
         speak(action.reply || 'I need the employee and task before I can assign it.');
