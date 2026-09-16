@@ -278,6 +278,15 @@ def _linked_user_id_for_email(cursor: Any, email: str) -> int | None:
     return int(user["id"]) if user else None
 
 
+def _default_admin_user_id(cursor: Any) -> int | None:
+    email = settings.default_login_email.strip().lower()
+    if not email:
+        return None
+    cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+    user = cursor.fetchone()
+    return int(user["id"]) if user else None
+
+
 class LeadSearchRequest(BaseModel):
     company_name: str = ""
     pincode: str = ""
@@ -1743,15 +1752,22 @@ def update_work_task_status(task_id: int, payload: WorkTaskStatusRequest, author
             if not task:
                 raise HTTPException(status_code=404, detail="Task not found.")
             cursor.execute("UPDATE work_tasks SET status = %s WHERE id = %s", (status, task_id))
-            if status == "Done" and task.get("status") != "Done" and int(task["created_by_user_id"]) != int(user["id"]):
+            if status == "Done" and task.get("status") != "Done":
                 message = f"{task.get('employee_name') or user.get('name') or 'Employee'} completed: {task.get('title') or 'Task'}"
-                cursor.execute(
-                    """
-                    INSERT INTO work_task_notifications (task_id, recipient_user_id, actor_user_id, event_type, message)
-                    VALUES (%s, %s, %s, 'task_completed', %s)
-                    """,
-                    (task_id, task["created_by_user_id"], user["id"], message),
-                )
+                recipient_ids = {int(task["created_by_user_id"])}
+                admin_user_id = _default_admin_user_id(cursor)
+                if admin_user_id:
+                    recipient_ids.add(admin_user_id)
+                for recipient_id in recipient_ids:
+                    if recipient_id == int(user["id"]):
+                        continue
+                    cursor.execute(
+                        """
+                        INSERT INTO work_task_notifications (task_id, recipient_user_id, actor_user_id, event_type, message)
+                        VALUES (%s, %s, %s, 'task_completed', %s)
+                        """,
+                        (task_id, recipient_id, user["id"], message),
+                    )
     return {"updated": True}
 
 
