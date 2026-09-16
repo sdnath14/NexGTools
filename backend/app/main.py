@@ -181,6 +181,43 @@ def ensure_work_assignment_tables() -> None:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS work_task_assignees (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    task_id BIGINT UNSIGNED NOT NULL,
+                    user_id BIGINT UNSIGNED NOT NULL,
+                    assigned_by_user_id BIGINT UNSIGNED NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_work_task_user (task_id, user_id),
+                    INDEX idx_work_task_assignees_user (user_id),
+                    INDEX idx_work_task_assignees_assigner (assigned_by_user_id),
+                    CONSTRAINT fk_work_task_assignee_task FOREIGN KEY (task_id) REFERENCES work_tasks(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_work_task_assignee_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_work_task_assignee_assigner FOREIGN KEY (assigned_by_user_id) REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+            cursor.execute(
+                """
+                INSERT IGNORE INTO work_task_assignees (task_id, user_id, assigned_by_user_id)
+                SELECT work_tasks.id, users.id, work_tasks.created_by_user_id
+                FROM work_tasks
+                JOIN work_employees ON work_employees.id = work_tasks.employee_id
+                JOIN users ON LOWER(users.email) = LOWER(work_employees.email)
+                WHERE work_employees.email IS NOT NULL AND work_employees.email <> ''
+                """
+            )
+            cursor.execute(
+                """
+                UPDATE work_employees
+                JOIN users ON LOWER(users.email) = LOWER(work_employees.email)
+                SET work_employees.user_id = users.id
+                WHERE work_employees.email IS NOT NULL
+                  AND work_employees.email <> ''
+                  AND work_employees.user_id IS NULL
+                """
+            )
 
 
 def _work_employee_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -1642,6 +1679,14 @@ def create_work_task(payload: WorkTaskRequest, authorization: str | None = Heade
                 (user["id"], employee["id"], employee_user_id, title, payload.quantity, due_date, priority, status, payload.notes.strip()),
             )
             task_id = cursor.lastrowid
+            if employee_user_id:
+                cursor.execute(
+                    """
+                    INSERT IGNORE INTO work_task_assignees (task_id, user_id, assigned_by_user_id)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (task_id, employee_user_id, user["id"]),
+                )
             cursor.execute(
                 """
                 SELECT work_tasks.*, work_employees.name AS employee_name,
@@ -1666,10 +1711,13 @@ def update_work_task_status(task_id: int, payload: WorkTaskStatusRequest, author
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT * FROM work_tasks
-                WHERE id = %s AND (created_by_user_id = %s OR employee_user_id = %s OR %s)
+                SELECT work_tasks.id
+                FROM work_tasks
+                LEFT JOIN work_task_assignees ON work_task_assignees.task_id = work_tasks.id
+                WHERE work_tasks.id = %s
+                  AND (work_tasks.created_by_user_id = %s OR work_task_assignees.user_id = %s OR work_tasks.employee_user_id = %s OR %s)
                 """,
-                (task_id, user["id"], user["id"], bool(user.get("is_nexg_admin"))),
+                (task_id, user["id"], user["id"], user["id"], bool(user.get("is_nexg_admin"))),
             )
             if not cursor.fetchone():
                 raise HTTPException(status_code=404, detail="Task not found.")
@@ -1694,14 +1742,25 @@ def my_work_tasks(authorization: str | None = Header(default=None)) -> dict[str,
             )
             cursor.execute(
                 """
+                INSERT IGNORE INTO work_task_assignees (task_id, user_id, assigned_by_user_id)
+                SELECT work_tasks.id, %s, work_tasks.created_by_user_id
+                FROM work_tasks
+                JOIN work_employees ON work_employees.id = work_tasks.employee_id
+                WHERE LOWER(work_employees.email) = %s
+                """,
+                (user["id"], user["email"].strip().lower()),
+            )
+            cursor.execute(
+                """
                 SELECT work_tasks.*, work_employees.name AS employee_name,
                        work_employees.email AS employee_email, work_employees.phone AS employee_phone
                 FROM work_tasks
                 JOIN work_employees ON work_employees.id = work_tasks.employee_id
-                WHERE work_tasks.employee_user_id = %s OR LOWER(work_employees.email) = %s OR %s
+                LEFT JOIN work_task_assignees ON work_task_assignees.task_id = work_tasks.id
+                WHERE work_task_assignees.user_id = %s OR work_tasks.employee_user_id = %s OR LOWER(work_employees.email) = %s OR %s
                 ORDER BY work_tasks.created_at DESC, work_tasks.id DESC
                 """,
-                (user["id"], user["email"].strip().lower(), bool(user.get("is_nexg_admin"))),
+                (user["id"], user["id"], user["email"].strip().lower(), bool(user.get("is_nexg_admin"))),
             )
             tasks = [_work_task_row(row) for row in cursor.fetchall()]
     return {"tasks": tasks}
