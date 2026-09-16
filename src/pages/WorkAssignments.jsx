@@ -349,6 +349,40 @@ export default function WorkAssignments() {
     setEditingEmployeeId(null);
   };
 
+  const createEmployeeOnServer = async (employee) => {
+    const response = await fetch(`${API_BASE_URL}/api/work-assignments/employees`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(employee),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Could not save employee.');
+    setEmployees((current) => [data.employee, ...current]);
+    setSyncError('');
+    return data.employee;
+  };
+
+  const createTaskOnServer = async (task) => {
+    const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({
+        employee_id: Number(task.employeeId),
+        title: task.title,
+        quantity: task.quantity,
+        due_date: task.dueDate,
+        priority: task.priority,
+        status: task.status,
+        notes: task.notes,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Could not assign task.');
+    setTasks((current) => [data.task, ...current]);
+    setSyncError('');
+    return data.task;
+  };
+
   const saveEmployee = async (event) => {
     event.preventDefault();
     const nextEmployee = { ...employeeDraft, name: normalize(employeeDraft.name), phone: normalize(employeeDraft.phone), role: normalize(employeeDraft.role), email: normalize(employeeDraft.email).toLowerCase() };
@@ -357,15 +391,7 @@ export default function WorkAssignments() {
       setEmployees((current) => current.map((employee) => employee.id === editingEmployeeId ? { ...employee, ...nextEmployee } : employee));
     } else {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/work-assignments/employees`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify(nextEmployee),
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || 'Could not save employee.');
-        setEmployees((current) => [data.employee, ...current]);
-        setSyncError('');
+        await createEmployeeOnServer(nextEmployee);
       } catch (error) {
         setSyncError(error.message || 'Could not save employee.');
         return;
@@ -382,23 +408,7 @@ export default function WorkAssignments() {
       setTasks((current) => current.map((task) => task.id === editingTaskId ? { ...task, ...nextTask } : task));
     } else {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({
-            employee_id: Number(nextTask.employeeId),
-            title: nextTask.title,
-            quantity: nextTask.quantity,
-            due_date: nextTask.dueDate,
-            priority: nextTask.priority,
-            status: nextTask.status,
-            notes: nextTask.notes,
-          }),
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || 'Could not assign task.');
-        setTasks((current) => [data.task, ...current]);
-        setSyncError('');
+        await createTaskOnServer(nextTask);
       } catch (error) {
         setSyncError(error.message || 'Could not assign task.');
         return;
@@ -529,7 +539,7 @@ export default function WorkAssignments() {
     }
   };
 
-  const applyAiAction = (command, action) => {
+  const applyAiAction = async (command, action) => {
     if (!action || action.action === 'none') return false;
 
     if (action.action === 'add_employee') {
@@ -539,9 +549,13 @@ export default function WorkAssignments() {
         speak(action.reply || 'I can add the employee, but I need both name and phone number.');
         return true;
       }
-      const employee = { id: uid(), name, phone, role: '' };
-      setEmployees((current) => [employee, ...current]);
-      speak(action.reply || `Okay. I added ${employee.name} with number ${employee.phone}.`);
+      try {
+        const employee = await createEmployeeOnServer({ name, phone, role: '', email: normalize(action.email).toLowerCase() });
+        speak(action.reply || `Okay. I added ${employee.name} with number ${employee.phone}.`);
+      } catch (error) {
+        setSyncError(error.message || 'Could not save employee.');
+        speak('I understood the employee, but could not save it to the database.');
+      }
       return true;
     }
 
@@ -570,7 +584,6 @@ export default function WorkAssignments() {
       }
       lastEmployeeRef.current = employee.id;
       const task = {
-        id: uid(),
         employeeId: employee.id,
         title,
         quantity: Math.max(1, Number(action.quantity) || 1),
@@ -579,8 +592,13 @@ export default function WorkAssignments() {
         status: 'Pending',
         notes: `Created by OpenAI voice assistant from: "${command}"`,
       };
-      setTasks((current) => [task, ...current]);
-      speak(action.reply || `Okay, assigning ${task.title} to ${employee.name}.`);
+      try {
+        const savedTask = await createTaskOnServer(task);
+        speak(action.reply || `Okay, assigning ${savedTask.title} to ${employee.name}.`);
+      } catch (error) {
+        setSyncError(error.message || 'Could not save task.');
+        speak('I understood the task, but could not save it to the database.');
+      }
       return true;
     }
 
@@ -622,7 +640,7 @@ export default function WorkAssignments() {
     if (!options.skipAi) {
       try {
         const action = await parseCommandWithOpenAi(command);
-        if (applyAiAction(command, action)) return;
+        if (await applyAiAction(command, action)) return;
       } catch (error) {
         setVoiceError(error.message || 'OpenAI could not analyze the command. Using the local fallback.');
       }
