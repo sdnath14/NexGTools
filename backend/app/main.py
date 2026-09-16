@@ -1698,10 +1698,10 @@ def my_work_tasks(authorization: str | None = Header(default=None)) -> dict[str,
                        work_employees.email AS employee_email, work_employees.phone AS employee_phone
                 FROM work_tasks
                 JOIN work_employees ON work_employees.id = work_tasks.employee_id
-                WHERE work_tasks.employee_user_id = %s OR LOWER(work_employees.email) = %s
+                WHERE work_tasks.employee_user_id = %s OR LOWER(work_employees.email) = %s OR %s
                 ORDER BY work_tasks.created_at DESC, work_tasks.id DESC
                 """,
-                (user["id"], user["email"].strip().lower()),
+                (user["id"], user["email"].strip().lower(), bool(user.get("is_nexg_admin"))),
             )
             tasks = [_work_task_row(row) for row in cursor.fetchall()]
     return {"tasks": tasks}

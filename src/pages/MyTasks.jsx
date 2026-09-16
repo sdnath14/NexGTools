@@ -1,16 +1,22 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, CheckCircle2, ClipboardList, LoaderCircle } from 'lucide-react';
-import { API_BASE_URL, authHeaders } from '../auth';
+import { API_BASE_URL, AUTH_TOKEN_KEY, authHeaders } from '../auth';
 import './WorkAssignments.css';
 
 export default function MyTasks() {
   const [tasks, setTasks] = useState([]);
+  const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
     const loadTasks = async () => {
       try {
+        if (localStorage.getItem(AUTH_TOKEN_KEY)) {
+          const meResponse = await fetch(`${API_BASE_URL}/api/auth/me`, { headers: authHeaders() });
+          const meData = await meResponse.json();
+          if (meResponse.ok) setUser(meData.user);
+        }
         const response = await fetch(`${API_BASE_URL}/api/my-tasks`, { headers: authHeaders() });
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || 'Could not load your tasks.');
@@ -29,6 +35,8 @@ export default function MyTasks() {
     progress: tasks.filter((task) => task.status === 'In Progress').length,
     done: tasks.filter((task) => task.status === 'Done').length,
   }), [tasks]);
+
+  const isAdminView = Boolean(user?.is_nexg_admin);
 
   const updateStatus = async (taskId, status) => {
     setTasks((current) => current.map((task) => task.id === taskId ? { ...task, status } : task));
@@ -51,8 +59,8 @@ export default function MyTasks() {
       <header className="work-hero">
         <div>
           <span>Employee Task Bar</span>
-          <h1>My assigned work</h1>
-          <p>Tasks assigned to your employee profile appear here when your login email matches the employee email.</p>
+          <h1>{isAdminView ? 'Team assigned work' : 'My assigned work'}</h1>
+          <p>{isAdminView ? 'Admin can review every employee task from this task bar.' : 'Tasks assigned to your employee profile appear here when your login email matches the employee email.'}</p>
         </div>
         <div className="work-hero-stats">
           <div><ClipboardList size={18} /><strong>{tasks.length}</strong><small>Total</small></div>
@@ -69,10 +77,11 @@ export default function MyTasks() {
         {loading ? <div className="work-empty">Loading tasks...</div> : (
           <div className="work-table-scroll">
             <table className="work-table">
-              <thead><tr><th>Task</th><th>Qty</th><th>Due</th><th>Priority</th><th>Status</th></tr></thead>
+              <thead><tr>{isAdminView && <th>Employee</th>}<th>Task</th><th>Qty</th><th>Due</th><th>Priority</th><th>Status</th></tr></thead>
               <tbody>
                 {tasks.map((task) => (
                   <tr key={task.id}>
+                    {isAdminView && <td><strong>{task.employeeName || '-'}</strong><small>{task.employeeEmail || ''}</small></td>}
                     <td><span>{task.title}</span>{task.notes && <small>{task.notes}</small>}</td>
                     <td>{task.quantity}</td>
                     <td><CalendarDays size={14} /> {task.dueDate || '-'}</td>
