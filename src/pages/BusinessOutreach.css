@@ -629,10 +629,10 @@
 .bo-draft-card {
   width: min(690px, 100%);
   overflow: hidden;
-  border: 1px solid #fed7aa;
-  border-radius: 10px;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
   background: #fff;
-  box-shadow: 0 10px 18px rgba(154, 52, 18, .08);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, .1);
 }
 
 .bo-draft-head {
@@ -642,7 +642,8 @@
   align-items: center;
   gap: 10px;
   padding: 0 16px;
-  background: #ffedd5;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f6f8fc;
 }
 
 .bo-draft-head > span {
@@ -676,12 +677,12 @@
 
 .bo-draft-card textarea {
   width: 100%;
-  min-height: 260px;
+  min-height: 300px;
   box-sizing: border-box;
   border: 0;
   outline: 0;
   resize: vertical;
-  padding: 18px;
+  padding: 18px 20px;
   color: #07152b;
   font: inherit;
   line-height: 1.7;
@@ -689,17 +690,18 @@
 
 .bo-email-fields {
   display: grid;
-  gap: 8px;
-  margin: 12px 16px 0;
+  gap: 0;
+  margin: 0 20px;
 }
 
 .bo-subject {
-  width: calc(100% - 32px);
+  width: 100%;
   box-sizing: border-box;
-  border: 1px solid #fed7aa;
-  border-radius: 6px;
+  border: 0;
+  border-bottom: 1px solid #e5e7eb;
+  border-radius: 0;
   outline: 0;
-  padding: 10px 12px;
+  padding: 12px 0;
   color: #07152b;
   font: inherit;
 }
@@ -711,7 +713,8 @@
 .bo-copy-fields {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 0;
+  border-bottom: 1px solid #e5e7eb;
 }
 
 .bo-copy-fields label {
@@ -720,10 +723,16 @@
   grid-template-columns: auto 1fr;
   align-items: center;
   gap: 8px;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  background: #f8fafc;
-  padding: 0 10px;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  padding: 0;
+}
+
+.bo-copy-fields label + label {
+  margin-left: 14px;
+  padding-left: 14px;
+  border-left: 1px solid #e5e7eb;
 }
 
 .bo-copy-fields span {
@@ -833,9 +842,10 @@
   grid-template-columns: 1fr 34px;
   align-items: center;
   gap: 8px;
-  margin: 0 16px 12px;
+  margin: 0 20px 14px;
+  border: 1px solid #e5e7eb;
   border-radius: 6px;
-  background: #fff7ed;
+  background: #f8fafc;
   padding-left: 12px;
 }
 

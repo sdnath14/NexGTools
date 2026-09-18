@@ -74,6 +74,25 @@ const campaignTemplates = [
 
 const emptyLead = { company_name: '', contact_person: '', email: '', phone: '', website: '', category: 'manual' };
 
+const cleanGeneratedDraft = (value, fallbackSubject = 'Business invitation') => {
+  const source = typeof value === 'object' && value !== null ? value : { message: value };
+  let subject = String(source.subject || fallbackSubject).trim();
+  let message = String(source.message || '').trim();
+  const unfenced = message.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  if (unfenced.startsWith('{') && unfenced.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(unfenced);
+      if (parsed && typeof parsed === 'object') {
+        subject = String(parsed.subject || subject).trim();
+        message = String(parsed.message || '').trim();
+      }
+    } catch {
+      message = unfenced;
+    }
+  }
+  return { subject, message: message.replace(/\\n/g, '\n') };
+};
+
 const generalBusinessEmail = (brandName, senderName, senderEmail) => `Hi {{contact_person}},
 
 I hope you are doing well.
@@ -136,7 +155,7 @@ export default function BusinessOutreach() {
   const [ccEmail, setCcEmail] = useState('');
   const [bccEmailInput, setBccEmailInput] = useState('');
   const [bccEmails, setBccEmails] = useState([]);
-  const [draft, setDraft] = useState(() => localStorage.getItem('nexgtools_business_outreach_draft') || '');
+  const [draft, setDraft] = useState(() => cleanGeneratedDraft(localStorage.getItem('nexgtools_business_outreach_draft') || '').message);
   const [rewritePrompt, setRewritePrompt] = useState('');
   const [newLead, setNewLead] = useState(emptyLead);
   const [leadModalOpen, setLeadModalOpen] = useState(false);
@@ -518,6 +537,10 @@ export default function BusinessOutreach() {
       setActiveTab('leads');
       return;
     }
+    if (channel === 'email' && selectedChannelLeads.length > 100) {
+      setError(`Select no more than 100 email recipients per batch. You currently have ${selectedChannelLeads.length} selected.`);
+      return;
+    }
     if (rewrite && (!rewritePrompt.trim() || !draft.trim())) return;
     const setBusy = rewrite ? setRewriting : setGenerating;
     setBusy(true);
@@ -541,9 +564,10 @@ export default function BusinessOutreach() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not generate outreach content.');
-      if (channel === 'email' && data.subject) setSubject(data.subject);
-      setDraft(data.message || '');
-      localStorage.setItem('nexgtools_business_outreach_draft', data.message || '');
+      const generated = cleanGeneratedDraft(data, subject);
+      if (channel === 'email' && generated.subject) setSubject(generated.subject);
+      setDraft(generated.message);
+      localStorage.setItem('nexgtools_business_outreach_draft', generated.message);
       setRewritePrompt('');
       setNotice(rewrite ? 'Draft rewritten with OpenAI.' : 'Draft generated with OpenAI.');
       setActiveTab('editor');
@@ -592,10 +616,11 @@ export default function BusinessOutreach() {
   };
 
   const loadDraftFromHistory = (item) => {
+    const loaded = cleanGeneratedDraft(item, item.subject || 'Business invitation');
     setChannel(item.channel || 'email');
-    setSubject(item.subject || 'Business invitation');
-    setDraft(item.message || '');
-    localStorage.setItem('nexgtools_business_outreach_draft', item.message || '');
+    setSubject(loaded.subject);
+    setDraft(loaded.message);
+    localStorage.setItem('nexgtools_business_outreach_draft', loaded.message);
     setSelectedLeadIds((item.contact_ids || []).filter((id) => leads.some((lead) => lead.id === id)));
     setNotice('Draft loaded.');
   };
@@ -654,7 +679,7 @@ export default function BusinessOutreach() {
           reply_to_email: sender.email || '',
           cc_email: ccEmail,
           bcc_email: extraBccEmails.join(', '),
-          use_selected_leads_as_bcc: channel === 'email' && selectedBccEmails.length > 1,
+          use_selected_leads_as_bcc: false,
         }),
       });
       const data = await response.json();
@@ -913,8 +938,8 @@ export default function BusinessOutreach() {
                 )}
                 {selectedBccEmails.length > 1 && (
                   <div className="bo-auto-bcc">
-                    <span>Auto BCC</span>
-                    <em>{selectedBccEmails.join(', ')}</em>
+                    <span>Individual delivery</span>
+                    <em>{selectedBccEmails.length} private, personalized emails will be sent separately.</em>
                   </div>
                 )}
               </div>
