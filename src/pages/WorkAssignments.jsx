@@ -627,12 +627,14 @@ export default function WorkAssignments({ userId }) {
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
       const samples = new Uint8Array(analyser.fftSize);
+      let heardSpeech = false;
       const watchSilence = () => {
         if (!voiceModeRef.current || recorder.state !== 'recording') return;
         analyser.getByteTimeDomainData(samples);
         const volume = samples.reduce((total, sample) => total + Math.abs(sample - 128), 0) / samples.length;
-        if (volume < 2.8) {
-          if (!silenceTimerRef.current) silenceTimerRef.current = window.setTimeout(() => stopVoiceCapture(), 1250);
+        if (volume >= 2.8) heardSpeech = true;
+        if (heardSpeech && volume < 2.8) {
+          if (!silenceTimerRef.current) silenceTimerRef.current = window.setTimeout(() => stopVoiceCapture(), 2300);
         } else {
           window.clearTimeout(silenceTimerRef.current);
           silenceTimerRef.current = null;

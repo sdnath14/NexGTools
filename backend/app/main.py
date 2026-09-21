@@ -1540,8 +1540,9 @@ async def transcribe_work_assignment_voice(file: UploadFile = File(...), authori
             model="gpt-4o-transcribe",
             file=audio_file,
             prompt=(
-                "Transcribe a workplace task assignment accurately in the language spoken, including mixed languages. "
-                "Keep employee names, dates, numbers, and task wording exact. Do not add words that were not spoken."
+                "The speaker may use English, Hindi, Bengali, Hinglish, or Banglish. "
+                "Write only the words actually spoken, in the spoken language and script. "
+                "Keep names, numbers, and dates as heard. Do not translate, complete, or guess missing words."
             ),
         )
     except Exception as exc:
@@ -1602,11 +1603,15 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest, authorization: s
                 "Resolve relative dates using today, including aaj/today, kal/tomorrow when it clearly means tomorrow, "
                 "agami kal, parshu, aj, kal, aajke, agamikal, porshu, next week, and similar phrases. "
                 "Normalize taskTitle into concise English for storing in the app, but keep proper names exact. "
+                "The taskTitle must express the specific work requested in the current turn or unambiguous recent user history, including its object and action. "
+                "Do not substitute a generic task such as send report when the speaker requested something else. "
+                "If the actual task wording is unclear, choose clarify and ask the user to repeat it. "
+                "For assign_task, include taskSourceQuote copied exactly from the current transcript or a recent user turn that states the work. "
                 "For general conversation or a question, choose none and write a helpful reply grounded in the conversation. "
                 "Make reply short and in the user's main spoken language when possible. "
                 "Schema: {\"action\":\"assign_task|add_employee|update_status|clarify|none\","
                 "\"employeeId\":\"\",\"employeeName\":\"\",\"phone\":\"\",\"taskTitle\":\"\","
-                "\"quantity\":1,\"dueDate\":\"YYYY-MM-DD or empty\",\"priority\":\"Low|Medium|High\","
+                "\"taskSourceQuote\":\"exact words from transcript or recent user turn\",\"quantity\":1,\"dueDate\":\"YYYY-MM-DD or empty\",\"priority\":\"Low|Medium|High\","
                 "\"status\":\"Pending|In Progress|Done\",\"taskId\":\"\",\"reply\":\"short spoken response\"}."
             ),
         },
@@ -1634,6 +1639,15 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest, authorization: s
     action = str(parsed.get("action", "none"))
     if action not in {"assign_task", "add_employee", "update_status", "clarify", "none"}:
         parsed["action"] = "none"
+    if parsed.get("action") == "assign_task":
+        source_quote = str(parsed.get("taskSourceQuote") or "").strip()
+        task_title = str(parsed.get("taskTitle") or "").strip()
+        user_turns = [transcript, *(turn["text"] for turn in conversation if turn["role"] == "user")]
+        if not source_quote or not any(source_quote.casefold() in turn.casefold() for turn in user_turns) or not task_title:
+            parsed = {
+                "action": "clarify",
+                "reply": "I could not clearly identify the task. Please repeat the task and employee name.",
+            }
     parsed["transcript"] = transcript
     return parsed
 
