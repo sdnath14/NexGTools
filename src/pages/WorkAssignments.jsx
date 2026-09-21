@@ -23,7 +23,7 @@ import {
 import { API_BASE_URL, authHeaders } from '../auth';
 import './WorkAssignments.css';
 
-const emptyEmployee = { name: '', phone: '', role: '', email: '' };
+const emptyEmployee = { name: '', phone: '', whatsapp_number: '', role: '', email: '' };
 const emptyTask = { employeeId: '', title: '', quantity: 1, dueDate: '', priority: 'Medium', status: 'Pending', notes: '' };
 const canRecordVoice = 'MediaRecorder' in window && navigator.mediaDevices?.getUserMedia;
 const canSpeak = 'speechSynthesis' in window;
@@ -251,7 +251,9 @@ export default function WorkAssignments({ userId }) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Could not assign task.');
     setTasks((current) => [data.task, ...current]);
-    const delivery = `Assignment saved. ${emailDeliveryMessage(data.email_status, data.task)}`;
+    const whatsapp = data.notifications?.whatsapp;
+    const whatsappMessage = whatsapp?.success ? ' WhatsApp sent.' : whatsapp?.error ? ` WhatsApp: ${whatsapp.error}.` : '';
+    const delivery = `Assignment saved. ${emailDeliveryMessage(data.email_status, data.task)}${whatsappMessage}`;
     setAssignmentNotice(delivery);
     setSyncError('');
     return { ...data.task, emailStatus: data.email_status, deliveryMessage: delivery };
@@ -259,10 +261,21 @@ export default function WorkAssignments({ userId }) {
 
   const saveEmployee = async (event) => {
     event.preventDefault();
-    const nextEmployee = { ...employeeDraft, name: normalize(employeeDraft.name), phone: normalize(employeeDraft.phone), role: normalize(employeeDraft.role), email: normalize(employeeDraft.email).toLowerCase() };
+    const nextEmployee = { ...employeeDraft, name: normalize(employeeDraft.name), phone: normalize(employeeDraft.phone), whatsapp_number: normalize(employeeDraft.whatsapp_number), role: normalize(employeeDraft.role), email: normalize(employeeDraft.email).toLowerCase() };
     if (!nextEmployee.name) return;
     if (editingEmployeeId) {
-      setEmployees((current) => current.map((employee) => employee.id === editingEmployeeId ? { ...employee, ...nextEmployee } : employee));
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/work-assignments/employees/${editingEmployeeId}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(nextEmployee),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'Could not update employee.');
+        setEmployees((current) => current.map((employee) => employee.id === editingEmployeeId ? data.employee : employee));
+        setSyncError('');
+      } catch (error) {
+        setSyncError(error.message || 'Could not update employee.');
+        return;
+      }
     } else {
       try {
         await createEmployeeOnServer(nextEmployee);
@@ -282,7 +295,9 @@ export default function WorkAssignments({ userId }) {
       setTasks((current) => current.map((task) => task.id === editingTaskId ? { ...task, ...nextTask } : task));
     } else {
       try {
-        await createTaskOnServer(nextTask);
+        const savedTask = await createTaskOnServer(nextTask);
+        const failures = Object.entries(savedTask.notifications || {}).filter(([, result]) => !result.success).map(([channel, result]) => `${channel}: ${result.error}`);
+        if (failures.length) setSyncError(`Task saved. ${failures.join('; ')}`);
       } catch (error) {
         setSyncError(error.message || 'Could not assign task.');
         return;
@@ -329,7 +344,7 @@ export default function WorkAssignments({ userId }) {
   };
 
   const editEmployee = (employee) => {
-    setEmployeeDraft({ name: employee.name, phone: employee.phone, role: employee.role || '', email: employee.email || '' });
+    setEmployeeDraft({ name: employee.name, phone: employee.phone, whatsapp_number: employee.whatsappNumber || '', role: employee.role || '', email: employee.email || '' });
     setEditingEmployeeId(employee.id);
   };
 
@@ -716,6 +731,7 @@ export default function WorkAssignments({ userId }) {
           <label>Name<input value={employeeDraft.name} onChange={(event) => setEmployeeDraft((draft) => ({ ...draft, name: event.target.value }))} placeholder="Employee name" required /></label>
           <label>Login email<input type="email" value={employeeDraft.email} onChange={(event) => setEmployeeDraft((draft) => ({ ...draft, email: event.target.value }))} placeholder="employee@nexgpetrolube.com" /></label>
           <label>Phone number<input value={employeeDraft.phone} onChange={(event) => setEmployeeDraft((draft) => ({ ...draft, phone: event.target.value }))} placeholder="WhatsApp/mobile number" required /></label>
+          <label>WhatsApp number<input value={employeeDraft.whatsapp_number} onChange={(event) => setEmployeeDraft((draft) => ({ ...draft, whatsapp_number: event.target.value }))} placeholder="Optional; uses phone number if blank" /></label>
           <label>Role<input value={employeeDraft.role} onChange={(event) => setEmployeeDraft((draft) => ({ ...draft, role: event.target.value }))} placeholder="Sales, operations..." /></label>
           <button className="work-primary-btn" type="submit"><Plus size={17} /> {editingEmployeeId ? 'Save Employee' : 'Add Employee'}</button>
           <div className="work-employee-list">

@@ -82,3 +82,30 @@ Open <http://localhost:8000/health>. A working database reports:
 ```
 
 Never commit `.env`; it contains private API keys and passwords.
+
+## WhatsApp task notifications
+
+Task creation saves the task first, then attempts a Meta WhatsApp template message and an email. The response includes `notifications.whatsapp` with `success` and either `message_id` or `error`, plus `email_status`. A delivery failure leaves the saved task intact. The voice assistant uses the same task route and reports the send result.
+
+Add these server-side values to the root `.env`:
+
+```dotenv
+WHATSAPP_ACCESS_TOKEN=
+WHATSAPP_PHONE_NUMBER_ID=
+WHATSAPP_BUSINESS_ACCOUNT_ID=
+WHATSAPP_VERIFY_TOKEN=
+WHATSAPP_API_VERSION=v23.0
+WHATSAPP_TASK_TEMPLATE_NAME=employee_task_assignment
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USERNAME=
+SMTP_PASSWORD=
+SMTP_FROM_EMAIL=
+SMTP_USE_TLS=true
+```
+
+In Meta's WhatsApp Business Platform setup, obtain the phone number ID and access token for your sending number. Create and get approval for an English (`en`) message template named `employee_task_assignment` with three body parameters in order: employee name, task, and due date. Set the webhook callback URL to `https://YOUR_PUBLIC_HOST/webhook/whatsapp`, use the same verify token as `.env`, and subscribe to message events for status updates. The business account ID is stored in configuration for account setup; sending uses the phone number ID. Meta must be able to reach the callback over public HTTPS.
+
+Start the backend with `.venv/bin/python -m uvicorn backend.app.main:app --reload --port 8000` and the frontend with `npm run dev`. The usual **NexGTools: Start all** task starts MySQL too. Add an employee in Work Assignments and enter a WhatsApp number; if that field is empty, the employee's phone number is used. Existing employees can be edited to add a separate WhatsApp number.
+
+To test WhatsApp without voice, log in, then send an authenticated `POST /api/work-assignments/whatsapp/test` with JSON such as `{"employee_id":1}`. This sends Meta's `hello_world` template to that employee and returns the Meta message ID or a structured error. To test the complete flow, say “Assign Rahul the task of contacting BPCL tomorrow” in Work Assignments. The assistant resolves Rahul, saves the task, and reports whether WhatsApp and email were sent. SMTP email is attempted only when the employee has an email address and SMTP is configured.

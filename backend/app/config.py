@@ -52,6 +52,11 @@ class Settings:
     smtp_use_tls: bool
     whatsapp_api_url: str
     whatsapp_access_token: str
+    whatsapp_phone_number_id: str
+    whatsapp_business_account_id: str
+    whatsapp_verify_token: str
+    whatsapp_api_version: str
+    whatsapp_task_template_name: str
     document_storage_directory: str
     chroma_persist_directory: str
     chroma_collection_name: str
@@ -82,6 +87,11 @@ class Settings:
             smtp_use_tls=getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"},
             whatsapp_api_url=getenv("WHATSAPP_API_URL"),
             whatsapp_access_token=getenv("WHATSAPP_ACCESS_TOKEN"),
+            whatsapp_phone_number_id=getenv("WHATSAPP_PHONE_NUMBER_ID"),
+            whatsapp_business_account_id=getenv("WHATSAPP_BUSINESS_ACCOUNT_ID"),
+            whatsapp_verify_token=getenv("WHATSAPP_VERIFY_TOKEN"),
+            whatsapp_api_version=getenv("WHATSAPP_API_VERSION", "v23.0"),
+            whatsapp_task_template_name=getenv("WHATSAPP_TASK_TEMPLATE_NAME", "employee_task_assignment"),
             document_storage_directory=getenv("DOCUMENT_STORAGE_DIRECTORY", str(ROOT_DIR / ".data" / "documents")),
             chroma_persist_directory=getenv("CHROMA_PERSIST_DIRECTORY", str(ROOT_DIR / ".data" / "chroma")),
             chroma_collection_name=getenv("CHROMA_COLLECTION_NAME", "document_records"),

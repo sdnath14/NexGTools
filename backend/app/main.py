@@ -7,6 +7,7 @@ from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 from io import BytesIO
 import json
+import logging
 import math
 import re
 import smtplib
@@ -15,9 +16,9 @@ import time
 from pathlib import Path
 
 from bs4 import BeautifulSoup
-from fastapi import BackgroundTasks, FastAPI, File, Header, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Header, HTTPException, Query, Request as FastAPIRequest, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from openpyxl import Workbook
 from pydantic import BaseModel, Field
 import requests
@@ -35,6 +36,7 @@ from .analytics import (
     validate_sql,
 )
 from .config import settings
+from .whatsapp_service import send_whatsapp_task
 from .database import (
     admin_overview,
     admin_table_records,
@@ -82,6 +84,7 @@ from .used_oil_india import create_row as create_used_oil_row, delete_row as del
 
 
 app = FastAPI(title="NexGTools API", version="0.1.0")
+logger = logging.getLogger(__name__)
 
 app.add_middleware(
     CORSMiddleware,
@@ -146,6 +149,7 @@ def ensure_work_assignment_tables() -> None:
                     name VARCHAR(255) NOT NULL,
                     email VARCHAR(255),
                     phone VARCHAR(160),
+                    whatsapp_number VARCHAR(32),
                     role VARCHAR(160),
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -157,6 +161,9 @@ def ensure_work_assignment_tables() -> None:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
+            cursor.execute("SHOW COLUMNS FROM work_employees LIKE 'whatsapp_number'")
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE work_employees ADD COLUMN whatsapp_number VARCHAR(32) NULL AFTER phone")
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS work_tasks (
@@ -246,6 +253,7 @@ def _work_employee_row(row: dict[str, Any]) -> dict[str, Any]:
         "name": row.get("name") or "",
         "email": row.get("email") or "",
         "phone": row.get("phone") or "",
+        "whatsappNumber": row.get("whatsapp_number") or "",
         "role": row.get("role") or "",
     }
 
@@ -409,6 +417,13 @@ class WorkEmployeeRequest(BaseModel):
     phone: str = ""
     role: str = ""
     email: str = ""
+    whatsapp_number: str = ""
+
+
+class WorkWhatsAppTestRequest(BaseModel):
+    employee_id: int
+    task: str = "WhatsApp test task"
+    due_date: str = ""
 
 
 class WorkTaskRequest(BaseModel):
@@ -1589,7 +1604,8 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest, authorization: s
             "content": (
                 "You interpret multilingual voice commands for a work assignment app. Return only JSON. "
                 "The transcript may be in any language, romanized form, or a mix of languages. "
-                "Understand task assignment requests regardless of language. "
+                "Understand task assignment requests regardless of language. First translate Hindi or mixed-language work into English. "
+                "For example, 'राहुल को कल ग्राहकों को फोन करने का काम दो' assigns Rahul 'Call customers' tomorrow. "
                 "Choose one action: assign_task, add_employee, update_status, clarify, or none. "
                 "Use conversation history to understand references, corrections, and short replies such as yes/haan/হ্যাঁ or no. "
                 "If your previous reply asked whether the user meant a specific employee and task, an affirmative answer confirms that intent. "
@@ -1602,7 +1618,7 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest, authorization: s
                 "but do not invent an employee. If more than one employee could match, use clarify instead of assigning. "
                 "Resolve relative dates using today, including aaj/today, kal/tomorrow when it clearly means tomorrow, "
                 "agami kal, parshu, aj, kal, aajke, agamikal, porshu, next week, and similar phrases. "
-                "Normalize taskTitle into concise English for storing in the app, but keep proper names exact. "
+                "Always write taskTitle in concise English for storing in the app and sending by email; keep proper names exact. "
                 "The taskTitle must express the specific work requested in the current turn or unambiguous recent user history, including its object and action. "
                 "Do not substitute a generic task such as send report when the speaker requested something else. "
                 "If the actual task wording is unclear, choose clarify and ask the user to repeat it. "
@@ -1640,13 +1656,12 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest, authorization: s
     if action not in {"assign_task", "add_employee", "update_status", "clarify", "none"}:
         parsed["action"] = "none"
     if parsed.get("action") == "assign_task":
-        source_quote = str(parsed.get("taskSourceQuote") or "").strip()
         task_title = str(parsed.get("taskTitle") or "").strip()
-        user_turns = [transcript, *(turn["text"] for turn in conversation if turn["role"] == "user")]
-        if not source_quote or not any(source_quote.casefold() in turn.casefold() for turn in user_turns) or not task_title:
+        employee_id = str(parsed.get("employeeId") or "").strip()
+        if not task_title or employee_id not in {employee["id"] for employee in employee_context}:
             parsed = {
                 "action": "clarify",
-                "reply": "I could not clearly identify the task. Please repeat the task and employee name.",
+                "reply": "I could not clearly identify the task and employee. Please repeat the request.",
             }
     parsed["transcript"] = transcript
     return parsed
@@ -1694,12 +1709,34 @@ def create_work_employee(payload: WorkEmployeeRequest, authorization: str | None
             linked_user_id = _linked_user_id_for_email(cursor, email)
             cursor.execute(
                 """
-                INSERT INTO work_employees (created_by_user_id, user_id, name, email, phone, role)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO work_employees (created_by_user_id, user_id, name, email, phone, whatsapp_number, role)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
-                (user["id"], linked_user_id, name, email, payload.phone.strip(), payload.role.strip()),
+                (user["id"], linked_user_id, name, email, payload.phone.strip(), payload.whatsapp_number.strip(), payload.role.strip()),
             )
             employee_id = cursor.lastrowid
+            cursor.execute("SELECT * FROM work_employees WHERE id = %s", (employee_id,))
+            employee = _work_employee_row(cursor.fetchone())
+    return {"employee": employee}
+
+
+@app.patch("/api/work-assignments/employees/{employee_id}")
+def update_work_employee(employee_id: int, payload: WorkEmployeeRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "work_assignments")
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Employee name is required.")
+    email = payload.email.strip().lower()
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id FROM work_employees WHERE id = %s AND (created_by_user_id = %s OR %s)", (employee_id, user["id"], bool(user.get("is_nexg_admin"))))
+            if not cursor.fetchone():
+                raise HTTPException(status_code=404, detail="Employee not found.")
+            linked_user_id = _linked_user_id_for_email(cursor, email)
+            cursor.execute(
+                "UPDATE work_employees SET name = %s, email = %s, phone = %s, whatsapp_number = %s, role = %s, user_id = %s WHERE id = %s",
+                (name, email, payload.phone.strip(), payload.whatsapp_number.strip(), payload.role.strip(), linked_user_id, employee_id),
+            )
             cursor.execute("SELECT * FROM work_employees WHERE id = %s", (employee_id,))
             employee = _work_employee_row(cursor.fetchone())
     return {"employee": employee}
@@ -1754,7 +1791,9 @@ def create_work_task(payload: WorkTaskRequest, authorization: str | None = Heade
             )
             task = _work_task_row(cursor.fetchone())
     email_status = _send_work_assignment_email(task, user)
-    return {"task": task, "email_status": email_status}
+    whatsapp_number = employee.get("whatsapp_number") or employee.get("phone") or ""
+    whatsapp_status = send_whatsapp_task(whatsapp_number, employee["name"], title, due_date or "")
+    return {"task": task, "email_status": email_status, "notifications": {"whatsapp": whatsapp_status}}
 
 
 def _send_work_assignment_email(task: dict[str, Any], assigner: dict[str, Any]) -> str:
@@ -1813,6 +1852,48 @@ def resend_work_task_email(task_id: int, authorization: str | None = Header(defa
     if not row:
         raise HTTPException(status_code=404, detail="Task not found.")
     return {"email_status": _send_work_assignment_email(_work_task_row(row), user)}
+
+
+@app.post("/api/work-assignments/whatsapp/test")
+def test_work_whatsapp(payload: WorkWhatsAppTestRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, "work_assignments")
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT name, phone, whatsapp_number FROM work_employees WHERE id = %s AND (created_by_user_id = %s OR %s)",
+                (payload.employee_id, user["id"], bool(user.get("is_nexg_admin"))),
+            )
+            employee = cursor.fetchone()
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found.")
+    return {"whatsapp": send_whatsapp_task(employee.get("whatsapp_number") or employee.get("phone") or "", employee["name"], payload.task.strip() or "WhatsApp test task", payload.due_date.strip(), template_name="hello_world")}
+
+
+@app.get("/webhook/whatsapp")
+def verify_whatsapp_webhook(
+    mode: str = Query(default="", alias="hub.mode"),
+    verify_token: str = Query(default="", alias="hub.verify_token"),
+    challenge: str = Query(default="", alias="hub.challenge"),
+) -> PlainTextResponse:
+    if not settings.whatsapp_verify_token or mode != "subscribe" or verify_token != settings.whatsapp_verify_token:
+        raise HTTPException(status_code=403, detail="Webhook verification failed.")
+    return PlainTextResponse(challenge)
+
+
+@app.post("/webhook/whatsapp")
+async def receive_whatsapp_webhook(request: FastAPIRequest) -> dict[str, bool]:
+    try:
+        payload = await request.json()
+        for entry in payload.get("entry", []):
+            for change in entry.get("changes", []):
+                value = change.get("value") or {}
+                for status in value.get("statuses", []):
+                    logger.info("WhatsApp message status: %s", status.get("status"))
+                if value.get("messages"):
+                    logger.info("Received %d WhatsApp message event(s)", len(value["messages"]))
+    except (ValueError, AttributeError, TypeError):
+        logger.warning("Invalid WhatsApp webhook payload")
+    return {"ok": True}
 
 
 @app.delete("/api/work-assignments/tasks/{task_id}")
