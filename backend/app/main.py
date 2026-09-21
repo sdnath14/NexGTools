@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urljoin, urlp
 from urllib.request import Request, urlopen
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from email.message import EmailMessage
-from email.utils import formataddr
+from email.utils import formataddr, formatdate, make_msgid
 from io import BytesIO
 import json
 import math
@@ -1754,6 +1754,8 @@ def _send_work_assignment_email(task: dict[str, Any], assigner: dict[str, Any]) 
         message = EmailMessage()
         message["From"] = settings.smtp_from_email
         message["To"] = recipient
+        message["Date"] = formatdate(localtime=False)
+        message["Message-ID"] = make_msgid(domain=settings.smtp_from_email.rsplit("@", 1)[-1])
         message["Subject"] = "New work assignment"
         message.set_content(
             f"Hello {task['employeeName']},\n\n"
