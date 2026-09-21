@@ -23,8 +23,6 @@ import {
 import { API_BASE_URL, authHeaders } from '../auth';
 import './WorkAssignments.css';
 
-const STORAGE_KEY = 'nexgtools_work_assignments';
-
 const emptyEmployee = { name: '', phone: '', role: '', email: '' };
 const emptyTask = { employeeId: '', title: '', quantity: 1, dueDate: '', priority: 'Medium', status: 'Pending', notes: '' };
 const canRecordVoice = 'MediaRecorder' in window && navigator.mediaDevices?.getUserMedia;
@@ -53,40 +51,23 @@ const femaleVoiceNames = [
 const maleVoicePattern = /alex|daniel|david|fred|george|mark|rishi|ryan|tom|male|man/i;
 const femaleVoicePattern = /female|woman|samantha|karen|moira|tessa|veena|neerja|heera|serena|victoria|allison|ava|susan|zira|hazel/i;
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
 const uid = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const normalize = (value) => String(value || '').trim();
-
-const seedData = {
-  employees: [
-    { id: 'emp-1', name: 'Amit Sharma', phone: '9876543210', role: 'Sales' },
-    { id: 'emp-2', name: 'Riya Mehta', phone: '9123456780', role: 'Operations' },
-  ],
-  tasks: [
-    { id: 'task-1', employeeId: 'emp-1', title: 'Call used-oil vendors', quantity: 12, dueDate: todayIso(), priority: 'High', status: 'Pending', notes: 'Start with saved leads.' },
-    { id: 'task-2', employeeId: 'emp-2', title: 'Verify recycler data', quantity: 5, dueDate: todayIso(), priority: 'Medium', status: 'In Progress', notes: 'Update missing phone numbers.' },
-  ],
-};
-
-const loadState = () => {
+const emailDeliveryMessage = (status, task) => ({
+  sent: `Email accepted for ${task.employeeEmail}.`,
+  missing_email: 'Add an email address to this employee before sending the task.',
+  not_configured: 'SMTP is not configured, so no email was sent.',
+  rejected_spam: 'The mail server rejected this message as spam. Ask the mail administrator to allow assignment emails.',
+  failed: 'Email delivery failed. Check the SMTP settings.',
+}[status] || 'Email status is unavailable.');
+const welcomeMessage = { id: 'welcome', role: 'assistant', text: 'Hi. Tell me the employee name and task in your language. I will assign it and notify the employee.' };
+const chatStorageKey = (userId) => `nexgtools_work_agent_chat_${userId}`;
+const loadChatMessages = (userId) => {
   try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (parsed?.employees && parsed?.tasks) return parsed;
-  } catch {
-    return seedData;
-  }
-  return seedData;
-};
-
-const parseDate = (text) => {
-  const lower = text.toLowerCase();
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  if (lower.includes('tomorrow')) date.setDate(date.getDate() + 1);
-  if (lower.includes('next week')) date.setDate(date.getDate() + 7);
-  const inDays = lower.match(/in\s+(\d+)\s+days?/);
-  if (inDays) date.setDate(date.getDate() + Number(inDays[1]));
-  return date.toISOString().slice(0, 10);
+    const saved = JSON.parse(localStorage.getItem(chatStorageKey(userId)) || '[]');
+    if (Array.isArray(saved) && saved.length) return saved.filter((item) => ['user', 'assistant'].includes(item.role) && typeof item.text === 'string').slice(-30);
+  } catch { /* Start a fresh conversation if saved data is invalid. */ }
+  return [welcomeMessage];
 };
 
 const cleanTaskTitle = (value) => normalize(value)
@@ -95,15 +76,6 @@ const cleanTaskTitle = (value) => normalize(value)
   .replace(/\s+(?:by\s+)?(?:today|tomorrow|next week|in\s+\d+\s+days?)\s*$/i, '')
   .replace(/[.,!?]+$/g, '')
   .trim();
-
-const dueDateLabel = (text) => {
-  const lower = text.toLowerCase();
-  if (lower.includes('tomorrow')) return 'tomorrow';
-  if (lower.includes('next week')) return 'next week';
-  const inDays = lower.match(/in\s+(\d+)\s+days?/);
-  if (inDays) return `in ${inDays[1]} days`;
-  return 'today';
-};
 
 const chooseFemaleVoice = (voices) => {
   if (!voices.length) return null;
@@ -142,111 +114,9 @@ const getBrowserVoices = () => new Promise((resolve) => {
   window.speechSynthesis.addEventListener('voiceschanged', handleVoicesChanged);
 });
 
-const normalizeForMatch = (value) => String(value || '')
-  .toLowerCase()
-  .normalize('NFKD')
-  .replace(/[\u0300-\u036f]/g, '')
-  .replace(/[^a-z0-9\s]/g, ' ')
-  .replace(/\b(?:ji|sir|madam|maam|dada|didi|da|di|babu|boudi|bhai|dadaji)\b/g, ' ')
-  .replace(/\s+/g, ' ')
-  .trim();
-
-const editDistance = (left, right) => {
-  if (left === right) return 0;
-  if (!left) return right.length;
-  if (!right) return left.length;
-  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
-  for (let i = 1; i <= left.length; i += 1) {
-    let lastDiagonal = previous[0];
-    previous[0] = i;
-    for (let j = 1; j <= right.length; j += 1) {
-      const oldDiagonal = previous[j];
-      previous[j] = Math.min(
-        previous[j] + 1,
-        previous[j - 1] + 1,
-        lastDiagonal + (left[i - 1] === right[j - 1] ? 0 : 1),
-      );
-      lastDiagonal = oldDiagonal;
-    }
-  }
-  return previous[right.length];
-};
-
-const wordSimilarity = (left, right) => {
-  const cleanLeft = normalizeForMatch(left);
-  const cleanRight = normalizeForMatch(right);
-  if (!cleanLeft || !cleanRight) return 0;
-  if (cleanLeft === cleanRight) return 1;
-  if (cleanLeft.includes(cleanRight) || cleanRight.includes(cleanLeft)) return 0.92;
-  const distance = editDistance(cleanLeft, cleanRight);
-  return 1 - distance / Math.max(cleanLeft.length, cleanRight.length);
-};
-
-const wordPattern = (word) => new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
-
-const findEmployeeFromCommand = (command, employees, fallbackEmployeeId = '') => {
-  const lower = command.toLowerCase();
-  const normalizedCommand = normalizeForMatch(command);
-  const sortedEmployees = [...employees].sort((a, b) => b.name.length - a.name.length);
-  const namedEmployee = sortedEmployees.find((employee) => {
-    const name = employee.name.toLowerCase();
-    const firstName = name.split(/\s+/)[0];
-    return wordPattern(name).test(lower) || wordPattern(firstName).test(lower);
-  });
-  if (namedEmployee) return namedEmployee;
-
-  const scoredEmployees = sortedEmployees
-    .map((employee) => {
-      const normalizedName = normalizeForMatch(employee.name);
-      const nameParts = normalizedName.split(/\s+/).filter(Boolean);
-      const commandWords = normalizedCommand.split(/\s+/).filter(Boolean);
-      const exactPartScore = nameParts.some((part) => commandWords.includes(part)) ? 0.88 : 0;
-      const fuzzyPartScore = Math.max(0, ...nameParts.flatMap((part) => commandWords.map((word) => wordSimilarity(part, word))));
-      const fullNameScore = wordSimilarity(normalizedName, normalizedCommand);
-      return { employee, score: Math.max(exactPartScore, fuzzyPartScore, fullNameScore) };
-    })
-    .sort((a, b) => b.score - a.score);
-  if (scoredEmployees[0]?.score >= 0.78 && scoredEmployees[0].score - (scoredEmployees[1]?.score || 0) >= 0.08) {
-    return scoredEmployees[0].employee;
-  }
-
-  if (/\b(?:her|him|them|that employee|same employee)\b/i.test(command)) {
-    return employees.find((employee) => employee.id === fallbackEmployeeId) || (employees.length === 1 ? employees[0] : null);
-  }
-
-  return null;
-};
-
-const extractRequestedTask = (command, employee) => {
-  const employeeNames = employee
-    ? [employee.name, employee.name.split(/\s+/)[0]].filter(Boolean).map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    : [];
-  const employeePattern = employeeNames.length ? `(?:${employeeNames.join('|')})` : '[a-z\\s]+?';
-  const patterns = [
-    new RegExp(`(?:please\\s+)?(?:tell|ask|instruct|say(?:\\s+to)?)\\s+${employeePattern}\\s+to\\s+(.+)`, 'i'),
-    new RegExp(`(?:please\\s+)?(?:add|create|assign|give)\\s+(?:a\\s+)?task\\s+(?:for|to)\\s+${employeePattern}\\s+to\\s+(.+)`, 'i'),
-    new RegExp(`(?:please\\s+)?(?:add|create|assign|give)\\s+(.+?)\\s+(?:to|for)\\s+${employeePattern}`, 'i'),
-    new RegExp(`(?:please\\s+)?${employeePattern}\\s+(?:needs?\\s+to|should|has\\s+to|must)\\s+(.+)`, 'i'),
-    /(?:please\s+)?(?:add|create)\s+(?:a\s+)?task\s+to\s+(.+)/i,
-  ];
-  const match = patterns.map((pattern) => command.match(pattern)).find(Boolean);
-  if (match?.[1]) return cleanTaskTitle(match[1]);
-
-  const employeeNamePattern = employeeNames.length ? new RegExp(`\\b(?:${employeeNames.join('|')})\\b`, 'ig') : null;
-  const fallback = command
-    .replace(/^(?:please\s+)?(?:add|create|assign|give|make|set)\s+(?:a\s+)?(?:new\s+)?task\s*/i, '')
-    .replace(/^(?:please\s+)?(?:tell|ask|instruct|say(?:\s+to)?)\s*/i, '')
-    .replace(employeeNamePattern || /^$/, '')
-    .replace(/\b(?:for|to|her|him|them|that employee|same employee)\b/ig, '')
-    .replace(/^(?:needs?\s+to|should|has\s+to|must)\s+/i, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return cleanTaskTitle(fallback);
-};
-
-export default function WorkAssignments() {
-  const [employees, setEmployees] = useState(() => loadState().employees);
-  const [tasks, setTasks] = useState(() => loadState().tasks);
+export default function WorkAssignments({ userId }) {
+  const [employees, setEmployees] = useState([]);
+  const [tasks, setTasks] = useState([]);
   const [employeeDraft, setEmployeeDraft] = useState(emptyEmployee);
   const [taskDraft, setTaskDraft] = useState(emptyTask);
   const [editingEmployeeId, setEditingEmployeeId] = useState(null);
@@ -254,9 +124,7 @@ export default function WorkAssignments() {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [voiceText, setVoiceText] = useState('');
-  const [chatMessages, setChatMessages] = useState([
-    { id: 'welcome', role: 'assistant', text: 'Hi. Speak in English, Hindi, Bengali, or mixed language. Tell me who should do what, and I will create the assignment for you.' },
-  ]);
+  const [chatMessages, setChatMessages] = useState(() => loadChatMessages(userId));
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [processingVoice, setProcessingVoice] = useState(false);
@@ -264,6 +132,7 @@ export default function WorkAssignments() {
   const [voiceError, setVoiceError] = useState('');
   const [speechVoices, setSpeechVoices] = useState([]);
   const [syncError, setSyncError] = useState('');
+  const [assignmentNotice, setAssignmentNotice] = useState('');
   const mediaRecorderRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const audioContextRef = useRef(null);
@@ -273,10 +142,13 @@ export default function WorkAssignments() {
   const voiceModeRef = useRef(false);
   const chatEndRef = useRef(null);
   const lastEmployeeRef = useRef('');
+  const chatMessagesRef = useRef(chatMessages);
+  const runAssistantCommandRef = useRef(null);
+  const commandBusyRef = useRef(false);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ employees, tasks }));
-  }, [employees, tasks]);
+    localStorage.setItem(chatStorageKey(userId), JSON.stringify(chatMessages.slice(-30)));
+  }, [chatMessages, userId]);
 
   useEffect(() => {
     const loadAssignments = async () => {
@@ -379,8 +251,10 @@ export default function WorkAssignments() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Could not assign task.');
     setTasks((current) => [data.task, ...current]);
+    const delivery = `Assignment saved. ${emailDeliveryMessage(data.email_status, data.task)}`;
+    setAssignmentNotice(delivery);
     setSyncError('');
-    return data.task;
+    return { ...data.task, emailStatus: data.email_status, deliveryMessage: delivery };
   };
 
   const saveEmployee = async (event) => {
@@ -423,8 +297,35 @@ export default function WorkAssignments() {
     setTasks((current) => current.filter((task) => task.employeeId !== employeeId));
   };
 
-  const removeTask = (taskId) => {
-    setTasks((current) => current.filter((task) => task.id !== taskId));
+  const removeTask = async (taskId) => {
+    if (!window.confirm('Delete this assignment? Any email already sent cannot be recalled.')) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks/${taskId}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || 'Could not delete task.');
+      setTasks((current) => current.filter((task) => task.id !== taskId));
+      setSyncError('');
+    } catch (error) {
+      setSyncError(error.message || 'Could not delete task.');
+    }
+  };
+
+  const resendTaskEmail = async (task) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks/${task.id}/email`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || 'Could not send task email.');
+      setAssignmentNotice(emailDeliveryMessage(data.email_status, task));
+      setSyncError('');
+    } catch (error) {
+      setSyncError(error.message || 'Could not send task email.');
+    }
   };
 
   const editEmployee = (employee) => {
@@ -454,7 +355,9 @@ export default function WorkAssignments() {
   };
 
   const addChatMessage = (role, text) => {
-    setChatMessages((current) => [...current, { id: uid(), role, text }]);
+    const next = [...chatMessagesRef.current, { id: uid(), role, text }].slice(-30);
+    chatMessagesRef.current = next;
+    setChatMessages(next);
   };
 
   const stopVoiceCapture = () => {
@@ -507,7 +410,7 @@ export default function WorkAssignments() {
       setSpeaking(true);
       const response = await fetch('/api/work-assignments/voice/speak', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ text: message, voice: 'marin' }),
       });
       if (!response.ok) {
@@ -540,7 +443,14 @@ export default function WorkAssignments() {
   };
 
   const applyAiAction = async (command, action) => {
-    if (!action || action.action === 'none') return false;
+    if (!action) return false;
+    if (action.action === 'none') {
+      if (normalize(action.reply)) {
+        speak(action.reply);
+        return true;
+      }
+      return false;
+    }
 
     if (action.action === 'add_employee') {
       const name = normalize(action.employeeName);
@@ -574,30 +484,28 @@ export default function WorkAssignments() {
     }
 
     if (action.action === 'assign_task') {
-      const employee = employees.find((item) => item.id === action.employeeId)
-        || findEmployeeFromCommand(action.employeeName || '', employees, lastEmployeeRef.current)
-        || findEmployeeFromCommand(command, employees, lastEmployeeRef.current);
+      const employee = employees.find((item) => String(item.id) === String(action.employeeId));
       const title = cleanTaskTitle(action.taskTitle || '');
-      if (!employee || !title) {
-        speak(action.reply || 'I need the employee and task before I can assign it.');
+      if (!employee || !title || /^(?:task|work|do it|something)$/i.test(title)) {
+        speak('I need a clear employee name and task. Please say who should do what.');
         return true;
       }
-      lastEmployeeRef.current = employee.id;
       const task = {
         employeeId: employee.id,
         title,
         quantity: Math.max(1, Number(action.quantity) || 1),
-        dueDate: normalize(action.dueDate) || parseDate(command),
+        dueDate: normalize(action.dueDate),
         priority: ['Low', 'Medium', 'High'].includes(action.priority) ? action.priority : 'Medium',
         status: 'Pending',
         notes: `Created by OpenAI voice assistant from: "${command}"`,
       };
       try {
         const savedTask = await createTaskOnServer(task);
-        speak(action.reply || `Okay, assigning ${savedTask.title} to ${employee.name}.`);
+        lastEmployeeRef.current = employee.id;
+        speak(`${savedTask.title} assigned to ${employee.name}. ${savedTask.deliveryMessage}`);
       } catch (error) {
         setSyncError(error.message || 'Could not save task.');
-        speak('I understood the task, but could not save it to the database.');
+        speak('I understood the task, but could not save it.');
       }
       return true;
     }
@@ -610,15 +518,16 @@ export default function WorkAssignments() {
     return false;
   };
 
-  const parseCommandWithOpenAi = async (command) => {
+  const parseCommandWithOpenAi = async (command, history) => {
     const response = await fetch('/api/work-assignments/voice/parse', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({
         transcript: command,
         employees,
         tasks,
         last_employee_id: lastEmployeeRef.current,
+        history: history.filter((item) => item.id !== 'welcome').slice(-12).map(({ role, text }) => ({ role, text })),
       }),
     });
     const data = await response.json();
@@ -626,82 +535,36 @@ export default function WorkAssignments() {
     return data;
   };
 
-  const runAssistantCommand = async (commandText = voiceText, options = {}) => {
+  const runAssistantCommand = async (commandText = voiceText) => {
     const command = normalize(commandText);
-    const lower = command.toLowerCase();
     if (!command) {
       speak('Please say or type a command first.');
       return;
     }
+    if (commandBusyRef.current) return;
+    commandBusyRef.current = true;
 
+    const history = chatMessagesRef.current;
     addChatMessage('user', command);
     setVoiceText('');
-
-    if (!options.skipAi) {
-      try {
-        const action = await parseCommandWithOpenAi(command);
-        if (await applyAiAction(command, action)) return;
-      } catch (error) {
-        setVoiceError(error.message || 'OpenAI could not analyze the command. Using the local fallback.');
-      }
+    try {
+      const action = await parseCommandWithOpenAi(command, history);
+      if (await applyAiAction(command, action)) return;
+      speak('I am not sure what you meant. Please tell me a little more.');
+    } catch (error) {
+      setVoiceError(error.message || 'Could not analyze the command.');
+      speak('I could not analyze that command. Please try again.');
+    } finally {
+      commandBusyRef.current = false;
     }
+  };
+  runAssistantCommandRef.current = runAssistantCommand;
 
-    const employeeMatch = lower.match(/add employee\s+([a-z\s]+?)(?:\s+(?:number|phone|mobile)\s+|\s+)(\+?\d[\d\s-]{6,})/i);
-    if (employeeMatch) {
-      const employee = { id: uid(), name: normalize(employeeMatch[1]), phone: normalize(employeeMatch[2]).replace(/\s+/g, ''), role: '' };
-      setEmployees((current) => [employee, ...current]);
-      speak(`Okay. I added ${employee.name} with number ${employee.phone}.`);
-      return;
-    }
-
-    const statusMatch = lower.match(/(?:mark|set)\s+(.+?)\s+(?:as\s+)?(done|complete|completed|pending|in progress)/i);
-    if (statusMatch) {
-      const taskNeedle = statusMatch[1].trim();
-      const status = statusMatch[2].startsWith('done') || statusMatch[2].startsWith('complete') ? 'Done' : statusMatch[2] === 'pending' ? 'Pending' : 'In Progress';
-      const target = tasks.find((task) => task.title.toLowerCase().includes(taskNeedle));
-      if (target) {
-        setTasks((current) => current.map((task) => task.id === target.id ? { ...task, status } : task));
-        speak(`Updated ${target.title} to ${status}.`);
-      } else {
-        speak('I could not find that task. Try using a few exact words from the task title.');
-      }
-      return;
-    }
-
-    const quantity = Number(lower.match(/\b(\d+)\b/)?.[1] || 1);
-    const employee = findEmployeeFromCommand(command, employees, lastEmployeeRef.current);
-    const requestedTask = employee ? extractRequestedTask(command, employee) : '';
-
-    if (employee && requestedTask) {
-      lastEmployeeRef.current = employee.id;
-      const title = cleanTaskTitle(requestedTask);
-      const task = {
-        id: uid(),
-        employeeId: employee.id,
-        title: title || command,
-        quantity,
-        dueDate: parseDate(lower),
-        priority: lower.includes('urgent') || lower.includes('high') ? 'High' : 'Medium',
-        status: 'Pending',
-        notes: `Created by assistant from: "${command}"`,
-      };
-      setTasks((current) => [task, ...current]);
-      speak(`Okay, assigning ${task.title} to ${employee.name}. It is due ${dueDateLabel(lower)}.`);
-      return;
-    }
-
-    if (!employee && /\b(?:tell|ask|instruct|assign|give|add|create)\b/i.test(command)) {
-      speak('I heard the task request, but I could not match the employee name. Please say the employee name exactly as it appears in the list.');
-      return;
-    }
-
-    if (employee && !requestedTask) {
-      lastEmployeeRef.current = employee.id;
-      speak(`I found ${employee.name}. Please tell me the task to assign.`);
-      return;
-    }
-
-    speak('I heard you, but I need an employee and a task. Try saying, please ask Amit to call the vendors tomorrow.');
+  const clearConversation = () => {
+    chatMessagesRef.current = [welcomeMessage];
+    setChatMessages([welcomeMessage]);
+    lastEmployeeRef.current = '';
+    localStorage.removeItem(chatStorageKey(userId));
   };
 
   const submitVoiceAudio = async (audioBlob) => {
@@ -711,7 +574,7 @@ export default function WorkAssignments() {
     try {
       const formData = new FormData();
       formData.append('file', audioBlob, 'work-command.webm');
-      const response = await fetch('/api/work-assignments/voice/transcribe', { method: 'POST', body: formData });
+      const response = await fetch('/api/work-assignments/voice/transcribe', { method: 'POST', headers: authHeaders(), body: formData });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'OpenAI could not transcribe the voice command.');
       const transcript = normalize(data.text);
@@ -720,7 +583,7 @@ export default function WorkAssignments() {
         return;
       }
       setVoiceText(transcript);
-      await runAssistantCommand(transcript);
+      await runAssistantCommandRef.current(transcript);
     } catch (error) {
       setVoiceError(error.message || 'Could not process the voice command.');
       if (voiceModeRef.current) window.setTimeout(() => startVoiceCapture(), 700);
@@ -818,15 +681,16 @@ export default function WorkAssignments() {
       </header>
 
       <section className="work-assistant">
-        <div className="work-assistant-head"><Bot size={20} /><div><h2>Work Agent</h2><p>Talk naturally in English, Hindi, Bengali, or mixed language. The agent listens, replies, and completes task actions.</p></div><span className={listening ? 'work-voice-state work-voice-listening' : speaking ? 'work-voice-state work-voice-speaking' : processingVoice ? 'work-voice-state work-voice-processing' : 'work-voice-state'}>{listening ? <Mic size={14} /> : speaking ? <Volume2 size={14} /> : processingVoice ? <LoaderCircle size={14} /> : <Sparkles size={14} />}{listening ? 'Listening' : speaking ? 'Speaking' : processingVoice ? 'Thinking' : voiceMode ? 'Voice Mode' : 'Ready'}</span></div>
+        <div className="work-assistant-head"><Bot size={20} /><div><h2>Work Agent</h2><p>Say the employee name and task in your language. Clear assignments are saved immediately and an email is attempted.</p></div><button type="button" className="work-clear-chat" onClick={clearConversation} disabled={listening || speaking || processingVoice}>New conversation</button><span className={listening ? 'work-voice-state work-voice-listening' : speaking ? 'work-voice-state work-voice-speaking' : processingVoice ? 'work-voice-state work-voice-processing' : 'work-voice-state'}>{listening ? <Mic size={14} /> : speaking ? <Volume2 size={14} /> : processingVoice ? <LoaderCircle size={14} /> : <Sparkles size={14} />}{listening ? 'Listening' : speaking ? 'Speaking' : processingVoice ? 'Thinking' : voiceMode ? 'Voice Mode' : 'Ready'}</span></div>
         <div className="work-agent-layout">
           <div className={listening ? 'work-voice-orb is-listening' : speaking || processingVoice ? 'work-voice-orb is-speaking' : 'work-voice-orb'}>
             <div className="work-orb-rings"><span /><span /><span /></div>
             <div className="work-wave" aria-hidden="true">{Array.from({ length: 9 }).map((_, index) => <i key={index} />)}</div>
-            <strong>{listening ? 'Listening until you pause' : processingVoice ? 'Analyzing with OpenAI' : speaking ? 'Responding' : voiceMode ? 'Voice mode on' : 'Start voice mode'}</strong>
+            <strong>{listening ? 'Listening — press Stop and respond when done' : processingVoice ? 'Analyzing with OpenAI' : speaking ? 'Responding' : voiceMode ? 'Voice mode on' : 'Start voice mode'}</strong>
             <button type="button" className={listening ? 'work-mic work-mic-live' : 'work-mic'} onClick={toggleListening} title={listening ? 'Stop listening' : 'Start voice input'}>
               {processingVoice ? <LoaderCircle size={21} /> : listening || voiceMode ? <MicOff size={21} /> : <Mic size={21} />}
             </button>
+            {listening && <button type="button" className="work-stop-respond" onClick={stopVoiceMode}>Stop and respond</button>}
           </div>
           <div className="work-chatbot">
             <div className="work-chat-messages" aria-live="polite">
@@ -841,6 +705,7 @@ export default function WorkAssignments() {
         </div>
         {voiceError && <p className="work-inline-error"><AlertCircle size={15} /> {voiceError}</p>}
         {syncError && <p className="work-inline-error"><AlertCircle size={15} /> {syncError}</p>}
+        {assignmentNotice && <p className="work-voice-state">{assignmentNotice}</p>}
       </section>
 
       <div className="work-grid">
@@ -884,7 +749,7 @@ export default function WorkAssignments() {
             <tbody>
               {filteredTasks.map((task) => {
                 const employee = employeeById.get(task.employeeId);
-                return <tr key={task.id}><td><strong>{employee?.name || task.employeeName || 'Unassigned'}</strong></td><td>{employee?.phone || task.employeePhone || '-'}</td><td><span>{task.title}</span>{task.notes && <small>{task.notes}</small>}</td><td>{task.quantity}</td><td><CalendarDays size={14} /> {task.dueDate || '-'}</td><td><em className={`work-priority work-priority-${task.priority.toLowerCase()}`}>{task.priority}</em></td><td><select value={task.status} onChange={(event) => updateTaskStatus(task.id, event.target.value)}><option>Pending</option><option>In Progress</option><option>Done</option></select></td><td><div className="work-row-actions"><button type="button" onClick={() => editTask(task)} title="Edit task"><Edit3 size={15} /></button><button type="button" onClick={() => removeTask(task.id)} title="Delete task"><Trash2 size={15} /></button></div></td></tr>;
+                return <tr key={task.id}><td><strong>{employee?.name || task.employeeName || 'Unassigned'}</strong></td><td>{employee?.phone || task.employeePhone || '-'}</td><td><span>{task.title}</span>{task.notes && <small>{task.notes}</small>}</td><td>{task.quantity}</td><td><CalendarDays size={14} /> {task.dueDate || '-'}</td><td><em className={`work-priority work-priority-${task.priority.toLowerCase()}`}>{task.priority}</em></td><td><select value={task.status} onChange={(event) => updateTaskStatus(task.id, event.target.value)}><option>Pending</option><option>In Progress</option><option>Done</option></select></td><td><div className="work-row-actions"><button type="button" onClick={() => resendTaskEmail(task)} title="Send task email"><Send size={15} /></button><button type="button" onClick={() => editTask(task)} title="Edit task"><Edit3 size={15} /></button><button type="button" onClick={() => removeTask(task.id)} title="Delete task"><Trash2 size={15} /></button></div></td></tr>;
               })}
             </tbody>
           </table>

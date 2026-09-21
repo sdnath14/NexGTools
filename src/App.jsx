@@ -119,7 +119,7 @@ function App() {
               <Route path="/business-search/csv" element={hasPermission('exports') ? <CsvHistory type="business_search" /> : <Navigate to="/" replace />} />
               <Route path="/business-outreach" element={hasPermission('outreach') ? <BusinessOutreach /> : <Navigate to="/" replace />} />
               <Route path="/my-tasks" element={<MyTasks />} />
-              <Route path="/work-assignments" element={hasPermission('work_assignments') ? <WorkAssignments /> : <Navigate to="/" replace />} />
+              <Route path="/work-assignments" element={hasPermission('work_assignments') ? <WorkAssignments key={user.id} userId={user.id} /> : <Navigate to="/" replace />} />
               <Route path="/data-library" element={hasPermission('data_library') ? <DataLibrary /> : <Navigate to="/" replace />} />
               <Route path="/data-analytics" element={hasPermission('data_analytics') ? <DataAnalytics /> : <Navigate to="/" replace />} />
               <Route path="/used-oil-india" element={hasPermission('used_oil_india') ? <UsedOilIndia /> : <Navigate to="/" replace />} />

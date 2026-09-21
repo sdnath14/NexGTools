@@ -396,6 +396,7 @@ class WorkVoiceParseRequest(BaseModel):
     employees: list[dict[str, Any]] = Field(default_factory=list)
     tasks: list[dict[str, Any]] = Field(default_factory=list)
     last_employee_id: str = ""
+    history: list[dict[str, str]] = Field(default_factory=list)
 
 
 class WorkVoiceSpeechRequest(BaseModel):
@@ -1521,7 +1522,8 @@ def _chat_completion(messages: list[dict[str, str]], *, response_format: dict[st
 
 
 @app.post("/api/work-assignments/voice/transcribe")
-async def transcribe_work_assignment_voice(file: UploadFile = File(...)) -> dict[str, str]:
+async def transcribe_work_assignment_voice(file: UploadFile = File(...), authorization: str | None = Header(default=None)) -> dict[str, str]:
+    _require_permission(authorization, "work_assignments")
     if not settings.openai_api_key:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
 
@@ -1538,9 +1540,8 @@ async def transcribe_work_assignment_voice(file: UploadFile = File(...)) -> dict
             model="gpt-4o-transcribe",
             file=audio_file,
             prompt=(
-                "Transcribe a workplace task assignment command. The speaker may use English, Hindi, Bengali, "
-                "or a mix such as Hinglish or Banglish. Keep employee names, dates, numbers, and task wording exact. "
-                "Preserve the spoken language instead of translating unless the audio itself mixes languages."
+                "Transcribe a workplace task assignment accurately in the language spoken, including mixed languages. "
+                "Keep employee names, dates, numbers, and task wording exact. Do not add words that were not spoken."
             ),
         )
     except Exception as exc:
@@ -1551,7 +1552,8 @@ async def transcribe_work_assignment_voice(file: UploadFile = File(...)) -> dict
 
 
 @app.post("/api/work-assignments/voice/parse")
-def parse_work_assignment_voice(payload: WorkVoiceParseRequest) -> dict[str, Any]:
+def parse_work_assignment_voice(payload: WorkVoiceParseRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_permission(authorization, "work_assignments")
     transcript = payload.transcript.strip()
     if not transcript:
         raise HTTPException(status_code=400, detail="Transcript is required.")
@@ -1574,22 +1576,33 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest) -> dict[str, Any
         }
         for task in payload.tasks[:120]
     ]
+    conversation = [
+        {"role": turn["role"], "text": turn.get("text", "")[:1200]}
+        for turn in payload.history[-12:]
+        if turn.get("role") in {"user", "assistant"} and turn.get("text", "").strip()
+    ]
     today = time.strftime("%Y-%m-%d")
     messages = [
         {
             "role": "system",
             "content": (
                 "You interpret multilingual voice commands for a work assignment app. Return only JSON. "
-                "The transcript may be in English, Hindi, Bengali, romanized Hindi, romanized Bengali, "
-                "or mixed language. Understand commands such as assign/give/tell/ask/add, "
-                "kaam do, task do, bol do, bolo, kaj dao, kaj korte bolo, and equivalent wording. "
+                "The transcript may be in any language, romanized form, or a mix of languages. "
+                "Understand task assignment requests regardless of language. "
                 "Choose one action: assign_task, add_employee, update_status, clarify, or none. "
+                "Use conversation history to understand references, corrections, and short replies such as yes/haan/হ্যাঁ or no. "
+                "If your previous reply asked whether the user meant a specific employee and task, an affirmative answer confirms that intent. "
+                "For assign_task, the current turn or unambiguous recent history must establish both a recognizable employee and a specific work instruction. "
+                "When both are clear, choose assign_task immediately; do not ask for confirmation. "
+                "If the audio is unclear, conversational, or only mentions a person without a known task, choose clarify or none. "
+                "Never invent a task, employee, or due date, and never use examples as the task. "
                 "For assign_task, first identify the intended person from employees. Return that exact employee id in employeeId. "
                 "Match spoken names flexibly across spelling/transcription variants, first names, surnames, and honorifics, "
                 "but do not invent an employee. If more than one employee could match, use clarify instead of assigning. "
                 "Resolve relative dates using today, including aaj/today, kal/tomorrow when it clearly means tomorrow, "
                 "agami kal, parshu, aj, kal, aajke, agamikal, porshu, next week, and similar phrases. "
                 "Normalize taskTitle into concise English for storing in the app, but keep proper names exact. "
+                "For general conversation or a question, choose none and write a helpful reply grounded in the conversation. "
                 "Make reply short and in the user's main spoken language when possible. "
                 "Schema: {\"action\":\"assign_task|add_employee|update_status|clarify|none\","
                 "\"employeeId\":\"\",\"employeeName\":\"\",\"phone\":\"\",\"taskTitle\":\"\","
@@ -1606,6 +1619,7 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest) -> dict[str, Any
                     "employees": employee_context,
                     "tasks": task_context,
                     "lastEmployeeId": payload.last_employee_id,
+                    "conversation": conversation,
                 },
                 ensure_ascii=True,
             ),
@@ -1725,7 +1739,78 @@ def create_work_task(payload: WorkTaskRequest, authorization: str | None = Heade
                 (task_id,),
             )
             task = _work_task_row(cursor.fetchone())
-    return {"task": task}
+    email_status = _send_work_assignment_email(task, user)
+    return {"task": task, "email_status": email_status}
+
+
+def _send_work_assignment_email(task: dict[str, Any], assigner: dict[str, Any]) -> str:
+    recipient = (task.get("employeeEmail") or "").strip()
+    if not recipient:
+        return "missing_email"
+    if not settings.smtp_host or not settings.smtp_from_email:
+        return "not_configured"
+
+    try:
+        message = EmailMessage()
+        message["From"] = settings.smtp_from_email
+        message["To"] = recipient
+        message["Subject"] = "New work assignment"
+        message.set_content(
+            f"Hello {task['employeeName']},\n\n"
+            "You have a new work assignment.\n\n"
+            f"Task: {task['title']}\n\n"
+            "NexGTools\n"
+        )
+        use_ssl = settings.smtp_port == 465
+        smtp = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=20) if use_ssl else smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20)
+        with smtp:
+            if settings.smtp_use_tls and not use_ssl:
+                smtp.starttls()
+            if settings.smtp_username:
+                smtp.login(settings.smtp_username, settings.smtp_password)
+            smtp.send_message(message)
+    except smtplib.SMTPDataError as error:
+        if error.smtp_code == 550 and b"spam" in error.smtp_error.lower():
+            return "rejected_spam"
+        return "failed"
+    except (smtplib.SMTPException, OSError, ValueError):
+        return "failed"
+    return "sent"
+
+
+@app.post("/api/work-assignments/tasks/{task_id}/email")
+def resend_work_task_email(task_id: int, authorization: str | None = Header(default=None)) -> dict[str, str]:
+    user = _require_permission(authorization, "work_assignments")
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT work_tasks.*, work_employees.name AS employee_name,
+                       work_employees.email AS employee_email, work_employees.phone AS employee_phone
+                FROM work_tasks
+                JOIN work_employees ON work_employees.id = work_tasks.employee_id
+                WHERE work_tasks.id = %s AND (work_tasks.created_by_user_id = %s OR %s)
+                """,
+                (task_id, user["id"], bool(user.get("is_nexg_admin"))),
+            )
+            row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    return {"email_status": _send_work_assignment_email(_work_task_row(row), user)}
+
+
+@app.delete("/api/work-assignments/tasks/{task_id}")
+def delete_work_task(task_id: int, authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    user = _require_permission(authorization, "work_assignments")
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM work_tasks WHERE id = %s AND (created_by_user_id = %s OR %s)",
+                (task_id, user["id"], bool(user.get("is_nexg_admin"))),
+            )
+            if cursor.rowcount != 1:
+                raise HTTPException(status_code=404, detail="Task not found.")
+    return {"deleted": True}
 
 
 @app.patch("/api/work-assignments/tasks/{task_id}/status")
@@ -1855,7 +1940,8 @@ def my_work_tasks(authorization: str | None = Header(default=None)) -> dict[str,
 
 
 @app.post("/api/work-assignments/voice/speak")
-def speak_work_assignment_voice(payload: WorkVoiceSpeechRequest) -> StreamingResponse:
+def speak_work_assignment_voice(payload: WorkVoiceSpeechRequest, authorization: str | None = Header(default=None)) -> StreamingResponse:
+    _require_permission(authorization, "work_assignments")
     if not settings.openai_api_key:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
 
@@ -1875,7 +1961,7 @@ def speak_work_assignment_voice(payload: WorkVoiceSpeechRequest) -> StreamingRes
                 "input": text[:4096],
                 "response_format": "mp3",
                 "speed": 1,
-                "instructions": "Speak naturally and clearly like a helpful work assistant. Match the user's language when the text is Hindi, Bengali, English, or mixed.",
+                "instructions": "Speak naturally and clearly like a helpful work assistant. Match the language of the text.",
             }
         ).encode("utf-8"),
         method="POST",

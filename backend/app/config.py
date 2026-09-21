@@ -8,6 +8,10 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 ENV_PATH = ROOT_DIR / ".env"
 
 
+def getenv(name: str, default: str = "") -> str:
+    return os.getenv(name, default).rstrip("\r\n")
+
+
 def load_dotenv(path: Path = ENV_PATH) -> None:
     if not path.exists():
         return
@@ -57,31 +61,31 @@ class Settings:
     def from_env(cls) -> "Settings":
         load_dotenv()
         return cls(
-            openai_api_key=os.getenv("OPENAI_API_KEY", ""),
-            openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
-            google_places_api_key=os.getenv("GOOGLE_PLACES_API_KEY", ""),
-            google_search_api_key=os.getenv("GOOGLE_SEARCH_API_KEY", ""),
-            google_search_engine_id=os.getenv("GOOGLE_SEARCH_ENGINE_ID", ""),
-            mysql_host=os.getenv("MYSQL_HOST", "127.0.0.1"),
-            mysql_port=int(os.getenv("MYSQL_PORT", "3306")),
-            mysql_user=os.getenv("MYSQL_USER", ""),
-            mysql_password=os.getenv("MYSQL_PASSWORD", ""),
-            mysql_database=os.getenv("MYSQL_DATABASE", "nextgtools"),
-            admin_password=os.getenv("ADMIN_PASSWORD", ""),
-            default_login_email=os.getenv("DEFAULT_LOGIN_EMAIL", ""),
-            default_login_password=os.getenv("DEFAULT_LOGIN_PASSWORD", ""),
-            smtp_host=os.getenv("SMTP_HOST", ""),
-            smtp_port=int(os.getenv("SMTP_PORT", "587")),
-            smtp_username=os.getenv("SMTP_USERNAME", ""),
-            smtp_password=os.getenv("SMTP_PASSWORD", ""),
-            smtp_from_email=os.getenv("SMTP_FROM_EMAIL", ""),
-            smtp_use_tls=os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"},
-            whatsapp_api_url=os.getenv("WHATSAPP_API_URL", ""),
-            whatsapp_access_token=os.getenv("WHATSAPP_ACCESS_TOKEN", ""),
-            document_storage_directory=os.getenv("DOCUMENT_STORAGE_DIRECTORY", str(ROOT_DIR / ".data" / "documents")),
-            chroma_persist_directory=os.getenv("CHROMA_PERSIST_DIRECTORY", str(ROOT_DIR / ".data" / "chroma")),
-            chroma_collection_name=os.getenv("CHROMA_COLLECTION_NAME", "document_records"),
-            document_max_upload_mb=int(os.getenv("DOCUMENT_MAX_UPLOAD_MB", "100")),
+            openai_api_key=getenv("OPENAI_API_KEY"),
+            openai_model=getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+            google_places_api_key=getenv("GOOGLE_PLACES_API_KEY"),
+            google_search_api_key=getenv("GOOGLE_SEARCH_API_KEY"),
+            google_search_engine_id=getenv("GOOGLE_SEARCH_ENGINE_ID"),
+            mysql_host=getenv("MYSQL_HOST", "127.0.0.1"),
+            mysql_port=int(getenv("MYSQL_PORT", "3306")),
+            mysql_user=getenv("MYSQL_USER"),
+            mysql_password=getenv("MYSQL_PASSWORD"),
+            mysql_database=getenv("MYSQL_DATABASE", "nextgtools"),
+            admin_password=getenv("ADMIN_PASSWORD"),
+            default_login_email=getenv("DEFAULT_LOGIN_EMAIL"),
+            default_login_password=getenv("DEFAULT_LOGIN_PASSWORD"),
+            smtp_host=getenv("SMTP_HOST"),
+            smtp_port=int(getenv("SMTP_PORT", "587")),
+            smtp_username=getenv("SMTP_USERNAME"),
+            smtp_password=getenv("SMTP_PASSWORD"),
+            smtp_from_email=getenv("SMTP_FROM_EMAIL"),
+            smtp_use_tls=getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"},
+            whatsapp_api_url=getenv("WHATSAPP_API_URL"),
+            whatsapp_access_token=getenv("WHATSAPP_ACCESS_TOKEN"),
+            document_storage_directory=getenv("DOCUMENT_STORAGE_DIRECTORY", str(ROOT_DIR / ".data" / "documents")),
+            chroma_persist_directory=getenv("CHROMA_PERSIST_DIRECTORY", str(ROOT_DIR / ".data" / "chroma")),
+            chroma_collection_name=getenv("CHROMA_COLLECTION_NAME", "document_records"),
+            document_max_upload_mb=int(getenv("DOCUMENT_MAX_UPLOAD_MB", "100")),
         )
 
     def missing_keys(self) -> list[str]:
