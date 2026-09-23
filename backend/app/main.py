@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 from io import BytesIO
+import hashlib
 import json
 import logging
 import math
@@ -116,6 +117,13 @@ def health() -> dict[str, object]:
     return {
         "ok": not missing,
         "model": settings.openai_model,
+        "voice": {
+            "realtime_model": settings.openai_realtime_model,
+            "realtime_voice": settings.openai_realtime_voice,
+            "transcription_model": settings.openai_transcription_model,
+            "speech_model": settings.openai_tts_model,
+            "voice": settings.openai_tts_voice,
+        },
         "missing": missing,
         "database": db_status,
     }
@@ -126,6 +134,12 @@ def config_status() -> dict[str, object]:
     return {
         "openai_api_key": bool(settings.openai_api_key),
         "openai_model": settings.openai_model,
+        "openai_reasoning_effort": settings.openai_reasoning_effort,
+        "openai_transcription_model": settings.openai_transcription_model,
+        "openai_tts_model": settings.openai_tts_model,
+        "openai_tts_voice": settings.openai_tts_voice,
+        "openai_realtime_model": settings.openai_realtime_model,
+        "openai_realtime_voice": settings.openai_realtime_voice,
         "google_places_api_key": bool(settings.google_places_api_key),
         "google_search_api_key": bool(settings.google_search_api_key),
         "google_search_engine_id": bool(settings.google_search_engine_id),
@@ -409,7 +423,7 @@ class WorkVoiceParseRequest(BaseModel):
 
 class WorkVoiceSpeechRequest(BaseModel):
     text: str
-    voice: str = "marin"
+    voice: str = ""
 
 
 class WorkEmployeeRequest(BaseModel):
@@ -1500,8 +1514,12 @@ def _chat_completion(messages: list[dict[str, str]], *, response_format: dict[st
         "model": settings.openai_model,
         "messages": messages,
         "temperature": 0.2,
-        "max_tokens": max_tokens,
     }
+    if settings.openai_model.startswith("gpt-6"):
+        request_body["reasoning_effort"] = settings.openai_reasoning_effort
+        request_body["max_completion_tokens"] = max_tokens
+    else:
+        request_body["max_tokens"] = max_tokens
     if response_format is not None:
         request_body["response_format"] = response_format
     request = Request(
@@ -1536,6 +1554,60 @@ def _chat_completion(messages: list[dict[str, str]], *, response_format: dict[st
         raise HTTPException(status_code=502, detail="OpenAI returned an unexpected response.") from exc
 
 
+@app.post("/api/work-assignments/voice/realtime/session")
+async def create_work_assignment_realtime_session(
+    request: FastAPIRequest,
+    authorization: str | None = Header(default=None),
+) -> PlainTextResponse:
+    user = _require_permission(authorization, "work_assignments")
+    if not settings.openai_api_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
+
+    sdp = (await request.body()).decode("utf-8", errors="replace").strip()
+    if not sdp:
+        raise HTTPException(status_code=400, detail="An SDP offer is required.")
+
+    allowed_voices = {"alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"}
+    voice = settings.openai_realtime_voice if settings.openai_realtime_voice in allowed_voices else "marin"
+    session_config = {
+        "type": "realtime",
+        "model": settings.openai_realtime_model,
+        "output_modalities": ["audio"],
+        "instructions": (
+            "You are the NexGTools Work Assignment voice assistant. Speak briefly, naturally, and in the user's language. "
+            "Use the available tools for every requested assignment, employee creation, or status change. "
+            "Never claim an action succeeded until the tool result confirms it. Ask a short question when required details are missing."
+        ),
+        "audio": {
+            "input": {
+                "turn_detection": {"type": "semantic_vad"},
+                "transcription": {"model": settings.openai_transcription_model},
+            },
+            "output": {"voice": voice},
+        },
+    }
+    safety_identifier = hashlib.sha256(f"nexgtools-user-{user['id']}".encode("utf-8")).hexdigest()
+
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/realtime/calls",
+            headers={
+                "Authorization": f"Bearer {settings.openai_api_key}",
+                "OpenAI-Safety-Identifier": safety_identifier,
+            },
+            files={
+                "sdp": (None, sdp),
+                "session": (None, json.dumps(session_config)),
+            },
+            timeout=35,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Could not create the realtime voice session: {exc}") from exc
+
+    media_type = "application/sdp" if response.ok else "application/json"
+    return PlainTextResponse(response.text, status_code=response.status_code, media_type=media_type)
+
+
 @app.post("/api/work-assignments/voice/transcribe")
 async def transcribe_work_assignment_voice(file: UploadFile = File(...), authorization: str | None = Header(default=None)) -> dict[str, str]:
     _require_permission(authorization, "work_assignments")
@@ -1552,7 +1624,7 @@ async def transcribe_work_assignment_voice(file: UploadFile = File(...), authori
         audio_file = BytesIO(audio_bytes)
         audio_file.name = file.filename or "work-command.webm"
         transcript = OpenAI(api_key=settings.openai_api_key, timeout=30).audio.transcriptions.create(
-            model="gpt-4o-transcribe",
+            model=settings.openai_transcription_model,
             file=audio_file,
             prompt=(
                 "The speaker may use English, Hindi, Bengali, Hinglish, or Banglish. "
@@ -2047,13 +2119,14 @@ def speak_work_assignment_voice(payload: WorkVoiceSpeechRequest, authorization: 
         raise HTTPException(status_code=400, detail="Text is required.")
 
     allowed_voices = {"alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse", "marin", "cedar"}
-    voice = payload.voice if payload.voice in allowed_voices else "marin"
+    configured_voice = settings.openai_tts_voice if settings.openai_tts_voice in allowed_voices else "marin"
+    voice = payload.voice if payload.voice in allowed_voices else configured_voice
 
     request = Request(
         "https://api.openai.com/v1/audio/speech",
         data=json.dumps(
             {
-                "model": "gpt-4o-mini-tts",
+                "model": settings.openai_tts_model,
                 "voice": voice,
                 "input": text[:4096],
                 "response_format": "mp3",
@@ -2081,7 +2154,14 @@ def speak_work_assignment_voice(payload: WorkVoiceSpeechRequest, authorization: 
     except URLError as exc:
         raise HTTPException(status_code=502, detail=f"Could not reach OpenAI voice generation: {exc.reason}") from exc
 
-    return StreamingResponse(BytesIO(audio), media_type="audio/mpeg")
+    return StreamingResponse(
+        BytesIO(audio),
+        media_type="audio/mpeg",
+        headers={
+            "X-OpenAI-Speech-Model": settings.openai_tts_model,
+            "X-OpenAI-Voice": voice,
+        },
+    )
 
 
 def _find_company_website_with_places(name: str, address: str = "") -> str:

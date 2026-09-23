@@ -83,6 +83,28 @@ Open <http://localhost:8000/health>. A working database reports:
 
 Never commit `.env`; it contains private API keys and passwords.
 
+### Luna voice assistant
+
+The Work Assignments assistant uses GPT-Realtime-2.1 for native speech-to-speech
+conversation and tool calls. GPT-6 Luna plus dedicated transcription and speech
+models remain configured as the fallback. Configure the models in the root `.env`:
+
+```dotenv
+OPENAI_MODEL=gpt-6-luna
+OPENAI_REASONING_EFFORT=none
+OPENAI_TRANSCRIPTION_MODEL=gpt-4o-transcribe
+OPENAI_TTS_MODEL=gpt-4o-mini-tts
+OPENAI_TTS_VOICE=marin
+OPENAI_REALTIME_MODEL=gpt-realtime-2.1
+OPENAI_REALTIME_VOICE=marin
+```
+
+Open Work Assignments and select **Start realtime voice mode**. WebRTC carries
+microphone and speaker audio directly through GPT-Realtime-2.1, including natural
+turn detection and interruptions. The assistant uses function tools to save work
+assignments before confirming them aloud. If Realtime is unavailable, the app
+falls back to the transcription → Luna → speech pipeline.
+
 ## WhatsApp task notifications
 
 Task creation saves the task first, then attempts a Meta WhatsApp template message and an email. The response includes `notifications.whatsapp` with `success` and either `message_id` or `error`, plus `email_status`. A delivery failure leaves the saved task intact. The voice assistant uses the same task route and reports the send result.

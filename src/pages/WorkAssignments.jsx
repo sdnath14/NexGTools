@@ -114,6 +114,53 @@ const getBrowserVoices = () => new Promise((resolve) => {
   window.speechSynthesis.addEventListener('voiceschanged', handleVoicesChanged);
 });
 
+const realtimeTools = [
+  {
+    type: 'function',
+    name: 'assign_task',
+    description: 'Save a work assignment for an existing employee. Call this as soon as the employee and task are clear.',
+    parameters: {
+      type: 'object',
+      properties: {
+        employee_id: { type: 'string', description: 'The exact employee ID from the provided employee list.' },
+        task_title: { type: 'string', description: 'A concise English description of the requested work.' },
+        due_date: { type: 'string', description: 'Due date in YYYY-MM-DD format, or an empty string.' },
+        quantity: { type: 'integer', minimum: 1 },
+        priority: { type: 'string', enum: ['Low', 'Medium', 'High'] },
+      },
+      required: ['employee_id', 'task_title'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'add_employee',
+    description: 'Add an employee after the user provides both a name and phone number.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        phone: { type: 'string' },
+        email: { type: 'string' },
+        role: { type: 'string' },
+      },
+      required: ['name', 'phone'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'update_task_status',
+    description: 'Update the status of an existing task using its exact task ID.',
+    parameters: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: 'The exact task ID from the provided task list.' },
+        status: { type: 'string', enum: ['Pending', 'In Progress', 'Done'] },
+      },
+      required: ['task_id', 'status'],
+    },
+  },
+];
+
 export default function WorkAssignments({ userId }) {
   const [employees, setEmployees] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -145,6 +192,11 @@ export default function WorkAssignments({ userId }) {
   const chatMessagesRef = useRef(chatMessages);
   const runAssistantCommandRef = useRef(null);
   const commandBusyRef = useRef(false);
+  const employeesRef = useRef(employees);
+  const tasksRef = useRef(tasks);
+  const realtimePeerRef = useRef(null);
+  const realtimeDataChannelRef = useRef(null);
+  const realtimeAudioRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem(chatStorageKey(userId), JSON.stringify(chatMessages.slice(-30)));
@@ -175,11 +227,22 @@ export default function WorkAssignments({ userId }) {
     if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     audioContextRef.current?.close();
+    realtimeDataChannelRef.current?.close();
+    realtimePeerRef.current?.close();
+    if (realtimeAudioRef.current) realtimeAudioRef.current.srcObject = null;
   }, []);
 
   useEffect(() => {
     voiceModeRef.current = voiceMode;
   }, [voiceMode]);
+
+  useEffect(() => {
+    employeesRef.current = employees;
+  }, [employees]);
+
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
 
   useEffect(() => {
     if (!canSpeak) return undefined;
@@ -375,6 +438,135 @@ export default function WorkAssignments({ userId }) {
     setChatMessages(next);
   };
 
+  const executeRealtimeTool = async (call) => {
+    let args;
+    try {
+      args = JSON.parse(call.arguments || '{}');
+    } catch {
+      return { success: false, error: 'The tool arguments were not valid JSON.' };
+    }
+
+    try {
+      if (call.name === 'assign_task') {
+        const employee = employeesRef.current.find((item) => String(item.id) === String(args.employee_id));
+        const title = cleanTaskTitle(args.task_title);
+        if (!employee) return { success: false, error: 'Employee not found. Ask the user which employee they mean.' };
+        if (!title) return { success: false, error: 'A clear task description is required.' };
+        const savedTask = await createTaskOnServer({
+          employeeId: employee.id,
+          title,
+          quantity: Math.max(1, Number(args.quantity) || 1),
+          dueDate: normalize(args.due_date),
+          priority: ['Low', 'Medium', 'High'].includes(args.priority) ? args.priority : 'Medium',
+          status: 'Pending',
+          notes: 'Created by the OpenAI Realtime voice assistant.',
+        });
+        lastEmployeeRef.current = employee.id;
+        return { success: true, message: `${savedTask.title} was assigned to ${employee.name}. ${savedTask.deliveryMessage}` };
+      }
+
+      if (call.name === 'add_employee') {
+        const name = normalize(args.name);
+        const phone = normalize(args.phone).replace(/\s+/g, '');
+        if (!name || !phone) return { success: false, error: 'Both employee name and phone number are required.' };
+        const employee = await createEmployeeOnServer({
+          name,
+          phone,
+          email: normalize(args.email).toLowerCase(),
+          role: normalize(args.role),
+          whatsapp_number: '',
+        });
+        return { success: true, message: `${employee.name} was added successfully.` };
+      }
+
+      if (call.name === 'update_task_status') {
+        const task = tasksRef.current.find((item) => String(item.id) === String(args.task_id));
+        const status = ['Pending', 'In Progress', 'Done'].includes(args.status) ? args.status : '';
+        if (!task) return { success: false, error: 'Task not found. Ask the user which task they mean.' };
+        if (!status) return { success: false, error: 'The requested task status is invalid.' };
+        const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks/${task.id}/status`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ status }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || 'Could not update task status.');
+        setTasks((current) => current.map((item) => item.id === task.id ? { ...item, status } : item));
+        return { success: true, message: `${task.title} is now ${status}.` };
+      }
+
+      return { success: false, error: `Unknown tool: ${call.name}` };
+    } catch (error) {
+      setSyncError(error.message || 'The realtime voice action failed.');
+      return { success: false, error: error.message || 'The requested action could not be completed.' };
+    }
+  };
+
+  const handleRealtimeEvent = async (message) => {
+    let event;
+    try {
+      event = JSON.parse(message.data);
+    } catch {
+      return;
+    }
+
+    if (event.type === 'input_audio_buffer.speech_started') {
+      setListening(true);
+      setSpeaking(false);
+      return;
+    }
+    if (event.type === 'input_audio_buffer.speech_stopped') {
+      setListening(false);
+      setProcessingVoice(true);
+      return;
+    }
+    if (event.type === 'conversation.item.input_audio_transcription.completed') {
+      const transcript = normalize(event.transcript);
+      if (transcript) {
+        setVoiceText(transcript);
+        addChatMessage('user', transcript);
+      }
+      return;
+    }
+    if (event.type === 'response.output_audio_transcript.delta') {
+      setProcessingVoice(false);
+      setSpeaking(true);
+      return;
+    }
+    if (event.type === 'response.output_audio_transcript.done') {
+      const transcript = normalize(event.transcript);
+      if (transcript) addChatMessage('assistant', transcript);
+      return;
+    }
+    if (event.type === 'response.done') {
+      const calls = (event.response?.output || []).filter((item) => item.type === 'function_call');
+      if (calls.length) {
+        setProcessingVoice(true);
+        for (const call of calls) {
+          const result = await executeRealtimeTool(call);
+          realtimeDataChannelRef.current?.send(JSON.stringify({
+            type: 'conversation.item.create',
+            item: {
+              type: 'function_call_output',
+              call_id: call.call_id,
+              output: JSON.stringify(result),
+            },
+          }));
+        }
+        realtimeDataChannelRef.current?.send(JSON.stringify({ type: 'response.create' }));
+        return;
+      }
+      setProcessingVoice(false);
+      setSpeaking(false);
+      return;
+    }
+    if (event.type === 'error') {
+      setProcessingVoice(false);
+      setSpeaking(false);
+      setVoiceError(event.error?.message || 'The realtime voice session reported an error.');
+    }
+  };
+
   const stopVoiceCapture = () => {
     window.clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = null;
@@ -385,7 +577,23 @@ export default function WorkAssignments({ userId }) {
     voiceModeRef.current = false;
     setVoiceMode(false);
     setListening(false);
+    setSpeaking(false);
+    setProcessingVoice(false);
     stopVoiceCapture();
+    try {
+      if (realtimeDataChannelRef.current?.readyState === 'open') {
+        realtimeDataChannelRef.current.send(JSON.stringify({ type: 'session.close' }));
+      }
+    } catch { /* The peer may already be closed. */ }
+    realtimeDataChannelRef.current?.close();
+    realtimePeerRef.current?.close();
+    realtimeDataChannelRef.current = null;
+    realtimePeerRef.current = null;
+    if (realtimeAudioRef.current) {
+      realtimeAudioRef.current.pause();
+      realtimeAudioRef.current.srcObject = null;
+      realtimeAudioRef.current = null;
+    }
     replyAudioRef.current?.pause();
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     mediaStreamRef.current = null;
@@ -395,7 +603,7 @@ export default function WorkAssignments({ userId }) {
 
   const speakWithBrowserFallback = async (message) => {
     if (!canSpeak) {
-      if (voiceModeRef.current) window.setTimeout(() => startVoiceCapture(), 350);
+      if (voiceModeRef.current && !realtimePeerRef.current) window.setTimeout(() => startVoiceCapture(), 350);
       return;
     }
     const availableVoices = speechVoices.length ? speechVoices : await getBrowserVoices();
@@ -410,7 +618,7 @@ export default function WorkAssignments({ userId }) {
     utterance.onstart = () => setSpeaking(true);
     utterance.onend = () => {
       setSpeaking(false);
-      if (voiceModeRef.current) window.setTimeout(() => startVoiceCapture(), 350);
+      if (voiceModeRef.current && !realtimePeerRef.current) window.setTimeout(() => startVoiceCapture(), 350);
     };
     utterance.onerror = () => setSpeaking(false);
     window.speechSynthesis.speak(utterance);
@@ -426,7 +634,7 @@ export default function WorkAssignments({ userId }) {
       const response = await fetch('/api/work-assignments/voice/speak', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ text: message, voice: 'marin' }),
+        body: JSON.stringify({ text: message }),
       });
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
@@ -441,7 +649,7 @@ export default function WorkAssignments({ userId }) {
         setSpeaking(false);
         URL.revokeObjectURL(audioUrl);
         if (replyAudioUrlRef.current === audioUrl) replyAudioUrlRef.current = '';
-        if (voiceModeRef.current) window.setTimeout(() => startVoiceCapture(), 350);
+        if (voiceModeRef.current && !realtimePeerRef.current) window.setTimeout(() => startVoiceCapture(), 350);
       };
       audio.onerror = () => {
         setSpeaking(false);
@@ -594,14 +802,14 @@ export default function WorkAssignments({ userId }) {
       if (!response.ok) throw new Error(data.detail || 'OpenAI could not transcribe the voice command.');
       const transcript = normalize(data.text);
       if (!transcript) {
-        if (voiceModeRef.current) window.setTimeout(() => startVoiceCapture(), 350);
+        if (voiceModeRef.current && !realtimePeerRef.current) window.setTimeout(() => startVoiceCapture(), 350);
         return;
       }
       setVoiceText(transcript);
       await runAssistantCommandRef.current(transcript);
     } catch (error) {
       setVoiceError(error.message || 'Could not process the voice command.');
-      if (voiceModeRef.current) window.setTimeout(() => startVoiceCapture(), 700);
+      if (voiceModeRef.current && !realtimePeerRef.current) window.setTimeout(() => startVoiceCapture(), 700);
     } finally {
       setProcessingVoice(false);
     }
@@ -671,6 +879,99 @@ export default function WorkAssignments({ userId }) {
     }
   };
 
+  const startRealtimeVoiceMode = async () => {
+    if (!window.RTCPeerConnection || !navigator.mediaDevices?.getUserMedia) {
+      setVoiceError('Realtime voice is unavailable in this browser. Using standard voice mode.');
+      startVoiceCapture();
+      return;
+    }
+
+    setProcessingVoice(true);
+    try {
+      window.speechSynthesis?.cancel();
+      replyAudioRef.current?.pause();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      mediaStreamRef.current = stream;
+      stream.getAudioTracks().forEach((track) => { track.enabled = false; });
+
+      const peer = new RTCPeerConnection();
+      realtimePeerRef.current = peer;
+      const remoteAudio = new Audio();
+      remoteAudio.autoplay = true;
+      realtimeAudioRef.current = remoteAudio;
+      peer.ontrack = (event) => {
+        remoteAudio.srcObject = event.streams[0];
+        remoteAudio.play().catch(() => setVoiceError('Allow audio playback to hear the assistant.'));
+      };
+      stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+
+      const dataChannel = peer.createDataChannel('oai-events');
+      realtimeDataChannelRef.current = dataChannel;
+      dataChannel.addEventListener('message', handleRealtimeEvent);
+      dataChannel.addEventListener('open', () => {
+        const employeeContext = employeesRef.current.slice(0, 80).map(({ id, name, role }) => ({ id, name, role }));
+        const taskContext = tasksRef.current.slice(0, 120).map(({ id, title, employeeId, status }) => ({ id, title, employeeId, status }));
+        dataChannel.send(JSON.stringify({
+          type: 'session.update',
+          session: {
+            type: 'realtime',
+            instructions: [
+              'You are the NexGTools Work Assignment voice assistant.',
+              'Speak briefly, naturally, and in the user\'s language.',
+              'Use assign_task, add_employee, or update_task_status whenever the user requests one of those actions.',
+              'Never say an action succeeded before its tool result confirms success.',
+              'Ask one short clarification when the employee, task, phone number, or status is ambiguous.',
+              `Today is ${new Date().toISOString().slice(0, 10)}.`,
+              `Employees: ${JSON.stringify(employeeContext)}`,
+              `Tasks: ${JSON.stringify(taskContext)}`,
+            ].join(' '),
+            tools: realtimeTools,
+            tool_choice: 'auto',
+          },
+        }));
+        stream.getAudioTracks().forEach((track) => { track.enabled = true; });
+        setProcessingVoice(false);
+        setAssignmentNotice('Realtime voice connected. Speak naturally; you can interrupt the assistant while it responds.');
+      });
+      dataChannel.addEventListener('close', () => {
+        setListening(false);
+        setSpeaking(false);
+        setProcessingVoice(false);
+      });
+      peer.addEventListener('connectionstatechange', () => {
+        if (['failed', 'disconnected'].includes(peer.connectionState) && voiceModeRef.current) {
+          setVoiceError('The realtime voice connection was interrupted. Stop and restart voice mode to reconnect.');
+        }
+      });
+
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      const response = await fetch(`${API_BASE_URL}/api/work-assignments/voice/realtime/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/sdp', ...authHeaders() },
+        body: peer.localDescription?.sdp || offer.sdp,
+      });
+      const answerSdp = await response.text();
+      if (!response.ok) {
+        let detail = answerSdp;
+        try { detail = JSON.parse(answerSdp).error?.message || JSON.parse(answerSdp).detail || answerSdp; } catch { /* Use response text. */ }
+        throw new Error(detail || 'Could not create the realtime voice session.');
+      }
+      await peer.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+    } catch (error) {
+      realtimeDataChannelRef.current?.close();
+      realtimePeerRef.current?.close();
+      realtimeDataChannelRef.current = null;
+      realtimePeerRef.current = null;
+      mediaStreamRef.current?.getAudioTracks().forEach((track) => { track.enabled = true; });
+      setProcessingVoice(false);
+      setVoiceError(`${error.message || 'Realtime voice could not start.'} Using standard voice mode.`);
+      if (voiceModeRef.current) startVoiceCapture();
+    }
+  };
+
   const toggleListening = () => {
     setVoiceError('');
     if (voiceModeRef.current || listening) {
@@ -679,7 +980,7 @@ export default function WorkAssignments({ userId }) {
     }
     voiceModeRef.current = true;
     setVoiceMode(true);
-    startVoiceCapture();
+    startRealtimeVoiceMode();
   };
 
   return (
@@ -698,12 +999,12 @@ export default function WorkAssignments({ userId }) {
       </header>
 
       <section className="work-assistant">
-        <div className="work-assistant-head"><Bot size={20} /><div><h2>Work Agent</h2><p>Say the employee name and task in your language. Clear assignments are saved immediately and an email is attempted.</p></div><button type="button" className="work-clear-chat" onClick={clearConversation} disabled={listening || speaking || processingVoice}>New conversation</button><span className={listening ? 'work-voice-state work-voice-listening' : speaking ? 'work-voice-state work-voice-speaking' : processingVoice ? 'work-voice-state work-voice-processing' : 'work-voice-state'}>{listening ? <Mic size={14} /> : speaking ? <Volume2 size={14} /> : processingVoice ? <LoaderCircle size={14} /> : <Sparkles size={14} />}{listening ? 'Listening' : speaking ? 'Speaking' : processingVoice ? 'Thinking' : voiceMode ? 'Voice Mode' : 'Ready'}</span></div>
+        <div className="work-assistant-head"><Bot size={20} /><div><h2>Realtime Work Agent</h2><p>Speak naturally in your language. The assistant listens, completes assignments with tools, and responds directly by voice.</p></div><button type="button" className="work-clear-chat" onClick={clearConversation} disabled={listening || speaking || processingVoice}>New conversation</button><span className={listening ? 'work-voice-state work-voice-listening' : speaking ? 'work-voice-state work-voice-speaking' : processingVoice ? 'work-voice-state work-voice-processing' : 'work-voice-state'}>{listening ? <Mic size={14} /> : speaking ? <Volume2 size={14} /> : processingVoice ? <LoaderCircle size={14} /> : <Sparkles size={14} />}{listening ? 'Listening' : speaking ? 'Speaking' : processingVoice ? 'Thinking' : voiceMode ? 'Realtime Voice' : 'Ready'}</span></div>
         <div className="work-agent-layout">
           <div className={listening ? 'work-voice-orb is-listening' : speaking || processingVoice ? 'work-voice-orb is-speaking' : 'work-voice-orb'}>
             <div className="work-orb-rings"><span /><span /><span /></div>
             <div className="work-wave" aria-hidden="true">{Array.from({ length: 9 }).map((_, index) => <i key={index} />)}</div>
-            <strong>{listening ? 'Listening — press Stop and respond when done' : processingVoice ? 'Analyzing with OpenAI' : speaking ? 'Responding' : voiceMode ? 'Voice mode on' : 'Start voice mode'}</strong>
+            <strong>{listening ? 'Listening — speak naturally' : processingVoice ? 'Connecting or completing your request' : speaking ? 'Speaking — you can interrupt' : voiceMode ? 'Realtime voice-to-voice mode on' : 'Start realtime voice mode'}</strong>
             <button type="button" className={listening ? 'work-mic work-mic-live' : 'work-mic'} onClick={toggleListening} title={listening ? 'Stop listening' : 'Start voice input'}>
               {processingVoice ? <LoaderCircle size={21} /> : listening || voiceMode ? <MicOff size={21} /> : <Mic size={21} />}
             </button>

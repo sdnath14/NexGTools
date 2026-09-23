@@ -33,6 +33,12 @@ def load_dotenv(path: Path = ENV_PATH) -> None:
 class Settings:
     openai_api_key: str
     openai_model: str
+    openai_reasoning_effort: str
+    openai_transcription_model: str
+    openai_tts_model: str
+    openai_tts_voice: str
+    openai_realtime_model: str
+    openai_realtime_voice: str
     google_places_api_key: str
     google_search_api_key: str
     google_search_engine_id: str
@@ -67,7 +73,13 @@ class Settings:
         load_dotenv()
         return cls(
             openai_api_key=getenv("OPENAI_API_KEY"),
-            openai_model=getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+            openai_model=getenv("OPENAI_MODEL", "gpt-6-luna"),
+            openai_reasoning_effort=getenv("OPENAI_REASONING_EFFORT", "none"),
+            openai_transcription_model=getenv("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-transcribe"),
+            openai_tts_model=getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
+            openai_tts_voice=getenv("OPENAI_TTS_VOICE", "marin"),
+            openai_realtime_model=getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1"),
+            openai_realtime_voice=getenv("OPENAI_REALTIME_VOICE", "marin"),
             google_places_api_key=getenv("GOOGLE_PLACES_API_KEY"),
             google_search_api_key=getenv("GOOGLE_SEARCH_API_KEY"),
             google_search_engine_id=getenv("GOOGLE_SEARCH_ENGINE_ID"),
