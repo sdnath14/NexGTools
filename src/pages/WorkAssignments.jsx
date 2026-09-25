@@ -28,6 +28,46 @@ const emptyTask = { employeeId: '', title: '', quantity: 1, dueDate: '', priorit
 const canRecordVoice = 'MediaRecorder' in window && navigator.mediaDevices?.getUserMedia;
 const canSpeak = 'speechSynthesis' in window;
 
+const microphoneErrorDetails = (error) => {
+  const name = error?.name || '';
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+    return {
+      state: 'missing',
+      message: 'Windows has no microphone input available. Connect a headset with a microphone (USB, Bluetooth, or a 4-pole TRRS plug), select it in Settings > System > Sound > Input, then start voice mode again.',
+    };
+  }
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+    return {
+      state: 'blocked',
+      message: 'Microphone access is blocked. Allow microphone access for this site in the browser and in Windows Settings > Privacy & security > Microphone.',
+    };
+  }
+  if (name === 'NotReadableError' || name === 'TrackStartError') {
+    return {
+      state: 'busy',
+      message: 'The microphone is busy or unavailable. Close other apps using it, reconnect the headset, and try again.',
+    };
+  }
+  return { state: 'error', message: error?.message || 'The microphone could not be started.' };
+};
+
+const requestMicrophone = async () => {
+  const constraints = {
+    audio: {
+      echoCancellation: { ideal: true },
+      noiseSuppression: { ideal: true },
+      autoGainControl: { ideal: true },
+      channelCount: { ideal: 1 },
+    },
+  };
+  try {
+    return await navigator.mediaDevices.getUserMedia(constraints);
+  } catch (error) {
+    if (error?.name !== 'OverconstrainedError') throw error;
+    return navigator.mediaDevices.getUserMedia({ audio: true });
+  }
+};
+
 const femaleVoiceNames = [
   'Microsoft Neerja',
   'Microsoft Heera',
@@ -177,6 +217,7 @@ export default function WorkAssignments({ userId }) {
   const [processingVoice, setProcessingVoice] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
   const [voiceError, setVoiceError] = useState('');
+  const [microphoneState, setMicrophoneState] = useState(canRecordVoice ? 'checking' : 'unsupported');
   const [speechVoices, setSpeechVoices] = useState([]);
   const [syncError, setSyncError] = useState('');
   const [assignmentNotice, setAssignmentNotice] = useState('');
@@ -235,6 +276,26 @@ export default function WorkAssignments({ userId }) {
   useEffect(() => {
     voiceModeRef.current = voiceMode;
   }, [voiceMode]);
+
+  useEffect(() => {
+    if (!navigator.mediaDevices?.enumerateDevices) return undefined;
+    let active = true;
+    const refreshMicrophones = async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        if (!active) return;
+        setMicrophoneState(devices.some((device) => device.kind === 'audioinput') ? 'ready' : 'missing');
+      } catch {
+        if (active) setMicrophoneState('unknown');
+      }
+    };
+    refreshMicrophones();
+    navigator.mediaDevices.addEventListener?.('devicechange', refreshMicrophones);
+    return () => {
+      active = false;
+      navigator.mediaDevices.removeEventListener?.('devicechange', refreshMicrophones);
+    };
+  }, []);
 
   useEffect(() => {
     employeesRef.current = employees;
@@ -601,9 +662,9 @@ export default function WorkAssignments({ userId }) {
     audioContextRef.current = null;
   };
 
-  const speakWithBrowserFallback = async (message) => {
+  const speakWithBrowserFallback = async (message, { resumeAfter = true } = {}) => {
     if (!canSpeak) {
-      if (voiceModeRef.current && !realtimePeerRef.current) window.setTimeout(() => startVoiceCapture(), 350);
+      if (resumeAfter && voiceModeRef.current && !realtimePeerRef.current) window.setTimeout(() => startVoiceCapture(), 350);
       return;
     }
     const availableVoices = speechVoices.length ? speechVoices : await getBrowserVoices();
@@ -616,15 +677,21 @@ export default function WorkAssignments({ userId }) {
     utterance.rate = 0.88;
     utterance.pitch = 1.35;
     utterance.onstart = () => setSpeaking(true);
-    utterance.onend = () => {
-      setSpeaking(false);
-      if (voiceModeRef.current && !realtimePeerRef.current) window.setTimeout(() => startVoiceCapture(), 350);
-    };
-    utterance.onerror = () => setSpeaking(false);
-    window.speechSynthesis.speak(utterance);
+    await new Promise((resolve) => {
+      utterance.onend = () => {
+        setSpeaking(false);
+        if (resumeAfter && voiceModeRef.current && !realtimePeerRef.current) window.setTimeout(() => startVoiceCapture(), 350);
+        resolve();
+      };
+      utterance.onerror = () => {
+        setSpeaking(false);
+        resolve();
+      };
+      window.speechSynthesis.speak(utterance);
+    });
   };
 
-  const speak = async (message) => {
+  const speak = async (message, { resumeAfter = true } = {}) => {
     addChatMessage('assistant', message);
     try {
       window.speechSynthesis?.cancel();
@@ -645,23 +712,26 @@ export default function WorkAssignments({ userId }) {
       replyAudioUrlRef.current = audioUrl;
       const audio = new Audio(audioUrl);
       replyAudioRef.current = audio;
-      audio.onended = () => {
-        setSpeaking(false);
-        URL.revokeObjectURL(audioUrl);
-        if (replyAudioUrlRef.current === audioUrl) replyAudioUrlRef.current = '';
-        if (voiceModeRef.current && !realtimePeerRef.current) window.setTimeout(() => startVoiceCapture(), 350);
-      };
-      audio.onerror = () => {
-        setSpeaking(false);
-        URL.revokeObjectURL(audioUrl);
-        if (replyAudioUrlRef.current === audioUrl) replyAudioUrlRef.current = '';
-        speakWithBrowserFallback(message);
-      };
       await audio.play();
+      await new Promise((resolve, reject) => {
+        audio.onended = () => {
+          setSpeaking(false);
+          URL.revokeObjectURL(audioUrl);
+          if (replyAudioUrlRef.current === audioUrl) replyAudioUrlRef.current = '';
+          if (resumeAfter && voiceModeRef.current && !realtimePeerRef.current) window.setTimeout(() => startVoiceCapture(), 350);
+          resolve();
+        };
+        audio.onerror = () => {
+          setSpeaking(false);
+          URL.revokeObjectURL(audioUrl);
+          if (replyAudioUrlRef.current === audioUrl) replyAudioUrlRef.current = '';
+          reject(new Error('The generated voice response could not be played.'));
+        };
+      });
     } catch (error) {
       setSpeaking(false);
       setVoiceError(error.message || 'OpenAI voice generation failed. Using browser voice fallback.');
-      speakWithBrowserFallback(message);
+      await speakWithBrowserFallback(message, { resumeAfter });
     }
   };
 
@@ -758,7 +828,7 @@ export default function WorkAssignments({ userId }) {
     return data;
   };
 
-  const runAssistantCommand = async (commandText = voiceText) => {
+  const runAssistantCommand = async (commandText = voiceText, { addUserMessage = true } = {}) => {
     const command = normalize(commandText);
     if (!command) {
       speak('Please say or type a command first.');
@@ -768,7 +838,7 @@ export default function WorkAssignments({ userId }) {
     commandBusyRef.current = true;
 
     const history = chatMessagesRef.current;
-    addChatMessage('user', command);
+    if (addUserMessage) addChatMessage('user', command);
     setVoiceText('');
     try {
       const action = await parseCommandWithOpenAi(command, history);
@@ -802,14 +872,15 @@ export default function WorkAssignments({ userId }) {
       if (!response.ok) throw new Error(data.detail || 'OpenAI could not transcribe the voice command.');
       const transcript = normalize(data.text);
       if (!transcript) {
-        if (voiceModeRef.current && !realtimePeerRef.current) window.setTimeout(() => startVoiceCapture(), 350);
+        setVoiceError('I could not hear any words. Press the microphone and speak closer to the input device.');
         return;
       }
       setVoiceText(transcript);
-      await runAssistantCommandRef.current(transcript);
+      addChatMessage('user', transcript);
+      await speak(`I heard: ${transcript}`, { resumeAfter: false });
+      await runAssistantCommandRef.current(transcript, { addUserMessage: false });
     } catch (error) {
       setVoiceError(error.message || 'Could not process the voice command.');
-      if (voiceModeRef.current && !realtimePeerRef.current) window.setTimeout(() => startVoiceCapture(), 700);
     } finally {
       setProcessingVoice(false);
     }
@@ -825,8 +896,9 @@ export default function WorkAssignments({ userId }) {
     }
     try {
       window.speechSynthesis?.cancel();
-      const stream = mediaStreamRef.current || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      const stream = mediaStreamRef.current || await requestMicrophone();
       mediaStreamRef.current = stream;
+      setMicrophoneState('ready');
       const chunks = [];
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
       const recorder = new MediaRecorder(stream, { mimeType });
@@ -836,8 +908,12 @@ export default function WorkAssignments({ userId }) {
       };
       recorder.onstop = () => {
         setListening(false);
+        voiceModeRef.current = false;
+        setVoiceMode(false);
         window.clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = null;
+        stream.getTracks().forEach((track) => track.stop());
+        if (mediaStreamRef.current === stream) mediaStreamRef.current = null;
         submitVoiceAudio(new Blob(chunks, { type: mimeType }));
       };
 
@@ -872,14 +948,16 @@ export default function WorkAssignments({ userId }) {
       }, 14000);
       window.requestAnimationFrame(watchSilence);
     } catch (error) {
+      const details = microphoneErrorDetails(error);
       setListening(false);
       setVoiceMode(false);
       voiceModeRef.current = false;
-      setVoiceError(error.message || 'Microphone permission was not granted.');
+      setMicrophoneState(details.state);
+      setVoiceError(details.message);
     }
   };
 
-  const startRealtimeVoiceMode = async () => {
+  const _startRealtimeVoiceMode = async () => {
     if (!window.RTCPeerConnection || !navigator.mediaDevices?.getUserMedia) {
       setVoiceError('Realtime voice is unavailable in this browser. Using standard voice mode.');
       startVoiceCapture();
@@ -887,19 +965,20 @@ export default function WorkAssignments({ userId }) {
     }
 
     setProcessingVoice(true);
+    let stream;
     try {
       window.speechSynthesis?.cancel();
       replyAudioRef.current?.pause();
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
+      stream = await requestMicrophone();
       mediaStreamRef.current = stream;
+      setMicrophoneState('ready');
       stream.getAudioTracks().forEach((track) => { track.enabled = false; });
 
       const peer = new RTCPeerConnection();
       realtimePeerRef.current = peer;
       const remoteAudio = new Audio();
       remoteAudio.autoplay = true;
+      remoteAudio.playsInline = true;
       realtimeAudioRef.current = remoteAudio;
       peer.ontrack = (event) => {
         remoteAudio.srcObject = event.streams[0];
@@ -921,12 +1000,22 @@ export default function WorkAssignments({ userId }) {
               'You are the NexGTools Work Assignment voice assistant.',
               'Speak briefly, naturally, and in the user\'s language.',
               'Use assign_task, add_employee, or update_task_status whenever the user requests one of those actions.',
+              'For an assignment, match the spoken employee name to the employee list, preserve the requested task wording accurately, and call assign_task immediately when both are clear.',
+              'The assign_task result includes the real email delivery status. State that result clearly after the tool finishes.',
+              'Do not only explain how to assign a task; perform the tool call.',
               'Never say an action succeeded before its tool result confirms success.',
               'Ask one short clarification when the employee, task, phone number, or status is ambiguous.',
               `Today is ${new Date().toISOString().slice(0, 10)}.`,
               `Employees: ${JSON.stringify(employeeContext)}`,
               `Tasks: ${JSON.stringify(taskContext)}`,
             ].join(' '),
+            audio: {
+              input: {
+                transcription: {
+                  prompt: `Employee names and roles: ${employeeContext.map((employee) => `${employee.name}${employee.role ? ` (${employee.role})` : ''}`).join(', ')}. Preserve names, task details, quantities, and dates exactly as spoken. The speaker may use English, Hindi, Bengali, Hinglish, or Banglish.`,
+                },
+              },
+            },
             tools: realtimeTools,
             tool_choice: 'auto',
           },
@@ -961,14 +1050,25 @@ export default function WorkAssignments({ userId }) {
       }
       await peer.setRemoteDescription({ type: 'answer', sdp: answerSdp });
     } catch (error) {
+      const microphoneFailure = ['NotFoundError', 'DevicesNotFoundError', 'NotAllowedError', 'PermissionDeniedError', 'NotReadableError', 'TrackStartError'].includes(error?.name);
       realtimeDataChannelRef.current?.close();
       realtimePeerRef.current?.close();
       realtimeDataChannelRef.current = null;
       realtimePeerRef.current = null;
       mediaStreamRef.current?.getAudioTracks().forEach((track) => { track.enabled = true; });
       setProcessingVoice(false);
+      if (microphoneFailure) {
+        const details = microphoneErrorDetails(error);
+        mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+        voiceModeRef.current = false;
+        setVoiceMode(false);
+        setMicrophoneState(details.state);
+        setVoiceError(details.message);
+        return;
+      }
       setVoiceError(`${error.message || 'Realtime voice could not start.'} Using standard voice mode.`);
-      if (voiceModeRef.current) startVoiceCapture();
+      if (voiceModeRef.current && stream) startVoiceCapture();
     }
   };
 
@@ -980,7 +1080,7 @@ export default function WorkAssignments({ userId }) {
     }
     voiceModeRef.current = true;
     setVoiceMode(true);
-    startRealtimeVoiceMode();
+    startVoiceCapture();
   };
 
   return (
@@ -999,12 +1099,12 @@ export default function WorkAssignments({ userId }) {
       </header>
 
       <section className="work-assistant">
-        <div className="work-assistant-head"><Bot size={20} /><div><h2>Realtime Work Agent</h2><p>Speak naturally in your language. The assistant listens, completes assignments with tools, and responds directly by voice.</p></div><button type="button" className="work-clear-chat" onClick={clearConversation} disabled={listening || speaking || processingVoice}>New conversation</button><span className={listening ? 'work-voice-state work-voice-listening' : speaking ? 'work-voice-state work-voice-speaking' : processingVoice ? 'work-voice-state work-voice-processing' : 'work-voice-state'}>{listening ? <Mic size={14} /> : speaking ? <Volume2 size={14} /> : processingVoice ? <LoaderCircle size={14} /> : <Sparkles size={14} />}{listening ? 'Listening' : speaking ? 'Speaking' : processingVoice ? 'Thinking' : voiceMode ? 'Realtime Voice' : 'Ready'}</span></div>
+        <div className="work-assistant-head"><Bot size={20} /><div><h2>Voice Work Agent</h2><p>Press once and speak in your language. The assistant repeats what it heard, analyzes the request, assigns the task, and reports email delivery.</p></div><button type="button" className="work-clear-chat" onClick={clearConversation} disabled={listening || speaking || processingVoice}>New conversation</button><span className={listening ? 'work-voice-state work-voice-listening' : speaking ? 'work-voice-state work-voice-speaking' : processingVoice ? 'work-voice-state work-voice-processing' : 'work-voice-state'}>{listening ? <Mic size={14} /> : speaking ? <Volume2 size={14} /> : processingVoice ? <LoaderCircle size={14} /> : <Sparkles size={14} />}{listening ? 'Listening' : speaking ? 'Speaking' : processingVoice ? 'Analyzing' : voiceMode ? 'Recording' : 'Ready'}</span></div>
         <div className="work-agent-layout">
           <div className={listening ? 'work-voice-orb is-listening' : speaking || processingVoice ? 'work-voice-orb is-speaking' : 'work-voice-orb'}>
             <div className="work-orb-rings"><span /><span /><span /></div>
             <div className="work-wave" aria-hidden="true">{Array.from({ length: 9 }).map((_, index) => <i key={index} />)}</div>
-            <strong>{listening ? 'Listening — speak naturally' : processingVoice ? 'Connecting or completing your request' : speaking ? 'Speaking — you can interrupt' : voiceMode ? 'Realtime voice-to-voice mode on' : 'Start realtime voice mode'}</strong>
+            <strong>{listening ? 'Listening — say the employee and task' : processingVoice ? 'Transcribing and assigning your task' : speaking ? 'Speaking the result' : voiceMode ? 'Microphone starting' : 'Press once, then speak'}</strong>
             <button type="button" className={listening ? 'work-mic work-mic-live' : 'work-mic'} onClick={toggleListening} title={listening ? 'Stop listening' : 'Start voice input'}>
               {processingVoice ? <LoaderCircle size={21} /> : listening || voiceMode ? <MicOff size={21} /> : <Mic size={21} />}
             </button>
@@ -1021,6 +1121,7 @@ export default function WorkAssignments({ userId }) {
             </div>
           </div>
         </div>
+        {microphoneState === 'missing' && !voiceError && <p className="work-inline-error"><AlertCircle size={15} /> No microphone input is detected. Connect or enable a microphone in Windows Sound settings before starting voice mode.</p>}
         {voiceError && <p className="work-inline-error"><AlertCircle size={15} /> {voiceError}</p>}
         {syncError && <p className="work-inline-error"><AlertCircle size={15} /> {syncError}</p>}
         {assignmentNotice && <p className="work-voice-state">{assignmentNotice}</p>}
