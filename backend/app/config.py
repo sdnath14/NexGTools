@@ -63,6 +63,7 @@ class Settings:
     whatsapp_verify_token: str
     whatsapp_api_version: str
     whatsapp_task_template_name: str
+    cors_allow_origins: str
     document_storage_directory: str
     chroma_persist_directory: str
     chroma_collection_name: str
@@ -104,6 +105,10 @@ class Settings:
             whatsapp_verify_token=getenv("WHATSAPP_VERIFY_TOKEN"),
             whatsapp_api_version=getenv("WHATSAPP_API_VERSION", "v23.0"),
             whatsapp_task_template_name=getenv("WHATSAPP_TASK_TEMPLATE_NAME", "employee_task_assignment"),
+            cors_allow_origins=getenv(
+                "CORS_ALLOW_ORIGINS",
+                "http://localhost:5173,http://127.0.0.1:5173,https://localhost",
+            ),
             document_storage_directory=getenv("DOCUMENT_STORAGE_DIRECTORY", str(ROOT_DIR / ".data" / "documents")),
             chroma_persist_directory=getenv("CHROMA_PERSIST_DIRECTORY", str(ROOT_DIR / ".data" / "chroma")),
             chroma_collection_name=getenv("CHROMA_COLLECTION_NAME", "document_records"),

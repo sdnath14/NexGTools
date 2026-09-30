@@ -11,6 +11,10 @@
   --app-border: #e2e8f0;
   --app-text: #0f172a;
   --app-muted: #64748b;
+  --sat: env(safe-area-inset-top, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
   font-family: var(--app-font-family);
   line-height: 1.5;
   font-weight: 400;
@@ -29,10 +33,13 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  min-height: 100dvh;
   font-family: var(--app-font-family);
   color: var(--app-text);
   background: var(--app-bg);
   transition: color 0.2s ease, background-color 0.2s ease;
+  overscroll-behavior-y: none;
+  -webkit-text-size-adjust: 100%;
 }
 
 button,
@@ -40,6 +47,7 @@ input,
 textarea,
 select {
   font-family: var(--app-font-family);
+  font-size: 16px;
 }
 
 :where(
@@ -80,6 +88,8 @@ select {
 
 #root {
   width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 h1, h2, h3, h4, h5, h6 {

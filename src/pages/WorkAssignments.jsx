@@ -698,7 +698,7 @@ export default function WorkAssignments({ userId }) {
       replyAudioRef.current?.pause();
       if (replyAudioUrlRef.current) URL.revokeObjectURL(replyAudioUrlRef.current);
       setSpeaking(true);
-      const response = await fetch('/api/work-assignments/voice/speak', {
+      const response = await fetch(`${API_BASE_URL}/api/work-assignments/voice/speak`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ text: message }),
@@ -812,7 +812,7 @@ export default function WorkAssignments({ userId }) {
   };
 
   const parseCommandWithOpenAi = async (command, history) => {
-    const response = await fetch('/api/work-assignments/voice/parse', {
+    const response = await fetch(`${API_BASE_URL}/api/work-assignments/voice/parse`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({
@@ -867,7 +867,7 @@ export default function WorkAssignments({ userId }) {
     try {
       const formData = new FormData();
       formData.append('file', audioBlob, 'work-command.webm');
-      const response = await fetch('/api/work-assignments/voice/transcribe', { method: 'POST', headers: authHeaders(), body: formData });
+      const response = await fetch(`${API_BASE_URL}/api/work-assignments/voice/transcribe`, { method: 'POST', headers: authHeaders(), body: formData });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'OpenAI could not transcribe the voice command.');
       const transcript = normalize(data.text);

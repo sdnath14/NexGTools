@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">NexgTools</string>
+    <string name="title_activity_main">NexgTools</string>
+    <string name="package_name">com.nexgpetrolube.tools</string>
+    <string name="custom_url_scheme">com.nexgpetrolube.tools</string>
+</resources>

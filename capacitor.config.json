@@ -1,0 +1,11 @@
+{
+  "appId": "com.nexgpetrolube.tools",
+  "appName": "NexgTools",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "backgroundColor": "#f1f5f9"
+  }
+}

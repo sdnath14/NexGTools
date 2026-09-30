@@ -86,9 +86,11 @@ from .used_oil_india import create_row as create_used_oil_row, delete_row as del
 
 app = FastAPI(title="NexGTools API", version="0.1.0")
 logger = logging.getLogger(__name__)
+cors_allow_origins = [origin.strip() for origin in settings.cors_allow_origins.split(",") if origin.strip()]
 
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=cors_allow_origins,
     allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):517\d$",
     allow_credentials=True,
     allow_methods=["*"],
