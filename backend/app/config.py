@@ -63,6 +63,11 @@ class Settings:
     whatsapp_verify_token: str
     whatsapp_api_version: str
     whatsapp_task_template_name: str
+    firebase_service_account_file: str
+    firebase_project_id: str
+    fcm_enabled: bool
+    fcm_dry_run: bool
+    fcm_default_android_channel_id: str
     cors_allow_origins: str
     document_storage_directory: str
     chroma_persist_directory: str
@@ -105,6 +110,11 @@ class Settings:
             whatsapp_verify_token=getenv("WHATSAPP_VERIFY_TOKEN"),
             whatsapp_api_version=getenv("WHATSAPP_API_VERSION", "v23.0"),
             whatsapp_task_template_name=getenv("WHATSAPP_TASK_TEMPLATE_NAME", "employee_task_assignment"),
+            firebase_service_account_file=getenv("FIREBASE_SERVICE_ACCOUNT_FILE"),
+            firebase_project_id=getenv("FIREBASE_PROJECT_ID"),
+            fcm_enabled=getenv("FCM_ENABLED", "false").lower() in {"1", "true", "yes"},
+            fcm_dry_run=getenv("FCM_DRY_RUN", "false").lower() in {"1", "true", "yes"},
+            fcm_default_android_channel_id=getenv("FCM_DEFAULT_ANDROID_CHANNEL_ID", "task_assignments"),
             cors_allow_origins=getenv(
                 "CORS_ALLOW_ORIGINS",
                 "http://localhost:5173,http://127.0.0.1:5173,https://localhost",

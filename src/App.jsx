@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
 import Dashboard from './pages/Dashboard';
@@ -18,7 +18,27 @@ import WorkAssignments from './pages/WorkAssignments';
 import MyTasks from './pages/MyTasks';
 import { ADMIN_TOKEN_KEY, API_BASE_URL, AUTH_TOKEN_KEY, adminHeaders, authHeaders } from './auth';
 import { applyAppearance, loadAppearance, saveAppearance } from './appearance';
+import { deactivatePushNotifications, registerPushNotifications } from './pushNotifications';
 import './App.css';
+
+function PushNotificationBridge({ user }) {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!user?.id) return undefined;
+    let active = true;
+    registerPushNotifications({ user, navigate }).catch(() => {
+      if (active) {
+        // Push registration is optional and should never block the workspace.
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [navigate, user]);
+
+  return null;
+}
 
 function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -81,6 +101,7 @@ function App() {
 
   const logout = async () => {
     try {
+      await deactivatePushNotifications();
       await fetch(`${API_BASE_URL}/api/auth/logout`, {
         method: 'POST',
         headers: authHeaders(),
@@ -106,6 +127,7 @@ function App() {
   return (
     <Router>
       <div className={`app-layout ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''}`}>
+        <PushNotificationBridge user={user} />
         <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} permissions={user.permissions || []} isNexgAdmin={user.is_nexg_admin} />
         <div className="app-main">
           <Topbar user={user} onLogout={logout} />

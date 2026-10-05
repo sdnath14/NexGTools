@@ -988,6 +988,102 @@ def delete_session(token: str) -> None:
             cursor.execute("DELETE FROM user_sessions WHERE token = %s", (token,))
 
 
+def fcm_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def save_fcm_device_token(
+    user_id: int,
+    token: str,
+    platform: str = "android",
+    app_package: str = "",
+    app_version: str = "",
+    device_id: str = "",
+    device_model: str = "",
+) -> None:
+    token_hash = fcm_token_hash(token)
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO fcm_device_tokens (
+                    user_id, token, token_hash, platform, app_package, app_version,
+                    device_id, device_model, is_active, last_seen_at, revoked_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE, CURRENT_TIMESTAMP, NULL)
+                ON DUPLICATE KEY UPDATE
+                    user_id = VALUES(user_id),
+                    token = VALUES(token),
+                    platform = VALUES(platform),
+                    app_package = VALUES(app_package),
+                    app_version = VALUES(app_version),
+                    device_id = VALUES(device_id),
+                    device_model = VALUES(device_model),
+                    is_active = TRUE,
+                    last_seen_at = CURRENT_TIMESTAMP,
+                    revoked_at = NULL
+                """,
+                (
+                    user_id,
+                    token,
+                    token_hash,
+                    platform,
+                    app_package,
+                    app_version,
+                    device_id,
+                    device_model,
+                ),
+            )
+
+
+def deactivate_fcm_device_token(user_id: int, token: str) -> bool:
+    token_hash = fcm_token_hash(token)
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE fcm_device_tokens
+                SET is_active = FALSE, revoked_at = CURRENT_TIMESTAMP
+                WHERE user_id = %s AND token_hash = %s
+                """,
+                (user_id, token_hash),
+            )
+            return cursor.rowcount > 0
+
+
+def list_active_fcm_device_tokens(user_id: int) -> list[dict[str, Any]]:
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, token, token_hash, platform
+                FROM fcm_device_tokens
+                WHERE user_id = %s AND is_active = TRUE
+                ORDER BY last_seen_at DESC, id DESC
+                """,
+                (user_id,),
+            )
+            return cursor.fetchall()
+
+
+def deactivate_fcm_tokens_by_hash(token_hashes: list[str]) -> int:
+    clean_hashes = [token_hash for token_hash in token_hashes if token_hash]
+    if not clean_hashes:
+        return 0
+    placeholders = ", ".join(["%s"] * len(clean_hashes))
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"""
+                UPDATE fcm_device_tokens
+                SET is_active = FALSE, revoked_at = CURRENT_TIMESTAMP
+                WHERE token_hash IN ({placeholders})
+                """,
+                tuple(clean_hashes),
+            )
+            return cursor.rowcount
+
+
 def get_user_by_token(token: str) -> dict[str, Any] | None:
     if not token:
         return None

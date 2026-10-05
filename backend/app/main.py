@@ -37,6 +37,7 @@ from .analytics import (
     validate_sql,
 )
 from .config import settings
+from .fcm_service import send_task_assignment_notification
 from .whatsapp_service import send_whatsapp_task
 from .database import (
     admin_overview,
@@ -47,6 +48,8 @@ from .database import (
     db_connection,
     database_status,
     delete_admin_record,
+    deactivate_fcm_device_token,
+    deactivate_fcm_tokens_by_hash,
     delete_outreach_contact,
     delete_outreach_draft,
     delete_role,
@@ -59,6 +62,7 @@ from .database import (
     get_user_by_email,
     get_user_by_token,
     initialize_database,
+    list_active_fcm_device_tokens,
     list_csv_exports,
     list_business_search_history,
     list_lead_search_history,
@@ -72,6 +76,7 @@ from .database import (
     save_csv_export,
     save_business_search,
     save_lead_search,
+    save_fcm_device_token,
     save_manual_outreach_contact,
     save_outreach_message,
     save_outreach_draft,
@@ -236,6 +241,29 @@ def ensure_work_assignment_tables() -> None:
                     CONSTRAINT fk_work_notification_task FOREIGN KEY (task_id) REFERENCES work_tasks(id) ON DELETE CASCADE,
                     CONSTRAINT fk_work_notification_recipient FOREIGN KEY (recipient_user_id) REFERENCES users(id) ON DELETE CASCADE,
                     CONSTRAINT fk_work_notification_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS fcm_device_tokens (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT UNSIGNED NOT NULL,
+                    token TEXT NOT NULL,
+                    token_hash CHAR(64) NOT NULL,
+                    platform VARCHAR(32) NOT NULL DEFAULT 'android',
+                    app_package VARCHAR(255),
+                    app_version VARCHAR(64),
+                    device_id VARCHAR(255),
+                    device_model VARCHAR(255),
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    revoked_at TIMESTAMP NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_fcm_token_hash (token_hash),
+                    INDEX idx_fcm_user_active (user_id, is_active),
+                    CONSTRAINT fk_fcm_device_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
@@ -456,6 +484,15 @@ class WorkTaskStatusRequest(BaseModel):
     status: str
 
 
+class PushDeviceTokenRequest(BaseModel):
+    token: str
+    platform: str = "android"
+    app_package: str = ""
+    app_version: str = ""
+    device_id: str = ""
+    device_model: str = ""
+
+
 class AuthRequest(BaseModel):
     email: str
     password: str
@@ -653,6 +690,49 @@ def _require_permission(authorization: str | None, permission: str) -> dict[str,
     if permission not in user.get("permissions", []):
         raise HTTPException(status_code=403, detail=f"You do not have access to {permission.replace('_', ' ')}.")
     return user
+
+
+def _clean_push_value(value: str, max_length: int = 255) -> str:
+    return value.strip()[:max_length]
+
+
+def _send_task_assignment_push(recipient_user_id: int, task: dict[str, Any]) -> None:
+    try:
+        tokens = list_active_fcm_device_tokens(recipient_user_id)
+        result = send_task_assignment_notification(tokens, task)
+        invalid_hashes = result.get("invalid_token_hashes") or []
+        if invalid_hashes:
+            deactivate_fcm_tokens_by_hash(invalid_hashes)
+    except Exception:
+        logger.exception("FCM task assignment notification failed")
+
+
+@app.post("/api/push/device-tokens")
+def register_push_device_token(payload: PushDeviceTokenRequest, authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    user = _require_user(authorization)
+    token = payload.token.strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="Device token is required.")
+    save_fcm_device_token(
+        user_id=user["id"],
+        token=token,
+        platform=_clean_push_value(payload.platform.lower() or "android", 32),
+        app_package=_clean_push_value(payload.app_package),
+        app_version=_clean_push_value(payload.app_version, 64),
+        device_id=_clean_push_value(payload.device_id),
+        device_model=_clean_push_value(payload.device_model),
+    )
+    return {"registered": True}
+
+
+@app.delete("/api/push/device-tokens")
+def unregister_push_device_token(payload: PushDeviceTokenRequest, authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    user = _require_user(authorization)
+    token = payload.token.strip()
+    if not token:
+        return {"deleted": False}
+    deleted = deactivate_fcm_device_token(user["id"], token)
+    return {"deleted": deleted}
 
 
 def _build_places_query(payload: LeadSearchRequest) -> str:
@@ -1817,7 +1897,11 @@ def update_work_employee(employee_id: int, payload: WorkEmployeeRequest, authori
 
 
 @app.post("/api/work-assignments/tasks", status_code=201)
-def create_work_task(payload: WorkTaskRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+def create_work_task(
+    payload: WorkTaskRequest,
+    background_tasks: BackgroundTasks,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     user = _require_permission(authorization, "work_assignments")
     title = payload.title.strip()
     if not title:
@@ -1867,7 +1951,14 @@ def create_work_task(payload: WorkTaskRequest, authorization: str | None = Heade
     email_status = _send_work_assignment_email(task, user)
     whatsapp_number = employee.get("whatsapp_number") or employee.get("phone") or ""
     whatsapp_status = send_whatsapp_task(whatsapp_number, employee["name"], title, due_date or "")
-    return {"task": task, "email_status": email_status, "notifications": {"whatsapp": whatsapp_status}}
+    if employee_user_id:
+        background_tasks.add_task(_send_task_assignment_push, int(employee_user_id), task)
+    return {
+        "task": task,
+        "email_status": email_status,
+        "notifications": {"whatsapp": whatsapp_status},
+        "push_status": {"queued": bool(employee_user_id)},
+    }
 
 
 def _send_work_assignment_email(task: dict[str, Any], assigner: dict[str, Any]) -> str:
