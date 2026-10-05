@@ -9,13 +9,11 @@ import {
   LoaderCircle,
   Mic,
   MicOff,
-  Phone,
   Plus,
   Search,
   Send,
   Sparkles,
   Trash2,
-  UserPlus,
   Users,
   Volume2,
   X,
@@ -23,7 +21,6 @@ import {
 import { API_BASE_URL, authHeaders } from '../auth';
 import './WorkAssignments.css';
 
-const emptyEmployee = { name: '', phone: '', whatsapp_number: '', role: '', email: '' };
 const emptyTask = { employeeId: '', title: '', quantity: 1, dueDate: '', priority: 'Medium', status: 'Pending', notes: '' };
 const canRecordVoice = 'MediaRecorder' in window && navigator.mediaDevices?.getUserMedia;
 const canSpeak = 'speechSynthesis' in window;
@@ -173,21 +170,6 @@ const realtimeTools = [
   },
   {
     type: 'function',
-    name: 'add_employee',
-    description: 'Add an employee after the user provides both a name and phone number.',
-    parameters: {
-      type: 'object',
-      properties: {
-        name: { type: 'string' },
-        phone: { type: 'string' },
-        email: { type: 'string' },
-        role: { type: 'string' },
-      },
-      required: ['name', 'phone'],
-    },
-  },
-  {
-    type: 'function',
     name: 'update_task_status',
     description: 'Update the status of an existing task using its exact task ID.',
     parameters: {
@@ -204,9 +186,7 @@ const realtimeTools = [
 export default function WorkAssignments({ userId }) {
   const [employees, setEmployees] = useState([]);
   const [tasks, setTasks] = useState([]);
-  const [employeeDraft, setEmployeeDraft] = useState(emptyEmployee);
   const [taskDraft, setTaskDraft] = useState(emptyTask);
-  const [editingEmployeeId, setEditingEmployeeId] = useState(null);
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -340,24 +320,6 @@ export default function WorkAssignments({ userId }) {
     setEditingTaskId(null);
   };
 
-  const resetEmployeeDraft = () => {
-    setEmployeeDraft(emptyEmployee);
-    setEditingEmployeeId(null);
-  };
-
-  const createEmployeeOnServer = async (employee) => {
-    const response = await fetch(`${API_BASE_URL}/api/work-assignments/employees`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(employee),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || 'Could not save employee.');
-    setEmployees((current) => [data.employee, ...current]);
-    setSyncError('');
-    return data.employee;
-  };
-
   const createTaskOnServer = async (task) => {
     const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks`, {
       method: 'POST',
@@ -383,34 +345,6 @@ export default function WorkAssignments({ userId }) {
     return { ...data.task, emailStatus: data.email_status, deliveryMessage: delivery };
   };
 
-  const saveEmployee = async (event) => {
-    event.preventDefault();
-    const nextEmployee = { ...employeeDraft, name: normalize(employeeDraft.name), phone: normalize(employeeDraft.phone), whatsapp_number: normalize(employeeDraft.whatsapp_number), role: normalize(employeeDraft.role), email: normalize(employeeDraft.email).toLowerCase() };
-    if (!nextEmployee.name) return;
-    if (editingEmployeeId) {
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/work-assignments/employees/${editingEmployeeId}`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(nextEmployee),
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || 'Could not update employee.');
-        setEmployees((current) => current.map((employee) => employee.id === editingEmployeeId ? data.employee : employee));
-        setSyncError('');
-      } catch (error) {
-        setSyncError(error.message || 'Could not update employee.');
-        return;
-      }
-    } else {
-      try {
-        await createEmployeeOnServer(nextEmployee);
-      } catch (error) {
-        setSyncError(error.message || 'Could not save employee.');
-        return;
-      }
-    }
-    resetEmployeeDraft();
-  };
-
   const saveTask = async (event) => {
     event.preventDefault();
     if (!taskDraft.employeeId || !normalize(taskDraft.title)) return;
@@ -428,12 +362,6 @@ export default function WorkAssignments({ userId }) {
       }
     }
     resetTaskDraft();
-  };
-
-  const removeEmployee = (employeeId) => {
-    if (!window.confirm('Delete this employee and their assigned tasks?')) return;
-    setEmployees((current) => current.filter((employee) => employee.id !== employeeId));
-    setTasks((current) => current.filter((task) => task.employeeId !== employeeId));
   };
 
   const removeTask = async (taskId) => {
@@ -465,11 +393,6 @@ export default function WorkAssignments({ userId }) {
     } catch (error) {
       setSyncError(error.message || 'Could not send task email.');
     }
-  };
-
-  const editEmployee = (employee) => {
-    setEmployeeDraft({ name: employee.name, phone: employee.phone, whatsapp_number: employee.whatsappNumber || '', role: employee.role || '', email: employee.email || '' });
-    setEditingEmployeeId(employee.id);
   };
 
   const editTask = (task) => {
@@ -524,20 +447,6 @@ export default function WorkAssignments({ userId }) {
         });
         lastEmployeeRef.current = employee.id;
         return { success: true, message: `${savedTask.title} was assigned to ${employee.name}. ${savedTask.deliveryMessage}` };
-      }
-
-      if (call.name === 'add_employee') {
-        const name = normalize(args.name);
-        const phone = normalize(args.phone).replace(/\s+/g, '');
-        if (!name || !phone) return { success: false, error: 'Both employee name and phone number are required.' };
-        const employee = await createEmployeeOnServer({
-          name,
-          phone,
-          email: normalize(args.email).toLowerCase(),
-          role: normalize(args.role),
-          whatsapp_number: '',
-        });
-        return { success: true, message: `${employee.name} was added successfully.` };
       }
 
       if (call.name === 'update_task_status') {
@@ -743,23 +652,6 @@ export default function WorkAssignments({ userId }) {
         return true;
       }
       return false;
-    }
-
-    if (action.action === 'add_employee') {
-      const name = normalize(action.employeeName);
-      const phone = normalize(action.phone).replace(/\s+/g, '');
-      if (!name || !phone) {
-        speak(action.reply || 'I can add the employee, but I need both name and phone number.');
-        return true;
-      }
-      try {
-        const employee = await createEmployeeOnServer({ name, phone, role: '', email: normalize(action.email).toLowerCase() });
-        speak(action.reply || `Okay. I added ${employee.name} with number ${employee.phone}.`);
-      } catch (error) {
-        setSyncError(error.message || 'Could not save employee.');
-        speak('I understood the employee, but could not save it to the database.');
-      }
-      return true;
     }
 
     if (action.action === 'update_status') {
@@ -999,12 +891,13 @@ export default function WorkAssignments({ userId }) {
             instructions: [
               'You are the NexGTools Work Assignment voice assistant.',
               'Speak briefly, naturally, and in the user\'s language.',
-              'Use assign_task, add_employee, or update_task_status whenever the user requests one of those actions.',
+              'Use assign_task or update_task_status whenever the user requests one of those actions.',
               'For an assignment, match the spoken employee name to the employee list, preserve the requested task wording accurately, and call assign_task immediately when both are clear.',
               'The assign_task result includes the real email delivery status. State that result clearly after the tool finishes.',
               'Do not only explain how to assign a task; perform the tool call.',
               'Never say an action succeeded before its tool result confirms success.',
-              'Ask one short clarification when the employee, task, phone number, or status is ambiguous.',
+              'If the employee is not in the provided list, tell the user to create that employee as an Admin user first.',
+              'Ask one short clarification when the employee, task, or status is ambiguous.',
               `Today is ${new Date().toISOString().slice(0, 10)}.`,
               `Employees: ${JSON.stringify(employeeContext)}`,
               `Tasks: ${JSON.stringify(taskContext)}`,
@@ -1128,18 +1021,14 @@ export default function WorkAssignments({ userId }) {
       </section>
 
       <div className="work-grid">
-        <form className="work-panel" onSubmit={saveEmployee}>
-          <div className="work-panel-head"><h2><UserPlus size={19} /> Employees</h2>{editingEmployeeId && <button type="button" onClick={resetEmployeeDraft} title="Cancel employee edit"><X size={16} /></button>}</div>
-          <label>Name<input value={employeeDraft.name} onChange={(event) => setEmployeeDraft((draft) => ({ ...draft, name: event.target.value }))} placeholder="Employee name" required /></label>
-          <label>Login email<input type="email" value={employeeDraft.email} onChange={(event) => setEmployeeDraft((draft) => ({ ...draft, email: event.target.value }))} placeholder="employee@nexgpetrolube.com" /></label>
-          <label>Phone number<input value={employeeDraft.phone} onChange={(event) => setEmployeeDraft((draft) => ({ ...draft, phone: event.target.value }))} placeholder="WhatsApp/mobile number" required /></label>
-          <label>WhatsApp number<input value={employeeDraft.whatsapp_number} onChange={(event) => setEmployeeDraft((draft) => ({ ...draft, whatsapp_number: event.target.value }))} placeholder="Optional; uses phone number if blank" /></label>
-          <label>Role<input value={employeeDraft.role} onChange={(event) => setEmployeeDraft((draft) => ({ ...draft, role: event.target.value }))} placeholder="Sales, operations..." /></label>
-          <button className="work-primary-btn" type="submit"><Plus size={17} /> {editingEmployeeId ? 'Save Employee' : 'Add Employee'}</button>
+        <section className="work-panel">
+          <div className="work-panel-head"><h2><Users size={19} /> Employees</h2></div>
+          <p className="work-whatsapp-note">Employees are admin-created login users. Add or edit employees from Admin, then assign tasks here.</p>
           <div className="work-employee-list">
-            {employees.map((employee) => <div key={employee.id} className="work-employee-item"><span><strong>{employee.name}</strong><small><Phone size={13} /> {employee.phone || '-'}</small>{employee.email && <small>{employee.email}</small>}{employee.role && <em>{employee.role}</em>}</span><div><button type="button" onClick={() => editEmployee(employee)} title="Edit employee"><Edit3 size={15} /></button><button type="button" onClick={() => removeEmployee(employee.id)} title="Delete employee"><Trash2 size={15} /></button></div></div>)}
+            {employees.map((employee) => <div key={employee.id} className="work-employee-item"><span><strong>{employee.name}</strong>{employee.email && <small>{employee.email}</small>}{employee.role && <em>{employee.role}</em>}</span></div>)}
+            {!employees.length && <div className="work-empty">No employee users are available. Create users from Admin first.</div>}
           </div>
-        </form>
+        </section>
 
         <form className="work-panel work-task-form" onSubmit={saveTask}>
           <div className="work-panel-head"><h2><ClipboardList size={19} /> Task Details</h2>{editingTaskId && <button type="button" onClick={resetTaskDraft} title="Cancel task edit"><X size={16} /></button>}</div>
@@ -1165,17 +1054,17 @@ export default function WorkAssignments({ userId }) {
         </div>
         <div className="work-table-scroll">
           <table className="work-table">
-            <thead><tr><th>Employee</th><th>Number</th><th>Task</th><th>Qty</th><th>Due</th><th>Priority</th><th>Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Employee</th><th>Email</th><th>Task</th><th>Qty</th><th>Due</th><th>Priority</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody>
               {filteredTasks.map((task) => {
                 const employee = employeeById.get(task.employeeId);
-                return <tr key={task.id}><td><strong>{employee?.name || task.employeeName || 'Unassigned'}</strong></td><td>{employee?.phone || task.employeePhone || '-'}</td><td><span>{task.title}</span>{task.notes && <small>{task.notes}</small>}</td><td>{task.quantity}</td><td><CalendarDays size={14} /> {task.dueDate || '-'}</td><td><em className={`work-priority work-priority-${task.priority.toLowerCase()}`}>{task.priority}</em></td><td><select value={task.status} onChange={(event) => updateTaskStatus(task.id, event.target.value)}><option>Pending</option><option>In Progress</option><option>Done</option></select></td><td><div className="work-row-actions"><button type="button" onClick={() => resendTaskEmail(task)} title="Send task email"><Send size={15} /></button><button type="button" onClick={() => editTask(task)} title="Edit task"><Edit3 size={15} /></button><button type="button" onClick={() => removeTask(task.id)} title="Delete task"><Trash2 size={15} /></button></div></td></tr>;
+                return <tr key={task.id}><td><strong>{employee?.name || task.employeeName || 'Unassigned'}</strong></td><td>{employee?.email || task.employeeEmail || '-'}</td><td><span>{task.title}</span>{task.notes && <small>{task.notes}</small>}</td><td>{task.quantity}</td><td><CalendarDays size={14} /> {task.dueDate || '-'}</td><td><em className={`work-priority work-priority-${task.priority.toLowerCase()}`}>{task.priority}</em></td><td><select value={task.status} onChange={(event) => updateTaskStatus(task.id, event.target.value)}><option>Pending</option><option>In Progress</option><option>Done</option></select></td><td><div className="work-row-actions"><button type="button" onClick={() => resendTaskEmail(task)} title="Send task email"><Send size={15} /></button><button type="button" onClick={() => editTask(task)} title="Edit task"><Edit3 size={15} /></button><button type="button" onClick={() => removeTask(task.id)} title="Delete task"><Trash2 size={15} /></button></div></td></tr>;
               })}
             </tbody>
           </table>
           {!filteredTasks.length && <div className="work-empty">No assigned work matches this view.</div>}
         </div>
-        <div className="work-whatsapp-note">WhatsApp API is not connected yet. Employee phone numbers and task payloads are structured so a send/notify endpoint can be added later.</div>
+        <div className="work-whatsapp-note">New task alerts are sent to the selected employee's logged-in Android device when push notifications are enabled.</div>
       </section>
     </div>
   );

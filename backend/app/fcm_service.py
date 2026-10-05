@@ -71,7 +71,14 @@ def _firebase_error_code(error: Exception | None) -> str:
     return str(code).lower()
 
 
-def send_task_assignment_notification(tokens: list[dict[str, Any]], task: dict[str, Any]) -> dict[str, Any]:
+def _send_multicast_notification(
+    tokens: list[dict[str, Any]],
+    *,
+    title: str,
+    body: str,
+    data: dict[str, str],
+    log_label: str,
+) -> dict[str, Any]:
     if not tokens:
         return {"sent": 0, "failed": 0, "invalid_token_hashes": [], "enabled": settings.fcm_enabled}
     if not _initialize_firebase():
@@ -88,12 +95,6 @@ def send_task_assignment_notification(tokens: list[dict[str, Any]], task: dict[s
     except ImportError:
         return {"sent": 0, "failed": len(tokens), "invalid_token_hashes": [], "enabled": False}
 
-    title = "New Task Assigned"
-    body = f"You have been assigned a new task: {task.get('title') or 'Task'}"
-    data = {
-        "type": "task_assignment",
-        "taskId": str(task.get("id") or ""),
-    }
     android_config = messaging.AndroidConfig(
         priority="high",
         notification=messaging.AndroidNotification(
@@ -115,7 +116,7 @@ def send_task_assignment_notification(tokens: list[dict[str, Any]], task: dict[s
     try:
         response = messaging.send_each_for_multicast(message, dry_run=settings.fcm_dry_run)
     except Exception:
-        logger.exception("FCM task assignment send failed")
+        logger.exception("FCM %s send failed", log_label)
         return {"sent": 0, "failed": len(message.tokens), "invalid_token_hashes": [], "enabled": True}
 
     invalid_token_hashes: list[str] = []
@@ -129,7 +130,8 @@ def send_task_assignment_notification(tokens: list[dict[str, Any]], task: dict[s
                 invalid_token_hashes.append(invalid_token_hash)
 
     logger.info(
-        "FCM task assignment send completed: sent=%s failed=%s invalidated=%s dry_run=%s",
+        "FCM %s send completed: sent=%s failed=%s invalidated=%s dry_run=%s",
+        log_label,
         response.success_count,
         response.failure_count,
         len(invalid_token_hashes),
@@ -141,3 +143,32 @@ def send_task_assignment_notification(tokens: list[dict[str, Any]], task: dict[s
         "invalid_token_hashes": invalid_token_hashes,
         "enabled": True,
     }
+
+
+def send_task_assignment_notification(tokens: list[dict[str, Any]], task: dict[str, Any]) -> dict[str, Any]:
+    return _send_multicast_notification(
+        tokens,
+        title="New Task Assigned",
+        body=f"You have been assigned a new task: {task.get('title') or 'Task'}",
+        data={
+            "type": "task_assignment",
+            "taskId": str(task.get("id") or ""),
+        },
+        log_label="task assignment",
+    )
+
+
+def send_task_status_notification(tokens: list[dict[str, Any]], task: dict[str, Any], actor: dict[str, Any], status: str) -> dict[str, Any]:
+    actor_name = actor.get("name") or "Employee"
+    task_title = task.get("title") or "Task"
+    return _send_multicast_notification(
+        tokens,
+        title="Task Status Updated",
+        body=f"{actor_name} marked \"{task_title}\" as {status}.",
+        data={
+            "type": "task_status_update",
+            "taskId": str(task.get("id") or ""),
+            "status": status,
+        },
+        log_label="task status",
+    )

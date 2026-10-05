@@ -37,7 +37,7 @@ from .analytics import (
     validate_sql,
 )
 from .config import settings
-from .fcm_service import send_task_assignment_notification
+from .fcm_service import send_task_assignment_notification, send_task_status_notification
 from .whatsapp_service import send_whatsapp_task
 from .database import (
     admin_overview,
@@ -304,11 +304,13 @@ def _work_employee_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def _work_task_row(row: dict[str, Any]) -> dict[str, Any]:
     due_date = row.get("due_date")
+    assigned_user_id = row.get("employee_user_id") or row.get("user_id")
     return {
         "id": str(row["id"]),
         "databaseId": row["id"],
-        "employeeId": str(row["employee_id"]),
-        "employeeUserId": row.get("employee_user_id"),
+        "employeeId": str(assigned_user_id or row["employee_id"]),
+        "workEmployeeId": str(row["employee_id"]),
+        "employeeUserId": assigned_user_id,
         "title": row.get("title") or "",
         "quantity": row.get("quantity") or 1,
         "dueDate": due_date.isoformat() if hasattr(due_date, "isoformat") else (due_date or ""),
@@ -318,6 +320,19 @@ def _work_task_row(row: dict[str, Any]) -> dict[str, Any]:
         "employeeName": row.get("employee_name") or "",
         "employeeEmail": row.get("employee_email") or "",
         "employeePhone": row.get("employee_phone") or "",
+    }
+
+
+def _employee_user_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(row["id"]),
+        "databaseId": row["id"],
+        "userId": row["id"],
+        "name": row.get("name") or "",
+        "email": row.get("email") or "",
+        "phone": "",
+        "whatsappNumber": "",
+        "role": row.get("role") or "Employee",
     }
 
 
@@ -337,6 +352,43 @@ def _default_admin_user_id(cursor: Any) -> int | None:
     cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
     user = cursor.fetchone()
     return int(user["id"]) if user else None
+
+
+def _work_employee_for_user(cursor: Any, employee_user_id: int, assigner_user_id: int) -> dict[str, Any] | None:
+    cursor.execute(
+        """
+        SELECT users.id, users.name, users.email, roles.name AS role
+        FROM users
+        LEFT JOIN roles ON roles.id = users.role_id
+        WHERE users.id = %s AND LOWER(users.email) != %s
+        """,
+        (employee_user_id, settings.default_login_email.strip().lower()),
+    )
+    user = cursor.fetchone()
+    if not user:
+        return None
+    cursor.execute("SELECT * FROM work_employees WHERE user_id = %s LIMIT 1", (employee_user_id,))
+    employee = cursor.fetchone()
+    if employee:
+        cursor.execute(
+            """
+            UPDATE work_employees
+            SET name = %s, email = %s, role = %s
+            WHERE id = %s
+            """,
+            (user["name"], user["email"], user.get("role") or "Employee", employee["id"]),
+        )
+        cursor.execute("SELECT * FROM work_employees WHERE id = %s", (employee["id"],))
+        return cursor.fetchone()
+    cursor.execute(
+        """
+        INSERT INTO work_employees (created_by_user_id, user_id, name, email, phone, whatsapp_number, role)
+        VALUES (%s, %s, %s, %s, '', '', %s)
+        """,
+        (assigner_user_id, employee_user_id, user["name"], user["email"], user.get("role") or "Employee"),
+    )
+    cursor.execute("SELECT * FROM work_employees WHERE id = %s", (cursor.lastrowid,))
+    return cursor.fetchone()
 
 
 class LeadSearchRequest(BaseModel):
@@ -705,6 +757,19 @@ def _send_task_assignment_push(recipient_user_id: int, task: dict[str, Any]) -> 
             deactivate_fcm_tokens_by_hash(invalid_hashes)
     except Exception:
         logger.exception("FCM task assignment notification failed")
+
+
+def _send_task_status_push(recipient_user_ids: list[int], task: dict[str, Any], actor: dict[str, Any], status: str) -> None:
+    try:
+        invalid_hashes: list[str] = []
+        for recipient_user_id in sorted({int(item) for item in recipient_user_ids if item}):
+            tokens = list_active_fcm_device_tokens(recipient_user_id)
+            result = send_task_status_notification(tokens, task, actor, status)
+            invalid_hashes.extend(result.get("invalid_token_hashes") or [])
+        if invalid_hashes:
+            deactivate_fcm_tokens_by_hash(invalid_hashes)
+    except Exception:
+        logger.exception("FCM task status notification failed")
 
 
 @app.post("/api/push/device-tokens")
@@ -1760,7 +1825,7 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest, authorization: s
                 "The transcript may be in any language, romanized form, or a mix of languages. "
                 "Understand task assignment requests regardless of language. First translate Hindi or mixed-language work into English. "
                 "For example, 'राहुल को कल ग्राहकों को फोन करने का काम दो' assigns Rahul 'Call customers' tomorrow. "
-                "Choose one action: assign_task, add_employee, update_status, clarify, or none. "
+                "Choose one action: assign_task, update_status, clarify, or none. "
                 "Use conversation history to understand references, corrections, and short replies such as yes/haan/হ্যাঁ or no. "
                 "If your previous reply asked whether the user meant a specific employee and task, an affirmative answer confirms that intent. "
                 "For assign_task, the current turn or unambiguous recent history must establish both a recognizable employee and a specific work instruction. "
@@ -1769,7 +1834,7 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest, authorization: s
                 "Never invent a task, employee, or due date, and never use examples as the task. "
                 "For assign_task, first identify the intended person from employees. Return that exact employee id in employeeId. "
                 "Match spoken names flexibly across spelling/transcription variants, first names, surnames, and honorifics, "
-                "but do not invent an employee. If more than one employee could match, use clarify instead of assigning. "
+                "but do not invent an employee. If the employee is missing, ask the user to create that employee as an Admin user first. If more than one employee could match, use clarify instead of assigning. "
                 "Resolve relative dates using today, including aaj/today, kal/tomorrow when it clearly means tomorrow, "
                 "agami kal, parshu, aj, kal, aajke, agamikal, porshu, next week, and similar phrases. "
                 "Always write taskTitle in concise English for storing in the app and sending by email; keep proper names exact. "
@@ -1779,7 +1844,7 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest, authorization: s
                 "For assign_task, include taskSourceQuote copied exactly from the current transcript or a recent user turn that states the work. "
                 "For general conversation or a question, choose none and write a helpful reply grounded in the conversation. "
                 "Make reply short and in the user's main spoken language when possible. "
-                "Schema: {\"action\":\"assign_task|add_employee|update_status|clarify|none\","
+                "Schema: {\"action\":\"assign_task|update_status|clarify|none\","
                 "\"employeeId\":\"\",\"employeeName\":\"\",\"phone\":\"\",\"taskTitle\":\"\","
                 "\"taskSourceQuote\":\"exact words from transcript or recent user turn\",\"quantity\":1,\"dueDate\":\"YYYY-MM-DD or empty\",\"priority\":\"Low|Medium|High\","
                 "\"status\":\"Pending|In Progress|Done\",\"taskId\":\"\",\"reply\":\"short spoken response\"}."
@@ -1807,7 +1872,7 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest, authorization: s
         raise HTTPException(status_code=502, detail="OpenAI returned an unreadable voice action.") from exc
 
     action = str(parsed.get("action", "none"))
-    if action not in {"assign_task", "add_employee", "update_status", "clarify", "none"}:
+    if action not in {"assign_task", "update_status", "clarify", "none"}:
         parsed["action"] = "none"
     if parsed.get("action") == "assign_task":
         task_title = str(parsed.get("taskTitle") or "").strip()
@@ -1828,14 +1893,15 @@ def get_work_assignments(authorization: str | None = Header(default=None)) -> di
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT work_employees.*
-                FROM work_employees
-                WHERE created_by_user_id = %s OR %s
+                SELECT users.id, users.name, users.email, roles.name AS role
+                FROM users
+                LEFT JOIN roles ON roles.id = users.role_id
+                WHERE LOWER(users.email) != %s
                 ORDER BY name, id
                 """,
-                (user["id"], bool(user.get("is_nexg_admin"))),
+                (settings.default_login_email.strip().lower(),),
             )
-            employees = [_work_employee_row(row) for row in cursor.fetchall()]
+            employees = [_employee_user_row(row) for row in cursor.fetchall()]
             cursor.execute(
                 """
                 SELECT work_tasks.*, work_employees.name AS employee_name,
@@ -1853,47 +1919,14 @@ def get_work_assignments(authorization: str | None = Header(default=None)) -> di
 
 @app.post("/api/work-assignments/employees", status_code=201)
 def create_work_employee(payload: WorkEmployeeRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_permission(authorization, "work_assignments")
-    name = payload.name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Employee name is required.")
-    email = payload.email.strip().lower()
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            linked_user_id = _linked_user_id_for_email(cursor, email)
-            cursor.execute(
-                """
-                INSERT INTO work_employees (created_by_user_id, user_id, name, email, phone, whatsapp_number, role)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """,
-                (user["id"], linked_user_id, name, email, payload.phone.strip(), payload.whatsapp_number.strip(), payload.role.strip()),
-            )
-            employee_id = cursor.lastrowid
-            cursor.execute("SELECT * FROM work_employees WHERE id = %s", (employee_id,))
-            employee = _work_employee_row(cursor.fetchone())
-    return {"employee": employee}
+    _require_permission(authorization, "work_assignments")
+    raise HTTPException(status_code=410, detail="Employees are managed from Admin users. Create a user in Admin to assign work.")
 
 
 @app.patch("/api/work-assignments/employees/{employee_id}")
 def update_work_employee(employee_id: int, payload: WorkEmployeeRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_permission(authorization, "work_assignments")
-    name = payload.name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Employee name is required.")
-    email = payload.email.strip().lower()
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT id FROM work_employees WHERE id = %s AND (created_by_user_id = %s OR %s)", (employee_id, user["id"], bool(user.get("is_nexg_admin"))))
-            if not cursor.fetchone():
-                raise HTTPException(status_code=404, detail="Employee not found.")
-            linked_user_id = _linked_user_id_for_email(cursor, email)
-            cursor.execute(
-                "UPDATE work_employees SET name = %s, email = %s, phone = %s, whatsapp_number = %s, role = %s, user_id = %s WHERE id = %s",
-                (name, email, payload.phone.strip(), payload.whatsapp_number.strip(), payload.role.strip(), linked_user_id, employee_id),
-            )
-            cursor.execute("SELECT * FROM work_employees WHERE id = %s", (employee_id,))
-            employee = _work_employee_row(cursor.fetchone())
-    return {"employee": employee}
+    _require_permission(authorization, "work_assignments")
+    raise HTTPException(status_code=410, detail="Employees are managed from Admin users. Update the user in Admin instead.")
 
 
 @app.post("/api/work-assignments/tasks", status_code=201)
@@ -1911,16 +1944,10 @@ def create_work_task(
     due_date = payload.due_date.strip() or None
     with db_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT * FROM work_employees WHERE id = %s AND (created_by_user_id = %s OR %s)",
-                (payload.employee_id, user["id"], bool(user.get("is_nexg_admin"))),
-            )
-            employee = cursor.fetchone()
+            employee = _work_employee_for_user(cursor, payload.employee_id, user["id"])
             if not employee:
                 raise HTTPException(status_code=404, detail="Employee not found.")
-            employee_user_id = employee.get("user_id") or _linked_user_id_for_email(cursor, employee.get("email") or "")
-            if employee_user_id and not employee.get("user_id"):
-                cursor.execute("UPDATE work_employees SET user_id = %s WHERE id = %s", (employee_user_id, employee["id"]))
+            employee_user_id = int(employee["user_id"])
             cursor.execute(
                 """
                 INSERT INTO work_tasks (created_by_user_id, employee_id, employee_user_id, title, quantity, due_date, priority, status, notes)
@@ -2076,7 +2103,12 @@ def delete_work_task(task_id: int, authorization: str | None = Header(default=No
 
 
 @app.patch("/api/work-assignments/tasks/{task_id}/status")
-def update_work_task_status(task_id: int, payload: WorkTaskStatusRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+def update_work_task_status(
+    task_id: int,
+    payload: WorkTaskStatusRequest,
+    background_tasks: BackgroundTasks,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     user = _require_user(authorization)
     status = payload.status if payload.status in {"Pending", "In Progress", "Done"} else ""
     if not status:
@@ -2086,7 +2118,7 @@ def update_work_task_status(task_id: int, payload: WorkTaskStatusRequest, author
             cursor.execute(
                 """
                 SELECT work_tasks.id, work_tasks.title, work_tasks.status, work_tasks.created_by_user_id,
-                       work_employees.name AS employee_name
+                       work_tasks.employee_user_id, work_employees.name AS employee_name
                 FROM work_tasks
                 JOIN work_employees ON work_employees.id = work_tasks.employee_id
                 LEFT JOIN work_task_assignees ON work_task_assignees.task_id = work_tasks.id
@@ -2099,21 +2131,35 @@ def update_work_task_status(task_id: int, payload: WorkTaskStatusRequest, author
             if not task:
                 raise HTTPException(status_code=404, detail="Task not found.")
             cursor.execute("UPDATE work_tasks SET status = %s WHERE id = %s", (status, task_id))
-            if status == "Done" and task.get("status") != "Done":
-                message = f"{task.get('employee_name') or user.get('name') or 'Employee'} completed: {task.get('title') or 'Task'}"
+            if status != task.get("status"):
+                actor_name = user.get("name") or task.get("employee_name") or "Employee"
+                message = f"{actor_name} marked {task.get('title') or 'Task'} as {status}"
+                event_type = "task_completed" if status == "Done" else "task_status_updated"
                 recipient_ids = {int(task["created_by_user_id"])}
                 admin_user_id = _default_admin_user_id(cursor)
                 if admin_user_id:
                     recipient_ids.add(admin_user_id)
+                employee_user_id = task.get("employee_user_id")
+                if employee_user_id:
+                    recipient_ids.discard(int(employee_user_id))
                 for recipient_id in recipient_ids:
                     if recipient_id == int(user["id"]):
                         continue
                     cursor.execute(
                         """
                         INSERT INTO work_task_notifications (task_id, recipient_user_id, actor_user_id, event_type, message)
-                        VALUES (%s, %s, %s, 'task_completed', %s)
+                        VALUES (%s, %s, %s, %s, %s)
                         """,
-                        (task_id, recipient_id, user["id"], message),
+                        (task_id, recipient_id, user["id"], event_type, message),
+                    )
+                push_recipient_ids = [recipient_id for recipient_id in recipient_ids if recipient_id != int(user["id"])]
+                if push_recipient_ids:
+                    background_tasks.add_task(
+                        _send_task_status_push,
+                        push_recipient_ids,
+                        {"id": task_id, "title": task.get("title") or "Task"},
+                        {"id": user["id"], "name": actor_name},
+                        status,
                     )
     return {"updated": True}
 

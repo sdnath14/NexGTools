@@ -61,7 +61,7 @@ const sendTokenToBackend = async (token) => {
 
 const taskDataFromNotification = (notification) => {
   const data = notification?.data || notification?.extra || notification?.notification?.data || {};
-  if (data.type !== 'task_assignment') return null;
+  if (!['task_assignment', 'task_status_update'].includes(data.type)) return null;
   return { taskId: data.taskId || data.task_id || '' };
 };
 
