@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { LogOut, ArrowLeft, Bell, FileSpreadsheet, History, Search } from 'lucide-react';
-import { API_BASE_URL, authHeaders } from '../auth';
+import { Menu, LogOut, ArrowLeft, Bell, FileSpreadsheet, History, Search } from 'lucide-react';
+import { useNotifications } from '../notificationContext';
 
 const pageTitles = {
   '/': 'Dashboard',
@@ -12,6 +12,7 @@ const pageTitles = {
   '/business-search/csv': 'Business CSV History',
   '/business-outreach': 'Business Outreach',
   '/my-tasks': 'My Tasks',
+  '/notifications': 'Notifications',
   '/data-library': 'Data Library',
   '/data-analytics': 'Data AI',
   '/used-oil-india': 'Used Oil India Data',
@@ -20,14 +21,14 @@ const pageTitles = {
   '/settings': 'Settings',
 };
 
-const Topbar = ({ user, onLogout }) => {
+const Topbar = ({ user, onLogout, mobileMenuOpen, onOpenMenu }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [notifications, setNotifications] = useState([]);
-  const seenNotificationIdsRef = useRef(new Set());
+  const { unreadCount } = useNotifications();
   const isDashboard = location.pathname === '/';
-  const pageTitle = pageTitles[location.pathname] || 'NexG Tools';
+  const pageTitle = location.pathname === '/my-tasks' && user?.is_nexg_admin
+    ? 'Task Assigned' : pageTitles[location.pathname] || 'NexG Tools';
   const isLeadSearch = location.pathname.startsWith('/lead-search');
   const isBusinessSearch = location.pathname.startsWith('/business-search');
   const showsDashboardBack = location.pathname !== '/';
@@ -35,62 +36,10 @@ const Topbar = ({ user, onLogout }) => {
     ? user.name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()
     : 'NT';
 
-  useEffect(() => {
-    if (!user?.is_nexg_admin) return undefined;
-    const playNotificationSound = () => {
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextClass) return;
-      const context = new AudioContextClass();
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(880, context.currentTime);
-      oscillator.frequency.setValueAtTime(660, context.currentTime + 0.12);
-      gain.gain.setValueAtTime(0.001, context.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.18, context.currentTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.35);
-      oscillator.connect(gain);
-      gain.connect(context.destination);
-      oscillator.start();
-      oscillator.stop(context.currentTime + 0.38);
-      window.setTimeout(() => context.close(), 550);
-    };
-
-    const pollNotifications = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/work-assignments/notifications`, { headers: authHeaders() });
-        const data = await response.json();
-        if (!response.ok) return;
-        const nextNotifications = data.notifications || [];
-        const fresh = nextNotifications.filter((item) => !seenNotificationIdsRef.current.has(item.id));
-        nextNotifications.forEach((item) => seenNotificationIdsRef.current.add(item.id));
-        setNotifications(nextNotifications);
-        if (fresh.length) playNotificationSound();
-      } catch {
-        // Notifications should never disrupt navigation.
-      }
-    };
-
-    pollNotifications();
-    const interval = window.setInterval(pollNotifications, 10000);
-    return () => window.clearInterval(interval);
-  }, [user?.is_nexg_admin]);
-
-  const clearNotifications = async () => {
-    setNotifications([]);
-    try {
-      await fetch(`${API_BASE_URL}/api/work-assignments/notifications/read`, {
-        method: 'POST',
-        headers: authHeaders(),
-      });
-    } catch {
-      // The next poll will recover if marking read fails.
-    }
-  };
-
   return (
     <header className={`topbar ${isDashboard ? 'topbar-dashboard' : ''}`}>
       <div className="topbar-left">
+        <button className="mobile-menu-button" aria-label="Open navigation menu" aria-expanded={mobileMenuOpen} aria-controls="workspace-sidebar" onClick={onOpenMenu}><Menu size={22} /></button>
         {showsDashboardBack && (
           <button className="topbar-nav-btn" onClick={() => navigate('/')}>
             <ArrowLeft size={16} /> Back
@@ -116,9 +65,9 @@ const Topbar = ({ user, onLogout }) => {
         )}
       </div>
       <div className="topbar-right">
-        {user?.is_nexg_admin && <button className="topbar-btn" title={notifications[0]?.message || 'Task notifications'} onClick={clearNotifications}>
-          <Bell size={15} /> {notifications.length ? `${notifications.length} New` : 'Alerts'}
-        </button>}
+        <button className="topbar-btn notification-bell" aria-label={`Notifications, ${unreadCount} unread`} onClick={() => navigate('/notifications')}>
+          <Bell size={18} /> <span className="notification-bell-label">Notifications</span>{unreadCount > 0 && <span className="notification-bell-count">{unreadCount > 99 ? '99+' : unreadCount}</span>}
+        </button>
         <button className="topbar-btn topbar-btn-logout" title="Logout" onClick={onLogout}>
           <LogOut size={15} /> Logout
         </button>

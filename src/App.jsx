@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
@@ -16,6 +16,8 @@ import BusinessOutreach from './pages/BusinessOutreach';
 import UsedOilIndia from './pages/UsedOilIndia';
 import WorkAssignments from './pages/WorkAssignments';
 import MyTasks from './pages/MyTasks';
+import Notifications from './pages/Notifications';
+import { NotificationProvider } from './notifications';
 import { ADMIN_TOKEN_KEY, API_BASE_URL, AUTH_TOKEN_KEY, adminHeaders, authHeaders } from './auth';
 import { applyAppearance, loadAppearance, saveAppearance } from './appearance';
 import { deactivatePushNotifications, registerPushNotifications } from './pushNotifications';
@@ -42,10 +44,20 @@ function PushNotificationBridge({ user }) {
 
 function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 768px)').matches);
+  const closeMobileMenu = useCallback(() => setMobileMenuOpen(false), []);
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [appearance, setAppearance] = useState(loadAppearance);
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 768px)');
+    const update = () => { setIsMobile(media.matches); setMobileMenuOpen(false); };
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
 
   useEffect(() => {
     applyAppearance(appearance);
@@ -110,6 +122,7 @@ function App() {
       localStorage.removeItem(AUTH_TOKEN_KEY);
       localStorage.removeItem(ADMIN_TOKEN_KEY);
       setUser(null);
+      setMobileMenuOpen(false);
       setIsAdmin(false);
     }
   };
@@ -126,11 +139,12 @@ function App() {
 
   return (
     <Router>
+      <NotificationProvider key={user.id}>
       <div className={`app-layout ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''}`}>
         <PushNotificationBridge user={user} />
-        <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} permissions={user.permissions || []} isNexgAdmin={user.is_nexg_admin} />
+        <Sidebar collapsed={!isMobile && sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} permissions={user.permissions || []} isNexgAdmin={user.is_nexg_admin} isMobile={isMobile} mobileOpen={mobileMenuOpen} onClose={closeMobileMenu} />
         <div className="app-main">
-          <Topbar user={user} onLogout={logout} />
+          <Topbar user={user} onLogout={logout} mobileMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />
           <main className="app-content">
             <Routes>
               <Route path="/" element={<Dashboard user={user} />} />
@@ -140,6 +154,7 @@ function App() {
               <Route path="/business-search" element={hasPermission('business_search') ? <BusinessSearch /> : <Navigate to="/" replace />} />
               <Route path="/business-search/csv" element={hasPermission('exports') ? <CsvHistory type="business_search" /> : <Navigate to="/" replace />} />
               <Route path="/business-outreach" element={hasPermission('outreach') ? <BusinessOutreach /> : <Navigate to="/" replace />} />
+              <Route path="/notifications" element={<Notifications user={user} />} />
               <Route path="/my-tasks" element={<MyTasks />} />
               <Route path="/work-assignments" element={hasPermission('work_assignments') ? <WorkAssignments key={user.id} userId={user.id} /> : <Navigate to="/" replace />} />
               <Route path="/data-library" element={hasPermission('data_library') ? <DataLibrary /> : <Navigate to="/" replace />} />
@@ -151,6 +166,7 @@ function App() {
           </main>
         </div>
       </div>
+      </NotificationProvider>
     </Router>
   );
 }

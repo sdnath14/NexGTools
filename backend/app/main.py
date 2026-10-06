@@ -532,6 +532,10 @@ class WorkTaskRequest(BaseModel):
     notes: str = ""
 
 
+class NotificationReadRequest(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=500)
+
+
 class WorkTaskStatusRequest(BaseModel):
     status: str
 
@@ -1959,6 +1963,14 @@ def create_work_task(
             if employee_user_id:
                 cursor.execute(
                     """
+                    INSERT INTO work_task_notifications (task_id, recipient_user_id, actor_user_id, event_type, message)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (task_id, employee_user_id, user["id"], "task_assignment",
+                     f'{user.get("name") or "NexG Admin"} assigned you: {title}'),
+                )
+                cursor.execute(
+                    """
                     INSERT IGNORE INTO work_task_assignees (task_id, user_id, assigned_by_user_id)
                     VALUES (%s, %s, %s)
                     """,
@@ -2124,6 +2136,7 @@ def update_work_task_status(
                 LEFT JOIN work_task_assignees ON work_task_assignees.task_id = work_tasks.id
                 WHERE work_tasks.id = %s
                   AND (work_tasks.created_by_user_id = %s OR work_task_assignees.user_id = %s OR work_tasks.employee_user_id = %s OR %s)
+                LIMIT 1 FOR UPDATE
                 """,
                 (task_id, user["id"], user["id"], user["id"], bool(user.get("is_nexg_admin"))),
             )
@@ -2139,9 +2152,6 @@ def update_work_task_status(
                 admin_user_id = _default_admin_user_id(cursor)
                 if admin_user_id:
                     recipient_ids.add(admin_user_id)
-                employee_user_id = task.get("employee_user_id")
-                if employee_user_id:
-                    recipient_ids.discard(int(employee_user_id))
                 for recipient_id in recipient_ids:
                     if recipient_id == int(user["id"]):
                         continue
@@ -2165,43 +2175,55 @@ def update_work_task_status(
 
 
 @app.get("/api/work-assignments/notifications")
-def work_task_notifications(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+def work_task_notifications(
+    authorization: str | None = Header(default=None),
+    before_id: int | None = Query(default=None, gt=0),
+) -> dict[str, Any]:
     user = _require_user(authorization)
     with db_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, task_id, event_type, message, created_at
+                SELECT id, task_id, event_type, message, created_at, read_at,
+                       UNIX_TIMESTAMP(created_at) AS created_timestamp
                 FROM work_task_notifications
-                WHERE recipient_user_id = %s AND read_at IS NULL
-                ORDER BY created_at DESC, id DESC
-                LIMIT 20
+                WHERE recipient_user_id = %s AND (%s IS NULL OR id < %s)
+                ORDER BY id DESC
+                LIMIT 51
                 """,
-                (user["id"],),
+                (user["id"], before_id, before_id),
             )
             rows = cursor.fetchall()
+            cursor.execute(
+                "SELECT COUNT(*) AS unread_count FROM work_task_notifications WHERE recipient_user_id = %s AND read_at IS NULL",
+                (user["id"],),
+            )
+            unread_count = cursor.fetchone()["unread_count"]
     return {
+        "unreadCount": unread_count,
+        "nextBeforeId": rows[49]["id"] if len(rows) > 50 else None,
         "notifications": [
             {
                 "id": row["id"],
                 "taskId": str(row["task_id"]),
                 "eventType": row["event_type"],
                 "message": row["message"],
-                "createdAt": row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else str(row["created_at"]),
+                "createdAt": float(row["created_timestamp"]) * 1000,
+                "isRead": row["read_at"] is not None,
             }
-            for row in rows
+            for row in rows[:50]
         ]
     }
 
 
 @app.post("/api/work-assignments/notifications/read")
-def mark_work_task_notifications_read(authorization: str | None = Header(default=None)) -> dict[str, bool]:
+def mark_work_task_notifications_read(payload: "NotificationReadRequest", authorization: str | None = Header(default=None)) -> dict[str, bool]:
     user = _require_user(authorization)
     with db_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                "UPDATE work_task_notifications SET read_at = CURRENT_TIMESTAMP WHERE recipient_user_id = %s AND read_at IS NULL",
-                (user["id"],),
+                "UPDATE work_task_notifications SET read_at = CURRENT_TIMESTAMP WHERE recipient_user_id = %s AND read_at IS NULL AND id IN (" + ",".join(["%s"] * len(payload.ids)) + ")",
+                (user["id"], *payload.ids),
             )
     return {"updated": True}
 

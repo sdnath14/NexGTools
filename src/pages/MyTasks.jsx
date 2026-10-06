@@ -2,8 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, CheckCircle2, ClipboardList, LoaderCircle } from 'lucide-react';
 import { API_BASE_URL, AUTH_TOKEN_KEY, authHeaders } from '../auth';
 import './WorkAssignments.css';
+import { useSearchParams } from 'react-router-dom';
 
 export default function MyTasks() {
+  const [searchParams] = useSearchParams();
+  const selectedTaskId = searchParams.get('taskId');
   const [tasks, setTasks] = useState([]);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -30,6 +33,10 @@ export default function MyTasks() {
     loadTasks();
   }, []);
 
+  useEffect(() => {
+    if (!loading && selectedTaskId) document.getElementById(`task-${selectedTaskId}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [loading, selectedTaskId]);
+
   const summary = useMemo(() => ({
     pending: tasks.filter((task) => task.status === 'Pending').length,
     progress: tasks.filter((task) => task.status === 'In Progress').length,
@@ -39,6 +46,7 @@ export default function MyTasks() {
   const isAdminView = Boolean(user?.is_nexg_admin);
 
   const updateStatus = async (taskId, status) => {
+    const previousStatus = tasks.find((task) => task.id === taskId)?.status;
     setTasks((current) => current.map((task) => task.id === taskId ? { ...task, status } : task));
     try {
       const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks/${taskId}/status`, {
@@ -49,7 +57,9 @@ export default function MyTasks() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || 'Could not update task status.');
       setError('');
+      window.dispatchEvent(new Event('nexg-notifications-refresh'));
     } catch (statusError) {
+      setTasks((current) => current.map((task) => task.id === taskId ? { ...task, status: previousStatus } : task));
       setError(statusError.message || 'Could not update task status.');
     }
   };
@@ -80,7 +90,7 @@ export default function MyTasks() {
               <thead><tr>{isAdminView && <th>Employee</th>}<th>Task</th><th>Qty</th><th>Due</th><th>Priority</th><th>Status</th></tr></thead>
               <tbody>
                 {tasks.map((task) => (
-                  <tr key={task.id}>
+                  <tr key={task.id} id={`task-${task.id}`} className={String(task.id) === selectedTaskId ? 'notification-task-highlight' : ''}>
                     {isAdminView && <td><strong>{task.employeeName || '-'}</strong><small>{task.employeeEmail || ''}</small></td>}
                     <td><span>{task.title}</span>{task.notes && <small>{task.notes}</small>}</td>
                     <td>{task.quantity}</td>

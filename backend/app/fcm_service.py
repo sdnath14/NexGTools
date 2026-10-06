@@ -101,7 +101,8 @@ def _send_multicast_notification(
             channel_id=settings.fcm_default_android_channel_id,
             title=title,
             body=body,
-            click_action="FCM_PLUGIN_ACTIVITY",
+            color="#FF8A00",
+            icon="ic_stat_nexg",
         ),
     )
     message = messaging.MulticastMessage(
@@ -149,7 +150,7 @@ def send_task_assignment_notification(tokens: list[dict[str, Any]], task: dict[s
     return _send_multicast_notification(
         tokens,
         title="New Task Assigned",
-        body=f"You have been assigned a new task: {task.get('title') or 'Task'}",
+        body=task.get('title') or 'You have a new task.',
         data={
             "type": "task_assignment",
             "taskId": str(task.get("id") or ""),

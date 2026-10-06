@@ -28,8 +28,8 @@ const getDeviceId = () => {
 const createNotificationChannels = async () => {
   const channel = {
     id: CHANNEL_ID,
-    name: 'Task Assignments',
-    description: 'Notifications for newly assigned employee tasks',
+    name: 'NexG Tools Updates',
+    description: 'Task assignments and team status updates',
     importance: 4,
     visibility: 1,
     sound: 'default',
@@ -62,17 +62,18 @@ const sendTokenToBackend = async (token) => {
 const taskDataFromNotification = (notification) => {
   const data = notification?.data || notification?.extra || notification?.notification?.data || {};
   if (!['task_assignment', 'task_status_update'].includes(data.type)) return null;
-  return { taskId: data.taskId || data.task_id || '' };
+  return { type: data.type, taskId: data.taskId || data.task_id || '' };
 };
 
 const openTaskNotification = (notification) => {
   const task = taskDataFromNotification(notification);
   if (!task) return;
   if (typeof navigateToTask === 'function') {
-    navigateToTask('/my-tasks', { state: { taskId: task.taskId } });
+    navigateToTask('/notifications');
+    window.dispatchEvent(new Event('nexg-notifications-refresh'));
     return;
   }
-  window.location.assign('/my-tasks');
+  window.location.assign('/notifications');
 };
 
 const showForegroundNotification = async (notification) => {
@@ -81,11 +82,14 @@ const showForegroundNotification = async (notification) => {
   await LocalNotifications.schedule({
     notifications: [{
       id: Math.floor(Date.now() % 2147483647),
-      title: notification.title || 'New Task Assigned',
+      title: notification.title || (task.type === 'task_assignment' ? 'New Task Assigned' : 'Task Status Updated'),
       body: notification.body || 'You have been assigned a new task.',
       channelId: CHANNEL_ID,
       schedule: { at: new Date(Date.now() + 100) },
-      extra: { type: 'task_assignment', taskId: task.taskId },
+      extra: { type: task.type, taskId: task.taskId },
+      iconColor: '#FF8A00',
+      smallIcon: 'ic_stat_nexg',
+      largeIcon: 'nexg_notification_logo',
     }],
   });
 };
@@ -107,6 +111,7 @@ const attachListeners = async () => {
   });
 
   await PushNotifications.addListener('pushNotificationReceived', (notification) => {
+    window.dispatchEvent(new Event('nexg-notifications-refresh'));
     showForegroundNotification(notification).catch(() => {});
   });
 
