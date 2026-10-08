@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   Bot,
@@ -9,6 +9,7 @@ import {
   Database,
   Edit3,
   Filter,
+  FileSpreadsheet,
   Loader2,
   Mail,
   MessageSquare,
@@ -25,6 +26,8 @@ import {
 } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './BusinessOutreach.css';
+import { csvExportToSheets } from '../savedCsvImport';
+import { generationChannelFor, hasChannelContact } from '../outreachChannels';
 
 const tones = [
   { id: 'professional', label: 'Professional', icon: BriefcaseBusiness },
@@ -136,7 +139,7 @@ const fieldValueMatching = (record, names, patterns = []) => {
   return '';
 };
 
-export default function BusinessOutreach() {
+export default function BusinessOutreach({ canImportSavedCsv = true }) {
   const [activeTab, setActiveTab] = useState('leads');
   const [contacts, setContacts] = useState([]);
   const [history, setHistory] = useState([]);
@@ -163,6 +166,8 @@ export default function BusinessOutreach() {
   const [deleteLead, setDeleteLead] = useState(null);
   const [deleteDraft, setDeleteDraft] = useState(null);
   const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importSource, setImportSource] = useState('workbook');
+  const importRequest = useRef(0);
   const [documents, setDocuments] = useState([]);
   const [importFileId, setImportFileId] = useState('');
   const [importSheets, setImportSheets] = useState([]);
@@ -233,9 +238,12 @@ export default function BusinessOutreach() {
     });
   }, [leads, query, statusFilter]);
 
-  const selectedLeads = leads.filter((lead) => selectedLeadIds.includes(lead.id));
-  const selectedChannelLeads = selectedLeads.filter((lead) => channel === 'email' ? lead.email : lead.phone);
-  const selectedMissingChannelLeads = selectedLeads.filter((lead) => channel === 'email' ? !lead.email : !lead.phone);
+  const selectedLeads = useMemo(() => leads.filter((lead) => selectedLeadIds.includes(lead.id)), [leads, selectedLeadIds]);
+  useEffect(() => {
+    setChannel((current) => generationChannelFor(selectedLeads, current));
+  }, [selectedLeads]);
+  const selectedChannelLeads = selectedLeads.filter((lead) => hasChannelContact(lead, channel));
+  const selectedMissingChannelLeads = selectedLeads.filter((lead) => !hasChannelContact(lead, channel));
   const selectedBccEmails = channel === 'email' && selectedChannelLeads.length > 1
     ? [...new Set(selectedChannelLeads.map((lead) => lead.email).filter(Boolean))]
     : [];
@@ -301,9 +309,9 @@ export default function BusinessOutreach() {
         'WA Number',
       ], [/mobile/, /phone/, /telephone/, /^tel$/, /whatsapp/, /^wa/]),
       website: fieldValueMatching(record, ['Website', 'Web Site', 'URL', 'Link', 'Domain'], [/website/, /weburl/, /^url$/, /domain/]),
-      category: fieldValueMatching(record, ['BUSINESS_CONST', 'Category', 'Business Type', 'Industry', 'Segment'], [/category/, /businesstype/, /industry/, /segment/]) || 'data_library',
+      category: fieldValueMatching(record, ['BUSINESS_CONST', 'Category', 'Business Type', 'Industry', 'Segment'], [/category/, /businesstype/, /industry/, /segment/]) || (importSource === 'csv' ? 'lead_csv' : 'data_library'),
     };
-  })).filter((row) => row.company_name && (row.email || row.phone)), [importSheets]);
+  })).filter((row) => row.company_name && (row.email || row.phone)), [importSheets, importSource]);
 
   const toggleLead = (leadId) => {
     setSelectedLeadIds((current) => current.includes(leadId) ? current.filter((id) => id !== leadId) : [...current, leadId]);
@@ -427,48 +435,60 @@ export default function BusinessOutreach() {
     }
   };
 
-  const openImportModal = async () => {
+  const closeImportModal = () => {
+    if (importSaving) return;
+    importRequest.current += 1;
+    setImportModalOpen(false);
+  };
+
+  const openImportModal = async (source = 'workbook') => {
+    const request = ++importRequest.current;
+    setImportSource(source);
     setImportModalOpen(true);
+    setDocuments([]);
+    setImportFileId('');
+    setImportSheets([]);
+    setSelectedImportRows([]);
     setError('');
     setNotice('');
     setImportLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/documents`, { headers: authHeaders() });
+      const endpoint = source === 'csv' ? '/api/csv-exports' : '/api/documents';
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, { headers: authHeaders() });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'Could not load Data Library workbooks.');
-      const completed = (data.files || []).filter((file) => file.status === 'completed');
-      setDocuments(completed);
-      if (completed[0]?.id) {
-        await openImportWorkbook(completed[0].id);
-      } else {
-        setImportFileId('');
-        setImportSheets([]);
-      }
+      if (!response.ok) throw new Error(data.detail || 'Could not load import sources.');
+      if (request !== importRequest.current) return;
+      const files = source === 'csv'
+        ? (data.exports || []).map((file) => ({ ...file, filename: file.export_name }))
+        : (data.files || []).filter((file) => file.status === 'completed');
+      setDocuments(files);
+      if (files[0]?.id) await openImportWorkbook(files[0].id, source);
     } catch (loadError) {
-      setError(loadError.message || 'Could not load Data Library workbooks.');
+      if (request === importRequest.current) setError(loadError.message || 'Could not load import sources.');
     } finally {
-      setImportLoading(false);
+      if (request === importRequest.current) setImportLoading(false);
     }
   };
 
-  const openImportWorkbook = async (fileId) => {
+  const openImportWorkbook = async (fileId, source = importSource) => {
+    const request = ++importRequest.current;
     setImportFileId(fileId);
     setSelectedImportRows([]);
-    if (!fileId) {
-      setImportSheets([]);
-      return;
-    }
+    setImportSheets([]);
+    setError('');
+    if (!fileId) { setImportLoading(false); return; }
     setImportLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/documents/${fileId}/contents`, { headers: authHeaders() });
+      const endpoint = source === 'csv' ? `/api/csv-exports/${fileId}` : `/api/documents/${fileId}/contents`;
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, { headers: authHeaders() });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'Could not open workbook.');
-      setImportSheets(data.sheets || []);
+      if (!response.ok) throw new Error(data.detail || 'Could not open saved records.');
+      if (request !== importRequest.current) return;
+      setImportSheets(source === 'csv' ? csvExportToSheets(data.export) : data.sheets || []);
     } catch (loadError) {
-      setImportSheets([]);
-      setError(loadError.message || 'Could not open workbook.');
+      if (request === importRequest.current) setError(loadError.message || 'Could not open saved records.');
     } finally {
-      setImportLoading(false);
+      if (request === importRequest.current) setImportLoading(false);
     }
   };
 
@@ -483,9 +503,10 @@ export default function BusinessOutreach() {
   };
 
   const importSelectedRows = async () => {
+    if (importSaving || importLoading) return;
     const rows = importRows.filter((row) => selectedImportRows.includes(row.id));
     if (!rows.length) {
-      setError('Select at least one workbook row to import.');
+      setError('Select at least one row to import.');
       return;
     }
     setImportSaving(true);
@@ -513,14 +534,14 @@ export default function BusinessOutreach() {
       await loadWorkspace();
       if (importedIds.length) setSelectedLeadIds((current) => [...new Set([...current, ...importedIds])]);
       if (imported) {
-        setNotice(`${imported} lead${imported === 1 ? '' : 's'} imported from Data Library${failedRows.length ? `; ${failedRows.length} row${failedRows.length === 1 ? '' : 's'} skipped.` : '.'}`);
+        setNotice(`${imported} lead${imported === 1 ? '' : 's'} imported from ${importSource === 'csv' ? 'Lead CSV History' : 'Data Library'}${failedRows.length ? `; ${failedRows.length} row${failedRows.length === 1 ? '' : 's'} skipped.` : '.'}`);
         setImportModalOpen(false);
         setSelectedImportRows([]);
       } else if (failedRows.length) {
-        setError(failedRows[0].message || 'Could not import selected workbook rows.');
+        setError(failedRows[0].message || 'Could not import selected rows.');
       }
     } catch (importError) {
-      setError(importError.message || 'Could not import selected workbook rows.');
+      setError(importError.message || 'Could not import selected rows.');
     } finally {
       setImportSaving(false);
     }
@@ -532,13 +553,16 @@ export default function BusinessOutreach() {
       setActiveTab('leads');
       return;
     }
-    if (!selectedChannelLeads.length) {
-      setError(`Select at least one lead with ${channel === 'email' ? 'a business email' : 'a WhatsApp phone number'}.`);
+    const generationChannel = generationChannelFor(selectedLeads, channel);
+    const generationLeads = selectedLeads.filter((lead) => hasChannelContact(lead, generationChannel));
+    setChannel(generationChannel);
+    if (!generationLeads.length) {
+      setError(`Select at least one lead with ${generationChannel === 'email' ? 'a business email' : 'a WhatsApp phone number'}.`);
       setActiveTab('leads');
       return;
     }
-    if (channel === 'email' && selectedChannelLeads.length > 100) {
-      setError(`Select no more than 100 email recipients per batch. You currently have ${selectedChannelLeads.length} selected.`);
+    if (generationChannel === 'email' && generationLeads.length > 100) {
+      setError(`Select no more than 100 email recipients per batch. You currently have ${generationLeads.length} selected.`);
       return;
     }
     if (rewrite && (!rewritePrompt.trim() || !draft.trim())) return;
@@ -551,8 +575,8 @@ export default function BusinessOutreach() {
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contact_ids: selectedChannelLeads.map((lead) => lead.id),
-          channel,
+          contact_ids: generationLeads.map((lead) => lead.id),
+          channel: generationChannel,
           tone,
           campaign_goal: campaignGoal,
           brand_name: brandName,
@@ -565,7 +589,7 @@ export default function BusinessOutreach() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not generate outreach content.');
       const generated = cleanGeneratedDraft(data, subject);
-      if (channel === 'email' && generated.subject) setSubject(generated.subject);
+      if (generationChannel === 'email' && generated.subject) setSubject(generated.subject);
       setDraft(generated.message);
       localStorage.setItem('nexgtools_business_outreach_draft', generated.message);
       setRewritePrompt('');
@@ -715,6 +739,15 @@ export default function BusinessOutreach() {
         })}
       </nav>
 
+      <div className="bo-channel-selector">
+        <span>Message channel</span>
+        <div className="bo-channel-tabs" aria-label="Message channel">
+          <button type="button" className={channel === 'email' ? 'active' : ''} aria-pressed={channel === 'email'} onClick={() => { setChannel('email'); setError(''); }} disabled={generating || rewriting || sending}><Mail size={14} /> Email</button>
+          <button type="button" className={channel === 'whatsapp' ? 'active' : ''} aria-pressed={channel === 'whatsapp'} onClick={() => { setChannel('whatsapp'); setError(''); }} disabled={generating || rewriting || sending}><MessageSquare size={14} /> WhatsApp</button>
+        </div>
+        <small>{channel === 'whatsapp' ? 'Phone number required. Email is optional.' : 'Email required for email delivery.'}</small>
+      </div>
+
       {(error || notice) && (
         <div className={`bo-alert ${error ? 'error' : 'success'}`}>
           {error ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
@@ -734,7 +767,8 @@ export default function BusinessOutreach() {
             <span>{leads.length.toLocaleString()} total leads</span>
             <div>
               <button type="button" className="bo-soft-btn" onClick={() => setStatusFilter((current) => current === 'all' ? 'new' : current === 'new' ? 'contacted' : current === 'contacted' ? 'failed' : 'all')}><Filter size={14} /> {statusFilter === 'all' ? 'Filter' : statusFilter}</button>
-              <button type="button" className="bo-soft-btn" onClick={openImportModal}><Database size={14} /> Import Workbook</button>
+              <button type="button" className="bo-soft-btn" onClick={() => openImportModal('workbook')}><Database size={14} /> Import Workbook</button>
+              {canImportSavedCsv && <button type="button" className="bo-soft-btn" onClick={() => openImportModal('csv')}><FileSpreadsheet size={14} /> Import Saved CSV</button>}
               <button type="button" className="bo-dark-btn" onClick={openNewLeadModal}><Plus size={14} /> New Lead</button>
               <button type="button" className="bo-soft-btn" onClick={loadWorkspace} disabled={loading}><RefreshCw size={14} /> Refresh</button>
             </div>
@@ -778,7 +812,7 @@ export default function BusinessOutreach() {
                     </td>
                   </tr>
                 )) : (
-                  <tr><td colSpan="7"><span className="bo-empty-inline">No real leads found. Import from Data Library workbook or add one manually.</span></td></tr>
+                  <tr><td colSpan="7"><span className="bo-empty-inline">No real leads found. Import a workbook or saved CSV, or add one manually.</span></td></tr>
                 )}
               </tbody>
             </table>
@@ -820,10 +854,10 @@ export default function BusinessOutreach() {
                 </button>
               ))}
             </div>
-            <button type="button" className="bo-template-fill" onClick={applyGeneralEmailTemplate}>
+            {channel === 'email' && <button type="button" className="bo-template-fill" onClick={applyGeneralEmailTemplate}>
               <Mail size={14} />
               Use General Email Template
-            </button>
+            </button>}
           </label>
 
           <label className="bo-field-group">
@@ -865,10 +899,7 @@ export default function BusinessOutreach() {
 
       {activeTab === 'editor' && (
         <section className="bo-editor">
-          <div className="bo-channel-tabs">
-            <button type="button" className={channel === 'email' ? 'active' : ''} onClick={() => setChannel('email')}><Mail size={14} /> Email</button>
-            <button type="button" className={channel === 'whatsapp' ? 'active' : ''} onClick={() => setChannel('whatsapp')}><MessageSquare size={14} /> WhatsApp</button>
-          </div>
+
 
           <div className="bo-recipients-card">
             <div className="bo-recipients-head">
@@ -1046,46 +1077,47 @@ export default function BusinessOutreach() {
       )}
 
       {importModalOpen && (
-        <div className="bo-modal-backdrop" role="presentation" onMouseDown={() => setImportModalOpen(false)}>
-          <div className="bo-modal bo-import-modal" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="bo-modal-backdrop" role="presentation" onMouseDown={closeImportModal}>
+          <div className="bo-modal bo-import-modal" role="dialog" aria-modal="true" aria-labelledby="outreach-import-title" onMouseDown={(event) => event.stopPropagation()}>
             <div className="bo-section-head">
-              <h2>Import From Data Library</h2>
-              <button type="button" onClick={() => setImportModalOpen(false)}><X size={16} /></button>
+              <h2 id="outreach-import-title">{importSource === 'csv' ? 'Import From Lead CSV History' : 'Import From Data Library'}</h2>
+              <button type="button" onClick={closeImportModal} disabled={importSaving} aria-label="Close import"><X size={16} /></button>
             </div>
 
             <label>
-              <span>Completed workbook</span>
-              <select value={importFileId} onChange={(event) => openImportWorkbook(event.target.value)}>
-                <option value="">Choose workbook</option>
+              <span>{importSource === 'csv' ? 'Saved CSV' : 'Completed workbook'}</span>
+              <select value={importFileId} disabled={importSaving || importLoading} onChange={(event) => openImportWorkbook(event.target.value)}>
+                <option value="">{importSource === 'csv' ? 'Choose saved CSV' : 'Choose workbook'}</option>
                 {documents.map((file) => (
-                  <option key={file.id} value={file.id}>{file.filename}</option>
+                  <option key={file.id} value={file.id}>{file.filename}{importSource === 'csv' ? ` (${file.row_count} leads)` : ''}</option>
                 ))}
               </select>
             </label>
 
+            {error && <p className="bo-import-error" role="alert">{error}</p>}
             <div className="bo-import-summary">
-              {importLoading ? <span><Loader2 className="spin" size={15} /> Loading workbook...</span>
+              {importLoading ? <span><Loader2 className="spin" size={15} /> Loading {importSource === 'csv' ? 'saved CSVs' : 'workbook'}...</span>
                 : importRows.length ? <span>{importRows.length} importable rows with company and email/phone</span>
                   : <span>No importable rows found. Rows need company plus email or WhatsApp phone.</span>}
-              <button type="button" onClick={toggleAllImportRows} disabled={!importRows.length}>{selectedImportRows.length === importRows.length && importRows.length ? 'Clear' : 'Select all'}</button>
+              <button type="button" onClick={toggleAllImportRows} disabled={!importRows.length || importSaving || importLoading}>{selectedImportRows.length === importRows.length && importRows.length ? 'Clear' : 'Select all'}</button>
             </div>
 
             <div className="bo-import-table-wrap">
               <table className="bo-table bo-import-table">
                 <thead>
                   <tr>
-                    <th><input type="checkbox" checked={importRows.length > 0 && selectedImportRows.length === importRows.length} onChange={toggleAllImportRows} /></th>
+                    <th><input type="checkbox" disabled={importSaving || importLoading} checked={importRows.length > 0 && selectedImportRows.length === importRows.length} onChange={toggleAllImportRows} /></th>
                     <th>Company</th>
                     <th>Contact</th>
                     <th>Email</th>
                     <th>Phone</th>
-                    <th>Sheet</th>
+                    <th>{importSource === 'csv' ? 'CSV' : 'Sheet'}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {importRows.slice(0, 200).map((row) => (
                     <tr key={row.id}>
-                      <td><input type="checkbox" checked={selectedImportRows.includes(row.id)} onChange={() => toggleImportRow(row.id)} /></td>
+                      <td><input type="checkbox" disabled={importSaving || importLoading} checked={selectedImportRows.includes(row.id)} onChange={() => toggleImportRow(row.id)} /></td>
                       <td>{row.company_name}</td>
                       <td>{row.contact_person || 'Not set'}</td>
                       <td>{row.email || 'Not set'}</td>
@@ -1094,14 +1126,14 @@ export default function BusinessOutreach() {
                     </tr>
                   ))}
                   {!importRows.length && (
-                    <tr><td colSpan="6"><span className="bo-empty-inline">Choose a completed Data Library workbook to preview importable leads.</span></td></tr>
+                    <tr><td colSpan="6"><span className="bo-empty-inline">{importSource === 'csv' ? 'Choose a saved CSV to preview leads. Save a CSV from Lead Search if this list is empty.' : 'Choose a completed Data Library workbook to preview importable leads.'}</span></td></tr>
                   )}
                 </tbody>
               </table>
             </div>
 
             {importRows.length > 200 && <small className="bo-helper">Showing first 200 importable rows. Select all imports every importable row.</small>}
-            <button type="button" className="bo-dark-btn" onClick={importSelectedRows} disabled={!selectedImportRows.length || importSaving}>
+            <button type="button" className="bo-dark-btn" onClick={importSelectedRows} disabled={!selectedImportRows.length || importSaving || importLoading}>
               {importSaving ? 'Importing...' : `Import ${selectedImportRows.length} Lead${selectedImportRows.length === 1 ? '' : 's'}`}
             </button>
           </div>

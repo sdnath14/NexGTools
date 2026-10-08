@@ -717,7 +717,7 @@ def save_manual_outreach_contact(
     company = company_name.strip()
     if not company:
         raise ValueError("Company name is required.")
-    normalized_email = email.strip().lower()
+    normalized_email = (email or "").strip().lower()
     normalized_phone = phone.strip()
     if not normalized_email and not normalized_phone:
         raise ValueError("Enter a business email or WhatsApp phone number.")
@@ -752,7 +752,7 @@ def save_manual_outreach_contact(
                     normalized_phone,
                 ),
             )
-    return next((contact for contact in list_outreach_contacts(user_id) if contact.get("email") == normalized_email or contact.get("phone") == normalized_phone), {})
+    return next((contact for contact in list_outreach_contacts(user_id) if (normalized_email and contact.get("email") == normalized_email) or (normalized_phone and contact.get("phone") == normalized_phone)), {})
 
 
 def update_outreach_contact(
@@ -768,7 +768,7 @@ def update_outreach_contact(
     company = company_name.strip()
     if not company:
         raise ValueError("Company name is required.")
-    normalized_email = email.strip().lower()
+    normalized_email = (email or "").strip().lower()
     normalized_phone = phone.strip()
     if not normalized_email and not normalized_phone:
         raise ValueError("Enter a business email or WhatsApp phone number.")

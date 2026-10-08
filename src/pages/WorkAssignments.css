@@ -815,3 +815,8 @@ html[data-theme='dark'] .work-chat-user p {
     width: 100%;
   }
 }
+
+.task-timing { min-width: 145px; font-variant-numeric: tabular-nums; }
+.task-timing small { display: block; margin-top: 4px; }
+.task-open-button { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.task-open-button:focus-visible { outline: 2px solid #0f766e; outline-offset: 4px; }

@@ -9,6 +9,7 @@ const THEMES = [
 ];
 
 const ACCENTS = [
+  { id: 'blue', label: 'Blue', color: '#1260ff' },
   { id: 'orange', label: 'Orange', color: '#f97316' },
 ];
 

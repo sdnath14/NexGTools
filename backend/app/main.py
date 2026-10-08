@@ -209,6 +209,10 @@ def ensure_work_assignment_tables() -> None:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
+            for column in ("seen_at", "started_at", "completed_at"):
+                cursor.execute("SHOW COLUMNS FROM work_tasks LIKE %s", (column,))
+                if not cursor.fetchone():
+                    cursor.execute(f"ALTER TABLE work_tasks ADD COLUMN {column} TIMESTAMP NULL")
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS work_task_assignees (
@@ -308,8 +312,8 @@ def _work_task_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": str(row["id"]),
         "databaseId": row["id"],
-        "employeeId": str(assigned_user_id or row["employee_id"]),
-        "workEmployeeId": str(row["employee_id"]),
+        "employeeId": str(assigned_user_id or row.get("employee_id")),
+        "workEmployeeId": str(row.get("employee_id")),
         "employeeUserId": assigned_user_id,
         "title": row.get("title") or "",
         "quantity": row.get("quantity") or 1,
@@ -317,6 +321,10 @@ def _work_task_row(row: dict[str, Any]) -> dict[str, Any]:
         "priority": row.get("priority") or "Medium",
         "status": row.get("status") or "Pending",
         "notes": row.get("notes") or "",
+        "seenAt": float(row["seen_timestamp"]) * 1000 if row.get("seen_timestamp") is not None else None,
+        "startedAt": float(row["started_timestamp"]) * 1000 if row.get("started_timestamp") is not None else None,
+        "completedAt": float(row["completed_timestamp"]) * 1000 if row.get("completed_timestamp") is not None else None,
+        "serverNow": time.time() * 1000,
         "employeeName": row.get("employee_name") or "",
         "employeeEmail": row.get("employee_email") or "",
         "employeePhone": row.get("employee_phone") or "",
@@ -422,7 +430,7 @@ class OutreachSendRequest(BaseModel):
 class OutreachContactRequest(BaseModel):
     company_name: str
     contact_person: str = ""
-    email: str = ""
+    email: str | None = ""
     phone: str = ""
     website: str = ""
     category: str = "manual"
@@ -1908,7 +1916,9 @@ def get_work_assignments(authorization: str | None = Header(default=None)) -> di
             employees = [_employee_user_row(row) for row in cursor.fetchall()]
             cursor.execute(
                 """
-                SELECT work_tasks.*, work_employees.name AS employee_name,
+                SELECT work_tasks.*, UNIX_TIMESTAMP(work_tasks.seen_at) AS seen_timestamp,
+                       UNIX_TIMESTAMP(work_tasks.started_at) AS started_timestamp,
+                       UNIX_TIMESTAMP(work_tasks.completed_at) AS completed_timestamp, work_employees.name AS employee_name,
                        work_employees.email AS employee_email, work_employees.phone AS employee_phone
                 FROM work_tasks
                 JOIN work_employees ON work_employees.id = work_tasks.employee_id
@@ -1960,6 +1970,10 @@ def create_work_task(
                 (user["id"], employee["id"], employee_user_id, title, payload.quantity, due_date, priority, status, payload.notes.strip()),
             )
             task_id = cursor.lastrowid
+            if status == "In Progress":
+                cursor.execute("UPDATE work_tasks SET started_at = CURRENT_TIMESTAMP WHERE id = %s", (task_id,))
+            elif status == "Done":
+                cursor.execute("UPDATE work_tasks SET completed_at = CURRENT_TIMESTAMP WHERE id = %s", (task_id,))
             if employee_user_id:
                 cursor.execute(
                     """
@@ -1978,7 +1992,9 @@ def create_work_task(
                 )
             cursor.execute(
                 """
-                SELECT work_tasks.*, work_employees.name AS employee_name,
+                SELECT work_tasks.*, UNIX_TIMESTAMP(work_tasks.seen_at) AS seen_timestamp,
+                       UNIX_TIMESTAMP(work_tasks.started_at) AS started_timestamp,
+                       UNIX_TIMESTAMP(work_tasks.completed_at) AS completed_timestamp, work_employees.name AS employee_name,
                        work_employees.email AS employee_email, work_employees.phone AS employee_phone
                 FROM work_tasks
                 JOIN work_employees ON work_employees.id = work_tasks.employee_id
@@ -2044,7 +2060,9 @@ def resend_work_task_email(task_id: int, authorization: str | None = Header(defa
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT work_tasks.*, work_employees.name AS employee_name,
+                SELECT work_tasks.*, UNIX_TIMESTAMP(work_tasks.seen_at) AS seen_timestamp,
+                       UNIX_TIMESTAMP(work_tasks.started_at) AS started_timestamp,
+                       UNIX_TIMESTAMP(work_tasks.completed_at) AS completed_timestamp, work_employees.name AS employee_name,
                        work_employees.email AS employee_email, work_employees.phone AS employee_phone
                 FROM work_tasks
                 JOIN work_employees ON work_employees.id = work_tasks.employee_id
@@ -2143,6 +2161,11 @@ def update_work_task_status(
             task = cursor.fetchone()
             if not task:
                 raise HTTPException(status_code=404, detail="Task not found.")
+            if status != task.get("status"):
+                if status == "In Progress":
+                    cursor.execute("UPDATE work_tasks SET started_at = IF(completed_at IS NOT NULL, CURRENT_TIMESTAMP, COALESCE(started_at, CURRENT_TIMESTAMP)), completed_at = NULL WHERE id = %s", (task_id,))
+                elif status == "Done":
+                    cursor.execute("UPDATE work_tasks SET completed_at = CURRENT_TIMESTAMP WHERE id = %s", (task_id,))
             cursor.execute("UPDATE work_tasks SET status = %s WHERE id = %s", (status, task_id))
             if status != task.get("status"):
                 actor_name = user.get("name") or task.get("employee_name") or "Employee"
@@ -2171,7 +2194,35 @@ def update_work_task_status(
                         {"id": user["id"], "name": actor_name},
                         status,
                     )
-    return {"updated": True}
+            cursor.execute("SELECT work_tasks.*, work_employees.name AS employee_name, work_employees.email AS employee_email, work_employees.phone AS employee_phone, UNIX_TIMESTAMP(work_tasks.seen_at) AS seen_timestamp, UNIX_TIMESTAMP(work_tasks.started_at) AS started_timestamp, UNIX_TIMESTAMP(work_tasks.completed_at) AS completed_timestamp FROM work_tasks JOIN work_employees ON work_employees.id = work_tasks.employee_id WHERE work_tasks.id = %s", (task_id,))
+            updated_task = _work_task_row(cursor.fetchone())
+    return {"updated": True, "task": updated_task}
+
+
+@app.post("/api/work-assignments/tasks/{task_id}/seen")
+def mark_work_task_seen(task_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """SELECT work_tasks.id, work_tasks.employee_user_id, work_employees.email,
+                          EXISTS(SELECT 1 FROM work_task_assignees WHERE task_id = work_tasks.id AND user_id = %s) AS assigned
+                   FROM work_tasks JOIN work_employees ON work_employees.id = work_tasks.employee_id
+                   WHERE work_tasks.id = %s AND (work_tasks.created_by_user_id = %s OR work_tasks.employee_user_id = %s
+                     OR LOWER(work_employees.email) = %s OR %s
+                     OR EXISTS(SELECT 1 FROM work_task_assignees WHERE task_id = work_tasks.id AND user_id = %s))
+                   FOR UPDATE""",
+                (user["id"], task_id, user["id"], user["id"], user["email"].strip().lower(), bool(user.get("is_nexg_admin")), user["id"]),
+            )
+            task = cursor.fetchone()
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found.")
+            if task["employee_user_id"] == user["id"] or task["assigned"] or (task.get("email") or "").strip().lower() == user["email"].strip().lower():
+                cursor.execute("UPDATE work_tasks SET seen_at = COALESCE(seen_at, CURRENT_TIMESTAMP) WHERE id = %s", (task_id,))
+            cursor.execute("UPDATE work_task_notifications SET read_at = CURRENT_TIMESTAMP WHERE task_id = %s AND recipient_user_id = %s AND read_at IS NULL", (task_id, user["id"]))
+            cursor.execute("SELECT UNIX_TIMESTAMP(seen_at) AS seen_timestamp FROM work_tasks WHERE id = %s", (task_id,))
+            seen = cursor.fetchone()["seen_timestamp"]
+    return {"seenAt": float(seen) * 1000 if seen is not None else None}
 
 
 @app.get("/api/work-assignments/notifications")
@@ -2255,7 +2306,9 @@ def my_work_tasks(authorization: str | None = Header(default=None)) -> dict[str,
             )
             cursor.execute(
                 """
-                SELECT work_tasks.*, work_employees.name AS employee_name,
+                SELECT work_tasks.*, UNIX_TIMESTAMP(work_tasks.seen_at) AS seen_timestamp,
+                       UNIX_TIMESTAMP(work_tasks.started_at) AS started_timestamp,
+                       UNIX_TIMESTAMP(work_tasks.completed_at) AS completed_timestamp, work_employees.name AS employee_name,
                        work_employees.email AS employee_email, work_employees.phone AS employee_phone
                 FROM work_tasks
                 JOIN work_employees ON work_employees.id = work_tasks.employee_id
@@ -3866,7 +3919,7 @@ def create_outreach_contact(payload: OutreachContactRequest, authorization: str 
             user["id"],
             payload.company_name,
             payload.contact_person,
-            payload.email,
+            payload.email or "",
             payload.phone,
             payload.website,
             payload.category,
@@ -3885,7 +3938,7 @@ def update_outreach_contact_endpoint(contact_id: int, payload: OutreachContactRe
             contact_id,
             payload.company_name,
             payload.contact_person,
-            payload.email,
+            payload.email or "",
             payload.phone,
             payload.website,
             payload.category,

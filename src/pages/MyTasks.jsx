@@ -2,10 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, CheckCircle2, ClipboardList, LoaderCircle } from 'lucide-react';
 import { API_BASE_URL, AUTH_TOKEN_KEY, authHeaders } from '../auth';
 import './WorkAssignments.css';
-import { useSearchParams } from 'react-router-dom';
+import TaskTiming from '../components/TaskTiming';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 export default function MyTasks() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const selectedTaskId = searchParams.get('taskId');
   const [tasks, setTasks] = useState([]);
   const [user, setUser] = useState(null);
@@ -31,10 +33,25 @@ export default function MyTasks() {
       }
     };
     loadTasks();
+    const timer = window.setInterval(loadTasks, 10000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
-    if (!loading && selectedTaskId) document.getElementById(`task-${selectedTaskId}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (loading || !selectedTaskId) return;
+    document.getElementById(`task-${selectedTaskId}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    let active = true;
+    const markSeen = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks/${selectedTaskId}/seen`, { method: 'POST', headers: authHeaders() });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'Could not mark task as seen.');
+        if (active) setTasks((current) => current.map((task) => String(task.id) === selectedTaskId ? { ...task, seenAt: data.seenAt } : task));
+        window.dispatchEvent(new Event('nexg-notifications-refresh'));
+      } catch (err) { if (active) setError(err.message); }
+    };
+    markSeen();
+    return () => { active = false; };
   }, [loading, selectedTaskId]);
 
   const summary = useMemo(() => ({
@@ -56,6 +73,7 @@ export default function MyTasks() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || 'Could not update task status.');
+      setTasks((current) => current.map((task) => task.id === taskId ? { ...task, ...data.task } : task));
       setError('');
       window.dispatchEvent(new Event('nexg-notifications-refresh'));
     } catch (statusError) {
@@ -69,7 +87,7 @@ export default function MyTasks() {
       <header className="work-hero">
         <div>
           <span>Employee Task Bar</span>
-          <h1>{isAdminView ? 'Team assigned work' : 'My assigned work'}</h1>
+          <h1>{isAdminView ? 'Work Assignments' : 'My assigned work'}</h1>
           <p>{isAdminView ? 'Admin can review every employee task from this task bar.' : 'Tasks assigned to your employee profile appear here when your login email matches the employee email.'}</p>
         </div>
         <div className="work-hero-stats">
@@ -87,16 +105,17 @@ export default function MyTasks() {
         {loading ? <div className="work-empty">Loading tasks...</div> : (
           <div className="work-table-scroll">
             <table className="work-table">
-              <thead><tr>{isAdminView && <th>Employee</th>}<th>Task</th><th>Qty</th><th>Due</th><th>Priority</th><th>Status</th></tr></thead>
+              <thead><tr>{isAdminView && <th>Employee</th>}<th>Task</th><th>Qty</th><th>Due</th><th>Priority</th><th>Status</th><th>Time / Seen</th></tr></thead>
               <tbody>
                 {tasks.map((task) => (
                   <tr key={task.id} id={`task-${task.id}`} className={String(task.id) === selectedTaskId ? 'notification-task-highlight' : ''}>
                     {isAdminView && <td><strong>{task.employeeName || '-'}</strong><small>{task.employeeEmail || ''}</small></td>}
-                    <td><span>{task.title}</span>{task.notes && <small>{task.notes}</small>}</td>
+                    <td><button type="button" className="task-open-button" onClick={() => navigate(`/my-tasks?taskId=${encodeURIComponent(task.id)}`)}>{task.title}</button>{task.notes && <small>{task.notes}</small>}</td>
                     <td>{task.quantity}</td>
                     <td><CalendarDays size={14} /> {task.dueDate || '-'}</td>
                     <td><em className={`work-priority work-priority-${task.priority.toLowerCase()}`}>{task.priority}</em></td>
                     <td><select value={task.status} onChange={(event) => updateStatus(task.id, event.target.value)}><option>Pending</option><option>In Progress</option><option>Done</option></select></td>
+                    <td><TaskTiming task={task} /></td>
                   </tr>
                 ))}
               </tbody>

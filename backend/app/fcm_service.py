@@ -146,11 +146,17 @@ def _send_multicast_notification(
     }
 
 
+def _task_preview(title: str) -> str:
+    title = " ".join(title.split())
+    length = min(80, max(1, (len(title) + 1) // 2))
+    return title[:length] + "... Open to view full task."
+
+
 def send_task_assignment_notification(tokens: list[dict[str, Any]], task: dict[str, Any]) -> dict[str, Any]:
     return _send_multicast_notification(
         tokens,
         title="New Task Assigned",
-        body=task.get('title') or 'You have a new task.',
+        body=_task_preview(task.get('title') or 'You have a new task.'),
         data={
             "type": "task_assignment",
             "taskId": str(task.get("id") or ""),
@@ -165,7 +171,7 @@ def send_task_status_notification(tokens: list[dict[str, Any]], task: dict[str, 
     return _send_multicast_notification(
         tokens,
         title="Task Status Updated",
-        body=f"{actor_name} marked \"{task_title}\" as {status}.",
+        body=f"{actor_name}: {status}. {_task_preview(task_title)}",
         data={
             "type": "task_status_update",
             "taskId": str(task.get("id") or ""),

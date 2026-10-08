@@ -1,167 +1,118 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import {
-  ArrowRight,
-  Database,
-  BarChart3,
-  CalendarDays,
-  Search,
-  Send,
-  Leaf,
-  ClipboardList,
-} from 'lucide-react';
+﻿import React, { useEffect, useState } from 'react';
+import { ArrowRight, Database, BarChart3, Search, Send, ClipboardList, Users, CheckCircle2, Mic } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './Dashboard.css';
 
-const permissionLabels = {
-  lead_search: 'Lead Search',
-  lead_search_history: 'Lead Search History',
-  outreach: 'Business Outreach',
-  work_assignments: 'Work Assignments',
-  data_library: 'Data Library',
-  data_analytics: 'Business Analytics Platform',
-  used_oil_india: 'Used Oil India Data',
-  exports: 'CSV History',
-  settings: 'Settings',
-};
-
-const allDashboardPermissions = Object.keys(permissionLabels);
-const EMPTY_PERMISSIONS = [];
-
-const adminTools = [
-  { permission: 'lead_search', label: 'Lead Search', description: 'Find business leads quickly', path: '/lead-search', icon: Search, color: '#2260ed', soft: '#e8f3ff', accent: '#bbdcff' },
-  { permission: 'outreach', label: 'Business Outreach', description: 'Generate and send outreach', path: '/business-outreach', icon: Send, color: '#e76a14', soft: '#fff2e5', accent: '#ffd1a6' },
-  { permission: 'work_assignments', label: 'Work Assignments', description: 'Assign employee tasks with voice input', path: '/work-assignments', icon: ClipboardList, color: '#0f766e', soft: '#ecfdf5', accent: '#99f6e4' },
-  { permission: 'data_library', label: 'Data Library', description: 'Search uploaded data', path: '/data-library', icon: Database, color: '#1878c9', soft: '#e8f4ff', accent: '#b8dcfa' },
-  { permission: 'data_analytics', label: 'Chat with your database', description: 'Turn your data into business insights', path: '/data-analytics', icon: BarChart3, color: '#d8631b', soft: '#fff1e5', accent: '#ffdab9' },
-  { permission: 'used_oil_india', label: 'Used Oil India Data', description: 'View and maintain imported records', path: '/used-oil-india', icon: Database, color: '#0f766e', soft: '#ecfdf5', accent: '#99f6e4' },
+const tools = [
+  { permission: 'lead_search', label: 'Lead Search', description: 'Find verified business leads quickly.', path: '/lead-search', icon: Search, color: '#1260ff', image: 'architecture-hero.png' },
+  { permission: 'outreach', label: 'Business Outreach', description: 'Generate and send personalized outreach.', path: '/business-outreach', icon: Send, color: '#ff641e', image: 'architecture-hero.png' },
+  { permission: 'work_assignments', label: 'Work Assignments', description: 'Type assignments and track all team tasks.', path: '/work-assignments', icon: ClipboardList, color: '#12b99a', image: 'office-interior.png' },
+  { permission: 'data_library', label: 'Data Library', description: 'Search and manage uploaded data.', path: '/data-library', icon: Database, color: '#5951ff', image: 'office-library.png' },
+  { permission: 'work_assignments', label: 'Voice Agent', description: 'Speak to assign work and update progress.', path: '/voice-agent', icon: Mic, color: '#1260ff', image: 'office-interior.png' },
+  { permission: 'data_analytics', label: 'Analytics', description: 'Turn your business data into insights.', path: '/data-analytics', icon: BarChart3, color: '#1260ff', image: 'office-library.png' },
+  { permission: 'used_oil_india', label: 'Used Oil India Data', description: 'Explore and maintain industry records.', path: '/used-oil-india', icon: Database, color: '#12b99a', image: 'office-interior.png' },
 ];
+const greeting = () => new Date().getHours() < 12 ? 'Good morning' : new Date().getHours() < 17 ? 'Good afternoon' : 'Good evening';
+const initials = (name) => (name || 'Employee').split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase();
+const weekDays = (history) => Array.from({ length: 7 }, (_, index) => {
+  const start = new Date(); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - 6 + index);
+  const end = new Date(start); end.setDate(end.getDate() + 1);
+  return { label: start.toLocaleDateString(undefined, { weekday: 'short' }), count: (history || []).filter((item) => new Date(item.created_at) >= start && new Date(item.created_at) < end).length };
+});
 
-const todayLabel = new Intl.DateTimeFormat(undefined, {
-  weekday: 'long',
-  month: 'short',
-  day: 'numeric',
-  year: 'numeric',
-}).format(new Date());
-
-const greeting = () => {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
-};
-
-const Dashboard = ({ user }) => {
+export default function Dashboard({ user }) {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const query = (searchParams.get('tools') || '').trim().toLowerCase();
-  const [activity, setActivity] = useState({ searches: null, datasets: null, loading: true, error: '' });
-  const firstName = user?.name?.split(' ')[0] || 'there';
-  const userPermissions = user?.is_nexg_admin ? allDashboardPermissions : (user?.permissions || EMPTY_PERMISSIONS);
-  const grantedTools = userPermissions
-    .filter((permission) => permissionLabels[permission])
-    .map((permission) => permissionLabels[permission]);
-
-  const canReadHistory = userPermissions.includes('lead_search_history');
-  const canReadDatasets = userPermissions.includes('data_analytics');
+  const [params, setParams] = useSearchParams();
+  const [showAllTools, setShowAllTools] = useState(false);
+  const query = (params.get('tools') || '').trim().toLowerCase();
+  const allowed = (permission) => Boolean(user?.is_nexg_admin || user?.permissions?.includes(permission));
+  const canHistory = allowed('lead_search_history'), canData = allowed('data_analytics'), canOutreach = allowed('outreach'), canAssign = allowed('work_assignments');
+  const [activity, setActivity] = useState({ loading: true, searches: null, datasets: null, outreach: null, tasks: null, error: '' });
   useEffect(() => {
     let active = true;
-    const requests = [
-      ...(canReadHistory ? [['searches', '/api/search-history', 'history']] : []),
-      ...(canReadDatasets ? [['datasets', '/api/analytics/datasets', 'datasets']] : []),
-    ];
-    setActivity({ searches: null, datasets: null, loading: true, error: '' });
-    Promise.allSettled(requests.map(async ([key, url, field]) => {
-      const response = await fetch(`${API_BASE_URL}${url}`, { headers: authHeaders() });
-      if (!response.ok) throw new Error('Unable to load workspace activity.');
-      const data = await response.json();
-      return [key, data[field] || []];
-    })).then((results) => {
+    const load = async () => {
+      const requests = [
+        ...(canHistory ? [['searches', '/api/search-history', 'history']] : []),
+        ...(canData ? [['datasets', '/api/analytics/datasets', 'datasets']] : []),
+        ...(canOutreach ? [['outreach', '/api/outreach', 'history']] : []),
+        ['tasks', canAssign ? '/api/work-assignments' : '/api/my-tasks', 'tasks'],
+      ];
+      const results = await Promise.allSettled(requests.map(async ([key, endpoint, field]) => {
+        const response = await fetch(`${API_BASE_URL}${endpoint}`, { headers: authHeaders() });
+        if (!response.ok) throw new Error('Could not load activity.');
+        const data = await response.json();
+        return [key, data[field] || []];
+      }));
       if (!active) return;
-      const next = { searches: null, datasets: null, loading: false, error: '' };
-      results.forEach((result) => {
+      const next = { loading: false, searches: null, datasets: null, outreach: null, tasks: null, error: '' };
+      for (const result of results) {
         if (result.status === 'fulfilled') next[result.value[0]] = result.value[1];
-        else next.error = 'Some activity could not be loaded. Refresh to try again.';
-      });
+        else next.error = 'Some workspace activity could not be loaded. Please refresh to retry.';
+      }
       setActivity(next);
-    });
-    return () => { active = false; };
-  }, [canReadHistory, canReadDatasets]);
-  const recent = useMemo(() => [
-    ...(activity.searches || []).map((item) => ({ id: `search-${item.id}`, title: item.query_text || 'Lead search', date: item.created_at, type: 'Search', icon: Search, path: '/lead-search/history' })),
-    ...(activity.datasets || []).map((item) => ({ id: `data-${item.id}`, title: item.filename, date: item.created_at, type: 'Dataset uploaded', icon: Database, path: '/data-analytics' })),
-  ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 4), [activity.searches, activity.datasets]);
-  const days = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() - 6 + index);
-    const end = new Date(date); end.setDate(end.getDate() + 1);
-    return { label: date.toLocaleDateString(undefined, { weekday: 'short' }), count: (activity.searches || []).filter((item) => new Date(item.created_at) >= date && new Date(item.created_at) < end).length };
-  });
-  const visibleTools = adminTools.filter((tool) => userPermissions.includes(tool.permission) && `${tool.label} ${tool.description}`.toLowerCase().includes(query));
-  const stat = (value) => activity.loading ? '?' : value == null ? '?' : Number(value).toLocaleString();
-
-  return (
-    <div className="dash-page dash-live">
-      <header className="dash-welcome-banner">
-        <div className="dash-welcome-copy"><span className="dash-eyebrow">WELCOME TO <span className="dash-brand-orange">NEXG</span> <span className="dash-brand-blue">TOOLS</span></span>
-          <h1>Your <span className="dash-brand-orange">business</span> <em>workspace</em></h1>
-          <p>{greeting()}, {firstName}. Choose a tool to get started and keep things moving.</p>
-          <div className="dash-date-card"><CalendarDays size={18} /><span>{todayLabel}</span></div>
-        </div>
-        <div className="dash-banner-caption">Cleaner resources.<br />Brighter tomorrow.<i /></div>
-      </header>
-
-      {!user?.is_nexg_admin && <section className="dash-panel dash-access-panel">
-        <h2>You have access to</h2>
-        {grantedTools.length ? <div className="dash-access-list">{grantedTools.map((tool) => <span key={tool}>{tool}</span>)}</div>
-          : <p>No tools have been assigned yet. Please contact an administrator.</p>}
-      </section>}
-
-      {adminTools.some((tool) => userPermissions.includes(tool.permission)) && <section className="dash-admin-launcher" aria-label="Workspace tools">
-        <div className="dash-section-heading"><div><h2>Workspace tools</h2><p>Choose a tool to get started.</p></div><button type="button" className="dash-view-tools" onClick={() => { setSearchParams({}); document.getElementById('workspace-tools')?.scrollIntoView({ block: 'nearest' }); }}>View all tools <ArrowRight size={15} /></button></div>
-        <div className="dash-admin-tool-grid" id="workspace-tools">
-          {visibleTools.map((tool, index) => {
-            const Icon = tool.icon;
-            return <button
-              key={tool.path}
-              type="button"
-              className="dash-admin-tool-card"
-              style={{ '--tool-color': tool.color, '--tool-soft': tool.soft, '--tool-accent': tool.accent, '--tool-order': index }}
-              onClick={() => navigate(tool.path)}
-            >
-              <span className={`dash-admin-tool-icon ${tool.permission === 'data_analytics' ? 'dash-neha-icon' : tool.permission === 'data_library' ? 'dash-library-image' : tool.permission === 'outreach' ? 'dash-outreach-image' : tool.permission === 'lead_search' ? 'dash-lead-image' : ''}`}>{tool.permission === 'data_analytics' ? <img src="/images/neha-portrait.png" alt="Neha, your NexG AI analyst" /> : tool.permission === 'data_library' ? <img src="/images/data-library-card.png" alt="Data analysis charts and a magnifying glass" /> : tool.permission === 'outreach' ? <img src="/images/outreach-card.png" alt="Business handshake and communication bubbles" /> : tool.permission === 'lead_search' ? <img src="/images/lead-search-card.png" alt="Magnifying glass finding a person in a business network" /> : <Icon size={23} />}</span><ArrowRight className="dash-tool-arrow" size={17} />
-              <span className="dash-admin-tool-copy">
-                <strong>{tool.label}</strong>
-                <small>{tool.description}</small>
-              </span>
-            </button>;
-          })}
-          {!visibleTools.length && <p className="dash-empty">No tools match your search.</p>}
-        </div>
-      </section>}
-
-      {activity.error && <p className="dash-load-error" role="status">{activity.error}</p>}
-      <div className="dash-summary-grid">
-        <section className="dash-summary-panel"><div className="dash-summary-head"><h2>Search overview</h2><span>Last 7 days</span></div>
-          {activity.loading ? <p className="dash-empty">Loading activity?</p> : !activity.searches ? <p className="dash-empty">Search history is unavailable.</p> : <>
-            <div className="dash-usage-total"><strong>{days.reduce((sum, day) => sum + day.count, 0)}</strong><span>Searches this week</span></div>
-            <div className="dash-week-bars" aria-label="Searches over the last seven days">{days.map((day, index) => <div key={index} title={`${day.label}: ${day.count} searches`}><span>{day.count}</span><i style={{ height: `${Math.max(2, day.count / Math.max(1, ...days.map((item) => item.count)) * 70)}px` }} /><small>{day.label}</small></div>)}</div>
-          </>}
-        </section>
-        <section className="dash-summary-panel"><div className="dash-summary-head"><h2>Recent activity</h2><span>Latest updates</span></div>
-          {activity.loading ? <p className="dash-empty">Loading activity?</p> : recent.length ? <div className="dash-activity-list">{recent.map((item) => <button key={item.id} type="button" onClick={() => navigate(item.path)}><span className="dash-activity-icon"><item.icon size={16} /></span><span><strong>{item.title}</strong><small>{item.type}</small></span><time>{Number.isNaN(new Date(item.date).getTime()) ? '' : new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</time></button>)}</div> : <p className="dash-empty">Your searches and uploaded datasets will appear here.</p>}
-        </section>
-        <section className="dash-summary-panel"><div className="dash-summary-head"><h2>Workspace at a glance</h2><span>All activity</span></div><div className="dash-stat-grid">
-          <div><Search size={20} /><span><strong>{stat(activity.searches?.length)}</strong><small>Saved searches</small></span></div>
-          <div><Database size={20} /><span><strong>{stat(activity.datasets?.length)}</strong><small>Datasets</small></span></div>
-          <div><BarChart3 size={20} /><span><strong>{stat(activity.datasets?.reduce((sum, item) => sum + Number(item.row_count || 0), 0))}</strong><small>Uploaded rows</small></span></div>
-          <div><Send size={20} /><span><strong>{adminTools.filter((tool) => userPermissions.includes(tool.permission)).length}</strong><small>Available tools</small></span></div>
-        </div></section>
+    };
+    load();
+    const timer = window.setInterval(load, 30000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [canHistory, canData, canOutreach, canAssign]);
+  const value = (number) => activity.loading || number == null ? '\u2014' : Number(number).toLocaleString();
+  const cards = [
+    { label: 'Total Leads', count: activity.searches?.reduce((sum, item) => sum + Number(item.result_count || 0), 0), detail: 'From saved searches', icon: Users, color: '#1260ff' },
+    { label: 'Outreach Sent', count: activity.outreach?.filter((item) => item.status === 'sent').length, detail: 'Sent messages', icon: Send, color: '#5951ff' },
+    { label: canAssign ? 'Tasks Assigned' : 'My Tasks', count: activity.tasks?.length, detail: `${activity.tasks?.filter((item) => item.status === 'In Progress').length || 0} in progress`, icon: ClipboardList, color: '#ff641e' },
+    { label: 'Data Sources', count: activity.datasets?.length, detail: 'Uploaded datasets', icon: Database, color: '#008cff' },
+  ];
+  const available = tools.filter((tool) => allowed(tool.permission));
+  const filtered = available.filter((tool) => `${tool.label} ${tool.description}`.toLowerCase().includes(query));
+  const visible = showAllTools || query ? filtered : filtered.slice(0, 4);
+  const days = weekDays(activity.outreach), searches = weekDays(activity.searches);
+  const chartMax = Math.max(1, ...days.map((day) => day.count), ...searches.map((day) => day.count));
+  return <div className="workspace-dashboard">
+    <section className="workspace-intro">
+      <div className="workspace-intro-copy">
+        <p className="workspace-greeting"><span>{greeting()}, </span><span className="workspace-first-name">{user?.name?.split(' ')[0] || 'there'}</span></p>
+        <h1>Turn leads into<br />real <span>opportunities.</span></h1>
+        <p className="workspace-intro-description">Find leads, automate outreach, assign work and keep your business moving &mdash; all in one place.</p>
+        <p className="workspace-mobile-tagline">Turn leads into real <span>opportunities.</span></p>
       </div>
-      <footer className="dash-sustainable-footer"><Leaf size={18} /><span>Empowering better decisions through intelligent tools.</span><strong>NEXG <span>Tools</span></strong></footer>
-
-
+      <div className="workspace-hero-image" role="img" aria-label="Modern office architecture"><span>Build.<br />Outreach.<br />Execute.<br />Scale.<i /></span></div>
+    </section>
+    <section className="workspace-metrics" aria-label="Workspace overview">
+      {cards.map((card) => <article className="workspace-metric" key={card.label} style={{ '--metric-color': card.color }}>
+        <span className="workspace-metric-icon"><card.icon size={23} /></span>
+        <div><span className="workspace-metric-label">{card.label}</span><strong>{value(card.count)}</strong><small>{card.detail}</small></div>
+      </article>)}
+    </section>
+    <section className="workspace-tools-section">
+      <div className="workspace-section-head"><h2>Workspace Tools</h2><button type="button" onClick={() => { setShowAllTools(!showAllTools); setParams({}); document.getElementById('workspace-tools')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }}>{showAllTools ? 'Show fewer tools' : 'View all tools'} <ArrowRight size={17} /></button></div>
+      <div className="workspace-tools-grid" id="workspace-tools">
+        {visible.map((tool) => <button className="workspace-tool-card" key={tool.path} onClick={() => navigate(tool.path)} style={{ '--tool-color': tool.color }}>
+          <img src={`/images/${tool.image}`} alt="" loading="lazy" decoding="async" className="workspace-tool-photo" />
+          <span className="workspace-tool-icon"><tool.icon size={25} /></span>
+          <span className="workspace-tool-copy"><strong>{tool.label}</strong><small>{tool.description}</small></span>
+          <span className="workspace-tool-arrow"><ArrowRight size={19} /></span>
+        </button>)}
+        {!visible.length && <p className="workspace-empty">{available.length ? 'No tools match your search.' : 'Your administrator can assign access to workspace tools. Your tasks and notifications are available in the navigation.'}</p>}
+      </div>
+    </section>
+    {activity.error && <p className="workspace-error" role="status">{activity.error}</p>}
+    <div className="workspace-lower-grid">
+      <section className="workspace-panel">
+        <div className="workspace-section-head"><h2>{canAssign ? 'Recent Work Assignments' : 'My Recent Tasks'}</h2><button onClick={() => navigate(canAssign ? '/work-assignments' : '/my-tasks')}>View all <ArrowRight size={15} /></button></div>
+        <div className="workspace-recent-scroll"><table className="workspace-recent-table"><thead><tr><th>Task</th><th>Assigned To</th><th>Status</th><th>Due Date</th></tr></thead><tbody>
+          {activity.tasks?.slice(0, 4).map((task) => <tr key={task.id}><td><button className="workspace-task-link" onClick={() => navigate(canAssign && !user?.is_nexg_admin ? '/work-assignments' : `/my-tasks?taskId=${encodeURIComponent(task.id)}`)}>{task.title}</button></td><td><span className="workspace-assignee"><i>{initials(task.employeeName)}</i>{task.employeeName || user?.name}</span></td><td><span className={`workspace-status status-${task.status.toLowerCase().replaceAll(' ', '-')}`}>{task.status === 'Done' ? 'Completed' : task.status}</span></td><td>{task.dueDate ? new Date(`${task.dueDate}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '\u2014'}</td></tr>)}
+        </tbody></table></div>
+        {!activity.tasks?.length && <p className="workspace-empty">{activity.loading ? 'Loading assignments...' : 'New assignments will appear here.'}</p>}
+      </section>
+      <section className="workspace-panel workspace-chart-panel">
+        <div className="workspace-section-head"><h2>Outreach Overview</h2><span className="workspace-period">Last 7 days</span></div>
+        <div className="workspace-chart-legend"><span><i />Outreach</span><span><i />Lead searches</span></div>
+        {activity.outreach || activity.searches ? <div className="workspace-bar-chart" role="img" aria-label={`Last 7 days: ${days.reduce((total, day) => total + day.count, 0)} outreach messages and ${searches.reduce((total, day) => total + day.count, 0)} lead searches`}>
+          {days.map((day, index) => <div className="workspace-bar-group" key={index}><div><i title={`${day.count} outreach messages`} style={{ height: `${Math.max(2, day.count / chartMax * 85)}px` }} /><i title={`${searches[index].count} searches`} style={{ height: `${Math.max(2, searches[index].count / chartMax * 85)}px` }} /></div><small>{day.label}</small></div>)}
+        </div> : <p className="workspace-empty">{activity.loading ? 'Loading activity...' : 'Outreach and search activity are unavailable for this account.'}</p>}
+        <div className="workspace-chart-totals"><div><Send size={18} /><strong>{value(activity.outreach?.length)}</strong><small>Outreach messages</small></div><div><Search size={18} /><strong>{value(activity.searches?.length)}</strong><small>Saved searches</small></div><div><CheckCircle2 size={18} /><strong>{value(activity.tasks?.filter((task) => task.status === 'Done').length)}</strong><small>Tasks completed</small></div></div>
+      </section>
     </div>
-  );
-};
-
-export default Dashboard;
+  </div>;
+}

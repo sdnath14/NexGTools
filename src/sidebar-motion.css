@@ -1,0 +1,46 @@
+/* Sidebar motion uses one easing curve so the rail and workspace move together. */
+:root { --sidebar-easing:cubic-bezier(.22,1,.36,1); --sidebar-duration:320ms; }
+.sidebar { transition:width var(--sidebar-duration) var(--sidebar-easing); }
+.app-main { transition:margin-left var(--sidebar-duration) var(--sidebar-easing); }
+.sidebar-brand { min-height:108px; transition:padding var(--sidebar-duration) var(--sidebar-easing); }
+.sidebar-brand .nexg-brand-mark { transition:width var(--sidebar-duration) var(--sidebar-easing); }
+.sidebar-brand .nexg-brand-tools { transition:opacity 160ms ease,transform 200ms var(--sidebar-easing); }
+.sidebar-collapsed .nexg-brand-tools { opacity:0; transform:translateY(-4px); }
+.petrolube-italic { font-family:inherit; font-style:italic; font-weight:400; letter-spacing:.2px; }
+.sidebar-brand .nexg-brand-tools.petrolube-italic { font-size:19px; line-height:1.25; }
+.sidebar-collapse-control { transition:background-color 180ms ease,transform 180ms ease,top var(--sidebar-duration) var(--sidebar-easing),right var(--sidebar-duration) var(--sidebar-easing); }
+.sidebar-collapse-control:hover { background:#35455a; }
+.sidebar-collapse-control:active { transform:scale(.92); }
+.sidebar-nav { position:relative; scroll-behavior:smooth; overscroll-behavior:contain; scrollbar-gutter:stable; -webkit-overflow-scrolling:touch; }
+.sidebar-active-indicator { position:absolute; top:0; left:12px; right:12px; z-index:0; border-radius:8px; background:linear-gradient(105deg,var(--app-accent),#183864); box-shadow:0 4px 16px #0751e01a; opacity:0; pointer-events:none; transition:transform var(--sidebar-duration) var(--sidebar-easing),height var(--sidebar-duration) var(--sidebar-easing),opacity 180ms ease; }
+.sidebar-active-indicator-visible { opacity:1; }
+.sidebar-nav .sidebar-link { z-index:1; }
+.sidebar-nav .sidebar-link-active,.sidebar-nav .sidebar-link-active:hover { background:transparent; box-shadow:none; }
+.sidebar-link { overflow:hidden; transition:background-color 180ms ease,color 180ms ease,gap var(--sidebar-duration) var(--sidebar-easing),padding var(--sidebar-duration) var(--sidebar-easing); -webkit-tap-highlight-color:transparent; }
+.sidebar-link:not(.sidebar-link-active):hover { background:#ffffff0d; }
+.sidebar-link>svg { transition:transform 180ms var(--sidebar-easing); }
+.sidebar-link:hover>svg { transform:translateX(2px); }
+.sidebar-link:active>svg { transform:scale(.92); }
+.sidebar-link-label { opacity:1; max-width:180px; transition:opacity 130ms ease,max-width var(--sidebar-duration) var(--sidebar-easing),transform var(--sidebar-duration) var(--sidebar-easing); }
+.sidebar-collapsed .sidebar-link { gap:0; }
+.sidebar-collapsed .sidebar-link-label { max-width:0; opacity:0; transform:translateX(-6px); }
+.sidebar-collapsed .sidebar-unread-dot { position:absolute; width:5px; height:5px; right:8px; top:9px; }
+.sidebar-user { transition:opacity 140ms ease,transform 220ms var(--sidebar-easing); }
+.sidebar-collapsed .sidebar-user { opacity:0; visibility:hidden; transform:translateY(5px); }
+.sidebar-link:focus-visible,.sidebar-collapse-control:focus-visible { outline:2px solid #8eb7ff; outline-offset:-2px; }
+.mobile-bottom-nav a,.mobile-bottom-nav button { transition:color 160ms ease,background-color 160ms ease; -webkit-tap-highlight-color:transparent; }
+.mobile-bottom-nav svg { transition:transform 180ms var(--sidebar-easing); }
+.mobile-bottom-nav a:active svg,.mobile-bottom-nav button:active svg { transform:scale(.9); }
+@media (max-width:768px) {
+ .sidebar { display:flex; top:0; left:0; bottom:0; width:min(300px,86vw); height:100dvh; z-index:200; border-radius:0 15px 15px 0; transform:translateX(-105%); visibility:hidden; pointer-events:none; padding-bottom:var(--sab); transition:transform var(--sidebar-duration) var(--sidebar-easing),visibility 0s linear var(--sidebar-duration); }
+ .sidebar.sidebar-mobile-open { transform:translateX(0); visibility:visible; pointer-events:auto; transition-delay:0s; }
+ .mobile-sidebar-backdrop { display:block; opacity:0; visibility:hidden; pointer-events:none; backdrop-filter:blur(3px); background:#08132475; transition:opacity 220ms ease,visibility 0s linear 220ms; }
+ .mobile-sidebar-backdrop-open { opacity:1; visibility:visible; pointer-events:auto; transition-delay:0s; }
+ .app-main { transition:none; }
+}
+@media (prefers-reduced-motion:reduce) {
+ .sidebar,.app-main,.sidebar-active-indicator,.sidebar-link,.sidebar-link-label,.sidebar-link>svg,.sidebar-brand,.sidebar-brand .nexg-brand-mark,.sidebar-brand .nexg-brand-tools,.sidebar-collapse-control,.sidebar-user,.mobile-sidebar-backdrop,.mobile-bottom-nav a,.mobile-bottom-nav button,.mobile-bottom-nav svg { transition:none!important; scroll-behavior:auto; }
+}
+.sidebar-collapsed .sidebar-nav { scrollbar-gutter:auto; scrollbar-width:none; }
+.sidebar-collapsed .sidebar-nav::-webkit-scrollbar { display:none; }
+.sidebar-collapsed .sidebar-link:hover>svg { transform:none; }

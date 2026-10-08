@@ -1,13 +1,13 @@
 .auth-page {
-  --app-accent: #f97316;
-  --app-accent-hover: #ea580c;
-  --app-accent-soft: #ffedd5;
+  --app-accent: #1260ff;
+  --app-accent-hover: #084de0;
+  --app-accent-soft: #edf3ff;
   --app-accent-ring: rgba(249, 115, 22, 0.18);
   min-height: 100vh;
   display: grid;
   place-items: center;
   padding: 1.5rem;
-  background: #fff7ed;
+  background: var(--app-accent-soft);
 }
 
 .auth-shell {
@@ -77,7 +77,7 @@
 }
 
 .auth-form-heading > span {
-  color: #ea580c;
+  color: var(--app-accent-hover);
 }
 
 .auth-brand-copy p {

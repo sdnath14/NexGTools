@@ -28,8 +28,8 @@
   width: 58px;
   height: 58px;
   border-radius: 0.75rem;
-  background: #fff7ed;
-  color: #f97316;
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
   margin-bottom: 1rem;
 }
 
@@ -76,7 +76,7 @@
   width: 100%;
   height: 46px;
   margin-top: 1rem;
-  background: #f97316;
+  background: var(--app-accent);
   color: white;
 }
 
@@ -122,13 +122,13 @@
   justify-content: space-between;
   gap: 1.5rem;
   padding: 1.5rem;
-  border: 1px solid #ffedd5;
+  border: 1px solid var(--app-accent-soft);
   border-radius: 0.75rem;
-  background: linear-gradient(135deg, #fff7ed, #f8fafc);
+  background: linear-gradient(135deg, var(--app-accent-soft), #f8fafc);
 }
 
 .admin-hero span {
-  color: #f97316;
+  color: var(--app-accent);
   font-size: 0.76rem;
   font-weight: 900;
   text-transform: uppercase;
@@ -150,7 +150,7 @@
 .admin-save-btn {
   min-height: 40px;
   padding: 0 0.9rem;
-  background: #f97316;
+  background: var(--app-accent);
   color: white;
   white-space: nowrap;
 }
@@ -167,7 +167,7 @@
   align-items: end;
   gap: .8rem;
   padding: 1rem 1.25rem;
-  border: 1px solid #ffedd5;
+  border: 1px solid var(--app-accent-soft);
   border-radius: .75rem;
   background: #f8fbff;
 }
@@ -188,14 +188,14 @@
 .admin-role-list span { color: #64748b; font-size: .78rem; text-transform: capitalize; }
 .admin-role-edit-form { padding: .8rem; border: 1px solid #fb923c; border-radius: .5rem; background: #fffaf5; }
 .admin-edit-role-btn, .admin-cancel-btn { min-height: 34px; padding: 0 .7rem; border: 1px solid #cbd5e1; border-radius: .4rem; background: white; color: #334155; font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer; }
-.admin-edit-role-btn:hover, .admin-cancel-btn:hover { border-color: #f97316; color: #c2410c; }
+.admin-edit-role-btn:hover, .admin-cancel-btn:hover { border-color: var(--app-accent); color: #c2410c; }
 .admin-role-actions { display: flex; align-items: center; gap: .45rem; }
 .admin-delete-role-btn { min-height: 34px; display: inline-flex; align-items: center; gap: .3rem; padding: 0 .7rem; border: 1px solid #fecaca; border-radius: .4rem; background: #fff; color: #b91c1c; font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer; }
 .admin-delete-role-btn:hover { border-color: #ef4444; background: #fef2f2; }
 .admin-user-roles label { color: #334155; font-size: .85rem; font-weight: 700; }
 .admin-user-roles small { color: #64748b; font-weight: 500; }
 .admin-user-roles select { min-width: 170px; height: 34px; border: 1px solid #cbd5e1; border-radius: .4rem; background: white; font: inherit; }
-.admin-nexg-admin-user { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .7rem .8rem; border: 1px solid #fed7aa; border-radius: .55rem; background: #fff7ed; }
+.admin-nexg-admin-user { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .7rem .8rem; border: 1px solid #fed7aa; border-radius: .55rem; background: var(--app-accent-soft); }
 .admin-nexg-admin-user em { color: #c2410c; font-size: .76rem; font-style: normal; font-weight: 700; }
 @media (max-width: 1100px) { .admin-create-user { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 600px) { .admin-create-user { grid-template-columns: 1fr; } }
@@ -216,7 +216,7 @@
 
 .admin-stat-card svg {
   grid-row: span 3;
-  color: #f97316;
+  color: var(--app-accent);
 }
 
 .admin-stat-card span {
@@ -236,7 +236,7 @@
 }
 
 .admin-stat-card-active {
-  border-color: #f97316;
+  border-color: var(--app-accent);
   box-shadow: 0 10px 28px rgba(37, 99, 235, 0.12);
 }
 
@@ -331,8 +331,8 @@
 .admin-cancel-btn {
   min-height: 32px;
   padding: 0 0.65rem;
-  background: #fff7ed;
-  color: #ea580c;
+  background: var(--app-accent-soft);
+  color: var(--app-accent-hover);
 }
 
 .admin-row-actions { display:flex; align-items:center; gap:.4rem; }

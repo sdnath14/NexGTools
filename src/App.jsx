@@ -2,9 +2,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
+import MobileNav from './components/MobileNav';
 import Dashboard from './pages/Dashboard';
 import LeadSearch from './pages/LeadSearch';
-import SearchHistory from './pages/SearchHistory';
 import BusinessSearch from './pages/BusinessSearch';
 import CsvHistory from './pages/CsvHistory';
 import AdminPage from './pages/AdminPage';
@@ -15,6 +15,7 @@ import DataAnalytics from './pages/DataAnalytics';
 import BusinessOutreach from './pages/BusinessOutreach';
 import UsedOilIndia from './pages/UsedOilIndia';
 import WorkAssignments from './pages/WorkAssignments';
+import VoiceAgent from './pages/VoiceAgent';
 import MyTasks from './pages/MyTasks';
 import Notifications from './pages/Notifications';
 import { NotificationProvider } from './notifications';
@@ -142,21 +143,22 @@ function App() {
       <NotificationProvider key={user.id}>
       <div className={`app-layout ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''}`}>
         <PushNotificationBridge user={user} />
-        <Sidebar collapsed={!isMobile && sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} permissions={user.permissions || []} isNexgAdmin={user.is_nexg_admin} isMobile={isMobile} mobileOpen={mobileMenuOpen} onClose={closeMobileMenu} />
+        <Sidebar user={user} collapsed={!isMobile && sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} permissions={user.permissions || []} isNexgAdmin={user.is_nexg_admin} isMobile={isMobile} mobileOpen={mobileMenuOpen} onClose={closeMobileMenu} />
         <div className="app-main">
           <Topbar user={user} onLogout={logout} mobileMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />
           <main className="app-content">
             <Routes>
               <Route path="/" element={<Dashboard user={user} />} />
               <Route path="/lead-search" element={hasPermission('lead_search') ? <LeadSearch /> : <Navigate to="/" replace />} />
-              <Route path="/lead-search/history" element={hasPermission('lead_search_history') ? <SearchHistory /> : <Navigate to="/" replace />} />
-              <Route path="/lead-search/csv" element={hasPermission('exports') ? <CsvHistory type="lead_search" /> : <Navigate to="/" replace />} />
+              <Route path="/lead-search/history" element={hasPermission('lead_search_history') || hasPermission('exports') ? <Navigate to="/lead-search/csv?view=searches" replace /> : <Navigate to="/" replace />} />
+              <Route path="/lead-search/csv" element={hasPermission('exports') || hasPermission('lead_search_history') ? <CsvHistory type="lead_search" canViewExports={hasPermission('exports')} canViewSearchHistory={hasPermission('lead_search_history')} /> : <Navigate to="/" replace />} />
               <Route path="/business-search" element={hasPermission('business_search') ? <BusinessSearch /> : <Navigate to="/" replace />} />
               <Route path="/business-search/csv" element={hasPermission('exports') ? <CsvHistory type="business_search" /> : <Navigate to="/" replace />} />
-              <Route path="/business-outreach" element={hasPermission('outreach') ? <BusinessOutreach /> : <Navigate to="/" replace />} />
+              <Route path="/business-outreach" element={hasPermission('outreach') ? <BusinessOutreach canImportSavedCsv={hasPermission('exports')} /> : <Navigate to="/" replace />} />
               <Route path="/notifications" element={<Notifications user={user} />} />
               <Route path="/my-tasks" element={<MyTasks />} />
-              <Route path="/work-assignments" element={hasPermission('work_assignments') ? <WorkAssignments key={user.id} userId={user.id} /> : <Navigate to="/" replace />} />
+              <Route path="/work-assignments" element={hasPermission('work_assignments') ? <WorkAssignments key={`tasks-${user.id}`} userId={user.id} /> : <Navigate to="/" replace />} />
+              <Route path="/voice-agent" element={hasPermission('work_assignments') ? <VoiceAgent key={`voice-${user.id}`} userId={user.id} /> : <Navigate to="/" replace />} />
               <Route path="/data-library" element={hasPermission('data_library') ? <DataLibrary /> : <Navigate to="/" replace />} />
               <Route path="/data-analytics" element={hasPermission('data_analytics') ? <DataAnalytics /> : <Navigate to="/" replace />} />
               <Route path="/used-oil-india" element={hasPermission('used_oil_india') ? <UsedOilIndia /> : <Navigate to="/" replace />} />
@@ -165,6 +167,7 @@ function App() {
             </Routes>
           </main>
         </div>
+        <MobileNav user={user} mobileMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />
       </div>
       </NotificationProvider>
     </Router>

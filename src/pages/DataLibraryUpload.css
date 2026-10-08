@@ -30,7 +30,7 @@
 .library-select-all input {
   width: 16px;
   height: 16px;
-  accent-color: #f97316;
+  accent-color: var(--app-accent);
   cursor: pointer;
 }
 
@@ -72,8 +72,8 @@
   overflow: hidden;
   padding: 0.25rem 0.5rem;
   border-radius: 999px;
-  background: #fff7ed;
-  color: #ea580c;
+  background: var(--app-accent-soft);
+  color: var(--app-accent-hover);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

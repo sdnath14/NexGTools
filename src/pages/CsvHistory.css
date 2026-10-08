@@ -4,6 +4,10 @@
   gap: 1.25rem;
 }
 
+.csv-history-filters { display:flex; flex-wrap:wrap; gap:8px; }
+.csv-history-filters button { display:flex; align-items:center; gap:7px; padding:10px 14px; border:1px solid var(--app-border); border-radius:9px; color:var(--app-muted); background:var(--app-surface); cursor:pointer; font:inherit; font-size:12px; }
+.csv-history-filters button[aria-pressed='true'] { background:var(--app-accent-soft); color:var(--app-accent); border-color:var(--app-accent); }
+
 .csv-header {
   background: white;
   border: 1px solid #e5e7eb;
@@ -72,7 +76,7 @@
 
 .csv-row:hover,
 .csv-row-active {
-  background: #fff7ed;
+  background: var(--app-accent-soft);
 }
 
 .csv-row span {
@@ -127,7 +131,7 @@
   gap: 0.4rem;
   border: 0;
   border-radius: 0.5rem;
-  background: #f97316;
+  background: var(--app-accent);
   color: white;
   font-weight: 750;
   padding: 0.65rem 0.95rem;

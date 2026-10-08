@@ -7,7 +7,7 @@ import {
   Mail,
 } from 'lucide-react';
 import { API_BASE_URL, AUTH_TOKEN_KEY } from '../auth';
-import nexgToolLogo from '../assets/nexgtool-removebg-preview.png';
+import Brand from '../components/Brand';
 import './AuthPage.css';
 
 const AuthPage = ({ onAuthenticated }) => {
@@ -51,7 +51,7 @@ const AuthPage = ({ onAuthenticated }) => {
         <main className="auth-form-panel">
           <form className="auth-card" onSubmit={submit}>
             <div className="auth-login-brand">
-              <img className="auth-logo" src={nexgToolLogo} alt="NexG Tools" />
+              <Brand tools />
             </div>
 
             <div className="auth-form-heading">

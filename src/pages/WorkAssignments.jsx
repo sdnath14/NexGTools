@@ -1,21 +1,17 @@
+import VoiceAgentPanel from '../components/VoiceAgentPanel';
+import TaskTiming from '../components/TaskTiming';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
-  Bot,
   CalendarDays,
   CheckCircle2,
   ClipboardList,
   Edit3,
-  LoaderCircle,
-  Mic,
-  MicOff,
   Plus,
   Search,
   Send,
-  Sparkles,
   Trash2,
   Users,
-  Volume2,
   X,
 } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
@@ -183,7 +179,8 @@ const realtimeTools = [
   },
 ];
 
-export default function WorkAssignments({ userId }) {
+export default function WorkAssignments({ userId, mode = 'tasks' }) {
+  const isVoicePage = mode === 'voice';
   const [employees, setEmployees] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [taskDraft, setTaskDraft] = useState(emptyTask);
@@ -220,8 +217,8 @@ export default function WorkAssignments({ userId }) {
   const realtimeAudioRef = useRef(null);
 
   useEffect(() => {
-    localStorage.setItem(chatStorageKey(userId), JSON.stringify(chatMessages.slice(-30)));
-  }, [chatMessages, userId]);
+    if (isVoicePage) localStorage.setItem(chatStorageKey(userId), JSON.stringify(chatMessages.slice(-30)));
+  }, [chatMessages, userId, isVoicePage]);
 
   useEffect(() => {
     const loadAssignments = async () => {
@@ -237,9 +234,12 @@ export default function WorkAssignments({ userId }) {
       }
     };
     loadAssignments();
+    const timer = window.setInterval(loadAssignments, 10000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => () => {
+    if (!isVoicePage) return;
     window.speechSynthesis?.cancel();
     replyAudioRef.current?.pause();
     if (replyAudioUrlRef.current) URL.revokeObjectURL(replyAudioUrlRef.current);
@@ -251,14 +251,14 @@ export default function WorkAssignments({ userId }) {
     realtimeDataChannelRef.current?.close();
     realtimePeerRef.current?.close();
     if (realtimeAudioRef.current) realtimeAudioRef.current.srcObject = null;
-  }, []);
+  }, [isVoicePage]);
 
   useEffect(() => {
     voiceModeRef.current = voiceMode;
   }, [voiceMode]);
 
   useEffect(() => {
-    if (!navigator.mediaDevices?.enumerateDevices) return undefined;
+    if (!isVoicePage || !navigator.mediaDevices?.enumerateDevices) return undefined;
     let active = true;
     const refreshMicrophones = async () => {
       try {
@@ -275,7 +275,7 @@ export default function WorkAssignments({ userId }) {
       active = false;
       navigator.mediaDevices.removeEventListener?.('devicechange', refreshMicrophones);
     };
-  }, []);
+  }, [isVoicePage]);
 
   useEffect(() => {
     employeesRef.current = employees;
@@ -286,12 +286,12 @@ export default function WorkAssignments({ userId }) {
   }, [tasks]);
 
   useEffect(() => {
-    if (!canSpeak) return undefined;
+    if (!isVoicePage || !canSpeak) return undefined;
     const loadVoices = () => setSpeechVoices(window.speechSynthesis.getVoices());
     loadVoices();
     window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
     return () => window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
-  }, []);
+  }, [isVoicePage]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -410,6 +410,7 @@ export default function WorkAssignments({ userId }) {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || 'Could not update task status.');
+      setTasks((current) => current.map((task) => task.id === taskId ? { ...task, ...data.task } : task));
       setSyncError('');
     } catch (error) {
       setSyncError(error.message || 'Could not update task status.');
@@ -461,7 +462,7 @@ export default function WorkAssignments({ userId }) {
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || 'Could not update task status.');
-        setTasks((current) => current.map((item) => item.id === task.id ? { ...item, status } : item));
+        setTasks((current) => current.map((item) => item.id === task.id ? { ...item, ...data.task } : item));
         return { success: true, message: `${task.title} is now ${status}.` };
       }
 
@@ -565,6 +566,7 @@ export default function WorkAssignments({ userId }) {
       realtimeAudioRef.current = null;
     }
     replyAudioRef.current?.pause();
+    window.speechSynthesis?.cancel();
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     mediaStreamRef.current = null;
     audioContextRef.current?.close();
@@ -977,49 +979,33 @@ export default function WorkAssignments({ userId }) {
   };
 
   return (
-    <div className="work-page">
-      <header className="work-hero">
+    <div className={`work-page ${isVoicePage ? 'voice-agent-page' : 'work-management-page'}`}>
+      {!isVoicePage && <header className="work-hero">
         <div>
           <span>Team Workboard</span>
-          <h1>Assign work by employee, number, and task</h1>
-          <p>Create employees, assign measurable tasks, edit progress, and use the multilingual voice assistant for quick commands.</p>
+          <h1>Work Assignments</h1>
+          <p>Review your employees, type new assignments, and track every task from start to completion.</p>
         </div>
         <div className="work-hero-stats">
           <div><Users size={18} /><strong>{employees.length}</strong><small>Employees</small></div>
           <div><ClipboardList size={18} /><strong>{tasks.length}</strong><small>Tasks</small></div>
           <div><CheckCircle2 size={18} /><strong>{summary.done}</strong><small>Done</small></div>
         </div>
-      </header>
+      </header>}
+      {!isVoicePage && syncError && <p className="work-inline-error" role="alert"><AlertCircle size={15} /> {syncError}</p>}
+      {!isVoicePage && assignmentNotice && <p className="work-assignment-notice" role="status">{assignmentNotice}</p>}
 
-      <section className="work-assistant">
-        <div className="work-assistant-head"><Bot size={20} /><div><h2>Voice Work Agent</h2><p>Press once and speak in your language. The assistant repeats what it heard, analyzes the request, assigns the task, and reports email delivery.</p></div><button type="button" className="work-clear-chat" onClick={clearConversation} disabled={listening || speaking || processingVoice}>New conversation</button><span className={listening ? 'work-voice-state work-voice-listening' : speaking ? 'work-voice-state work-voice-speaking' : processingVoice ? 'work-voice-state work-voice-processing' : 'work-voice-state'}>{listening ? <Mic size={14} /> : speaking ? <Volume2 size={14} /> : processingVoice ? <LoaderCircle size={14} /> : <Sparkles size={14} />}{listening ? 'Listening' : speaking ? 'Speaking' : processingVoice ? 'Analyzing' : voiceMode ? 'Recording' : 'Ready'}</span></div>
-        <div className="work-agent-layout">
-          <div className={listening ? 'work-voice-orb is-listening' : speaking || processingVoice ? 'work-voice-orb is-speaking' : 'work-voice-orb'}>
-            <div className="work-orb-rings"><span /><span /><span /></div>
-            <div className="work-wave" aria-hidden="true">{Array.from({ length: 9 }).map((_, index) => <i key={index} />)}</div>
-            <strong>{listening ? 'Listening — say the employee and task' : processingVoice ? 'Transcribing and assigning your task' : speaking ? 'Speaking the result' : voiceMode ? 'Microphone starting' : 'Press once, then speak'}</strong>
-            <button type="button" className={listening ? 'work-mic work-mic-live' : 'work-mic'} onClick={toggleListening} title={listening ? 'Stop listening' : 'Start voice input'}>
-              {processingVoice ? <LoaderCircle size={21} /> : listening || voiceMode ? <MicOff size={21} /> : <Mic size={21} />}
-            </button>
-            {listening && <button type="button" className="work-stop-respond" onClick={stopVoiceMode}>Stop and respond</button>}
-          </div>
-          <div className="work-chatbot">
-            <div className="work-chat-messages" aria-live="polite">
-              {chatMessages.map((message) => <div key={message.id} className={`work-chat-message work-chat-${message.role}`}><span>{message.role === 'assistant' ? <Bot size={15} /> : 'You'}</span><p>{message.text}</p></div>)}
-              <div ref={chatEndRef} />
-            </div>
-            <div className="work-command-row">
-              <input value={voiceText} onChange={(event) => setVoiceText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') runAssistantCommand(); }} placeholder="Ask Srabani to call vendors tomorrow / Srabani ko kal vendors call karne bolo" />
-              <button type="button" className="work-send-btn" onClick={() => runAssistantCommand()} title="Send command"><Send size={18} /></button>
-            </div>
-          </div>
-        </div>
+      {isVoicePage && <section className="work-assistant" aria-label="Voice Agent">
+        <VoiceAgentPanel listening={listening} speaking={speaking} processing={processingVoice} voiceMode={voiceMode}
+          messages={chatMessages} chatEndRef={chatEndRef} text={voiceText} setText={setVoiceText}
+          onSend={() => runAssistantCommand()} onToggle={toggleListening} onStop={stopVoiceMode} onClear={clearConversation} />
         {microphoneState === 'missing' && !voiceError && <p className="work-inline-error"><AlertCircle size={15} /> No microphone input is detected. Connect or enable a microphone in Windows Sound settings before starting voice mode.</p>}
         {voiceError && <p className="work-inline-error"><AlertCircle size={15} /> {voiceError}</p>}
         {syncError && <p className="work-inline-error"><AlertCircle size={15} /> {syncError}</p>}
         {assignmentNotice && <p className="work-voice-state">{assignmentNotice}</p>}
-      </section>
+      </section>}
 
+      {!isVoicePage && <>
       <div className="work-grid">
         <section className="work-panel">
           <div className="work-panel-head"><h2><Users size={19} /> Employees</h2></div>
@@ -1054,11 +1040,11 @@ export default function WorkAssignments({ userId }) {
         </div>
         <div className="work-table-scroll">
           <table className="work-table">
-            <thead><tr><th>Employee</th><th>Email</th><th>Task</th><th>Qty</th><th>Due</th><th>Priority</th><th>Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Employee</th><th>Email</th><th>Task</th><th>Qty</th><th>Due</th><th>Priority</th><th>Status</th><th>Time / Seen</th><th>Actions</th></tr></thead>
             <tbody>
               {filteredTasks.map((task) => {
                 const employee = employeeById.get(task.employeeId);
-                return <tr key={task.id}><td><strong>{employee?.name || task.employeeName || 'Unassigned'}</strong></td><td>{employee?.email || task.employeeEmail || '-'}</td><td><span>{task.title}</span>{task.notes && <small>{task.notes}</small>}</td><td>{task.quantity}</td><td><CalendarDays size={14} /> {task.dueDate || '-'}</td><td><em className={`work-priority work-priority-${task.priority.toLowerCase()}`}>{task.priority}</em></td><td><select value={task.status} onChange={(event) => updateTaskStatus(task.id, event.target.value)}><option>Pending</option><option>In Progress</option><option>Done</option></select></td><td><div className="work-row-actions"><button type="button" onClick={() => resendTaskEmail(task)} title="Send task email"><Send size={15} /></button><button type="button" onClick={() => editTask(task)} title="Edit task"><Edit3 size={15} /></button><button type="button" onClick={() => removeTask(task.id)} title="Delete task"><Trash2 size={15} /></button></div></td></tr>;
+                return <tr key={task.id}><td><strong>{employee?.name || task.employeeName || 'Unassigned'}</strong></td><td>{employee?.email || task.employeeEmail || '-'}</td><td><span>{task.title}</span>{task.notes && <small>{task.notes}</small>}</td><td>{task.quantity}</td><td><CalendarDays size={14} /> {task.dueDate || '-'}</td><td><em className={`work-priority work-priority-${task.priority.toLowerCase()}`}>{task.priority}</em></td><td><select value={task.status} onChange={(event) => updateTaskStatus(task.id, event.target.value)}><option>Pending</option><option>In Progress</option><option>Done</option></select></td><td><TaskTiming task={task} /></td><td><div className="work-row-actions"><button type="button" onClick={() => resendTaskEmail(task)} title="Send task email"><Send size={15} /></button><button type="button" onClick={() => editTask(task)} title="Edit task"><Edit3 size={15} /></button><button type="button" onClick={() => removeTask(task.id)} title="Delete task"><Trash2 size={15} /></button></div></td></tr>;
               })}
             </tbody>
           </table>
@@ -1066,6 +1052,7 @@ export default function WorkAssignments({ userId }) {
         </div>
         <div className="work-whatsapp-note">New task alerts are sent to the selected employee's logged-in Android device when push notifications are enabled.</div>
       </section>
+      </>}
     </div>
   );
 }

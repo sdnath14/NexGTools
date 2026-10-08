@@ -135,7 +135,7 @@
 }
 
 .bs-source-option input {
-  accent-color: #f97316;
+  accent-color: var(--app-accent);
 }
 
 .bs-source-option-icon {
@@ -166,18 +166,18 @@
   padding: 0.6rem;
   border: none;
   border-radius: 0.5rem;
-  background: #f97316;
+  background: var(--app-accent);
   color: #fff;
   font: 700 0.78rem var(--app-font-family);
   cursor: pointer;
 }
 
 .bs-source-done:hover {
-  background: #ea580c;
+  background: var(--app-accent-hover);
 }
 
 .bs-search-bar:focus-within {
-  border-color: #f97316;
+  border-color: var(--app-accent);
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
@@ -239,7 +239,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  background: #f97316;
+  background: var(--app-accent);
   color: white;
   font-weight: 700;
   font-size: 0.88rem;
@@ -255,7 +255,7 @@
 }
 
 .bs-search-btn:hover:not(:disabled) {
-  background: #ea580c;
+  background: var(--app-accent-hover);
 }
 
 .bs-search-btn:active:not(:disabled) {
@@ -268,7 +268,7 @@
 }
 
 .bs-searching {
-  background: #ea580c;
+  background: var(--app-accent-hover);
 }
 
 .bs-spinner {
@@ -323,9 +323,9 @@
 }
 
 .bs-popular-tag:hover {
-  background: #fff7ed;
+  background: var(--app-accent-soft);
   border-color: #fed7aa;
-  color: #ea580c;
+  color: var(--app-accent-hover);
 }
 
 /* ── Empty / Results State ───────────────────────────────── */
@@ -362,7 +362,7 @@
   gap: 0.35rem;
   min-height: 34px;
   padding: 0 0.65rem;
-  border: 1px solid #ffedd5;
+  border: 1px solid var(--app-accent-soft);
   border-radius: 0.55rem;
   background: white;
   color: #1e40af;
@@ -375,7 +375,7 @@
 .bs-result-checkbox {
   width: 16px;
   height: 16px;
-  accent-color: #f97316;
+  accent-color: var(--app-accent);
   cursor: pointer;
 }
 
@@ -388,7 +388,7 @@
   padding: 0 0.75rem;
   border: none;
   border-radius: 0.55rem;
-  background: #f97316;
+  background: var(--app-accent);
   color: white;
   font-size: 0.78rem;
   font-weight: 800;
@@ -428,8 +428,8 @@
   padding: 0.25rem 0.55rem;
   border: 1px solid #fed7aa;
   border-radius: 999px;
-  background: #fff7ed;
-  color: #ea580c;
+  background: var(--app-accent-soft);
+  color: var(--app-accent-hover);
   text-decoration: none;
   font-size: 0.7rem;
   font-weight: 700;
@@ -449,7 +449,7 @@
 
 .bs-source-status-warn {
   border-color: #fed7aa;
-  background: #fff7ed;
+  background: var(--app-accent-soft);
   color: #c2410c;
 }
 
@@ -482,7 +482,7 @@
   width: 28px;
   height: 28px;
   border-color: #fed7aa;
-  border-top-color: #f97316;
+  border-top-color: var(--app-accent);
 }
 
 .bs-empty-state {
@@ -498,7 +498,7 @@
   width: 80px;
   height: 80px;
   border-radius: 1.25rem;
-  background: linear-gradient(135deg, #fff7ed, #e0e7ff);
+  background: linear-gradient(135deg, var(--app-accent-soft), #e0e7ff);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -577,8 +577,8 @@
 }
 
 .bs-result-card-checked {
-  border-color: #f97316;
-  background: #fff7ed;
+  border-color: var(--app-accent);
+  background: var(--app-accent-soft);
 }
 
 .bs-result-top {
@@ -602,7 +602,7 @@
 }
 
 .bs-result-rating {
-  background: #fff7ed;
+  background: var(--app-accent-soft);
   color: #c2410c;
 }
 
@@ -691,8 +691,8 @@
   min-height: 36px;
   padding: 0.45rem 0.7rem;
   border-radius: 0.6rem;
-  background: #fff7ed;
-  color: #ea580c;
+  background: var(--app-accent-soft);
+  color: var(--app-accent-hover);
   text-decoration: none;
   font-weight: 800;
   font-size: 0.8rem;
@@ -715,7 +715,7 @@
   padding: 0.45rem 0.7rem;
   border: none;
   border-radius: 0.6rem;
-  background: #f97316;
+  background: var(--app-accent);
   color: white;
   font-family: var(--app-font-family);
   font-size: 0.8rem;
@@ -725,7 +725,7 @@
 }
 
 .bs-scrape-source-btn:hover:not(:disabled) {
-  background: #ea580c;
+  background: var(--app-accent-hover);
 }
 
 .bs-scrape-source-btn:disabled {
@@ -803,7 +803,7 @@
 .bs-scrape-stats strong {
   padding: 0.3rem 0.55rem;
   border-radius: 999px;
-  background: #ffedd5;
+  background: var(--app-accent-soft);
   color: #1e40af;
   font-size: 0.72rem;
 }
@@ -816,7 +816,7 @@
 }
 
 .bs-link-list a {
-  color: #f97316;
+  color: var(--app-accent);
   font-size: 0.8rem;
   font-weight: 700;
   text-decoration: none;
@@ -987,8 +987,8 @@
   padding: 0.2rem 0.65rem;
   border: 1px solid #fed7aa;
   border-radius: 999px;
-  background: #fff7ed;
-  color: #ea580c;
+  background: var(--app-accent-soft);
+  color: var(--app-accent-hover);
   font-size: 0.72rem;
   font-weight: 800;
   cursor: pointer;
@@ -1023,7 +1023,7 @@
   padding: 0 0.9rem;
   border: none;
   border-radius: 0.65rem;
-  background: #f97316;
+  background: var(--app-accent);
   color: white;
   font-weight: 800;
   cursor: pointer;

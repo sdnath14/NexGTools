@@ -69,11 +69,11 @@ const openTaskNotification = (notification) => {
   const task = taskDataFromNotification(notification);
   if (!task) return;
   if (typeof navigateToTask === 'function') {
-    navigateToTask('/notifications');
+    navigateToTask(`/my-tasks?taskId=${encodeURIComponent(task.taskId)}`);
     window.dispatchEvent(new Event('nexg-notifications-refresh'));
     return;
   }
-  window.location.assign('/notifications');
+  window.location.assign(`/my-tasks?taskId=${encodeURIComponent(task.taskId)}`);
 };
 
 const showForegroundNotification = async (notification) => {

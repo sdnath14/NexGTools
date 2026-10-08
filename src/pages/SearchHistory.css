@@ -65,7 +65,7 @@
 
 .history-row:hover,
 .history-row-active {
-  background: #fff7ed;
+  background: var(--app-accent-soft);
 }
 
 .history-row span,
@@ -143,7 +143,7 @@
   align-items: center;
   gap: 0.3rem;
   margin-top: 0.45rem;
-  color: #f97316;
+  color: var(--app-accent);
   font-size: 0.78rem;
   font-weight: 800;
   text-decoration: none;

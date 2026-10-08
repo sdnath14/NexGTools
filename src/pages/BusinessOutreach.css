@@ -131,7 +131,7 @@
 .bo-soft-btn {
   height: 32px;
   border: 1px solid #fed7aa;
-  background: #ffedd5;
+  background: var(--app-accent-soft);
   color: #07152b;
   padding: 0 12px;
 }
@@ -147,7 +147,7 @@
 .bo-template-row button {
   min-height: 30px;
   border: 1px solid #fed7aa;
-  background: #fff7ed;
+  background: var(--app-accent-soft);
   color: #c2410c;
   padding: 0 11px;
 }
@@ -155,7 +155,7 @@
 .bo-template-row button:hover,
 .bo-template-row button.active {
   border-color: #fb923c;
-  background: #ffedd5;
+  background: var(--app-accent-soft);
   color: #9a3412;
 }
 
@@ -177,14 +177,14 @@
 }
 
 .bo-template-fill:hover {
-  background: #fff7ed;
+  background: var(--app-accent-soft);
 }
 
 .bo-dark-btn,
 .bo-generate-btn {
   height: 32px;
   border: 0;
-  background: #f97316;
+  background: var(--app-accent);
   color: #fff;
   padding: 0 14px;
   box-shadow: 0 6px 12px rgba(249, 115, 22, .22);
@@ -206,7 +206,7 @@
 
 .bo-table th {
   height: 36px;
-  background: #fff7ed;
+  background: var(--app-accent-soft);
   color: #07152b;
   text-align: left;
   font-size: .72rem;
@@ -233,7 +233,7 @@
 .bo-table input[type='checkbox'] {
   width: 14px;
   height: 14px;
-  accent-color: #f97316;
+  accent-color: var(--app-accent);
 }
 
 .bo-row-actions {
@@ -264,7 +264,7 @@
 
 .bo-row-edit:hover {
   border-color: #fb923c;
-  background: #fff7ed;
+  background: var(--app-accent-soft);
 }
 
 .bo-row-delete {
@@ -289,7 +289,7 @@
 }
 
 .bo-initial-1,
-.bo-initial-2 { background: #ffedd5; color: #c2410c; }
+.bo-initial-2 { background: var(--app-accent-soft); color: #c2410c; }
 .bo-initial-3 { background: #fed7aa; color: #9a3412; }
 .bo-initial-4 { background: #fee2e2; color: #b91c1c; }
 
@@ -312,7 +312,7 @@
 }
 
 .bo-status-new { background: #fff2cc; color: #b45309; }
-.bo-status-contacted { background: #ffedd5; color: #c2410c; }
+.bo-status-contacted { background: var(--app-accent-soft); color: #c2410c; }
 .bo-status-replied { background: #dcfce7; color: #16a34a; }
 .bo-status-failed { background: #fee2e2; color: #dc2626; }
 
@@ -375,7 +375,7 @@
   gap: 10px;
   align-items: start;
   border-radius: 8px;
-  background: #ffedd5;
+  background: var(--app-accent-soft);
   padding: 14px;
 }
 
@@ -385,7 +385,7 @@
   display: grid;
   place-items: center;
   border-radius: 9px;
-  background: #fff7ed;
+  background: var(--app-accent-soft);
 }
 
 .bo-audience strong,
@@ -412,9 +412,9 @@
   display: grid;
   place-items: center;
   margin-right: -5px;
-  border: 2px solid #ffedd5;
+  border: 2px solid var(--app-accent-soft);
   border-radius: 999px;
-  background: #f97316;
+  background: var(--app-accent);
   color: #fff;
   font-size: .62rem;
   font-style: normal;
@@ -430,7 +430,7 @@
 .bo-section-head button {
   border: 0;
   background: transparent;
-  color: #ea580c;
+  color: var(--app-accent-hover);
 }
 
 .bo-tone-row {
@@ -446,8 +446,8 @@
 }
 
 .bo-tone-row button.active {
-  background: #f97316;
-  border-color: #f97316;
+  background: var(--app-accent);
+  border-color: var(--app-accent);
   color: #fff;
 }
 
@@ -503,7 +503,7 @@
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   border-radius: 10px;
-  background: #ffedd5;
+  background: var(--app-accent-soft);
   padding: 7px;
 }
 
@@ -516,7 +516,7 @@
 
 .bo-channel-tabs button.active {
   border-radius: 8px;
-  background: #f97316;
+  background: var(--app-accent);
   color: #fff;
   box-shadow: 0 7px 12px rgba(249, 115, 22, .22);
 }
@@ -526,7 +526,7 @@
   box-sizing: border-box;
   border: 1px solid #fed7aa;
   border-radius: 10px;
-  background: #fff7ed;
+  background: var(--app-accent-soft);
   padding: 13px 14px;
 }
 
@@ -558,7 +558,7 @@
   gap: 5px;
   border: 0;
   border-radius: 7px;
-  background: #ffedd5;
+  background: var(--app-accent-soft);
   color: #c2410c;
   padding: 0 10px;
   font-weight: 800;
@@ -652,7 +652,7 @@
   display: grid;
   place-items: center;
   border-radius: 10px;
-  background: #f97316;
+  background: var(--app-accent);
   color: #fff;
 }
 
@@ -763,7 +763,7 @@
   height: 26px;
   border: 1px solid #fdba74;
   border-radius: 5px;
-  background: #fff7ed;
+  background: var(--app-accent-soft);
   color: #c2410c;
   padding: 0 8px;
   font: inherit;
@@ -851,7 +851,7 @@
 
 .bo-rewrite button {
   border-radius: 6px;
-  background: #ffedd5;
+  background: var(--app-accent-soft);
 }
 
 .bo-editor-actions {
@@ -891,7 +891,7 @@
   align-items: stretch;
   border: 1px solid #fed7aa;
   border-radius: 8px;
-  background: #fff7ed;
+  background: var(--app-accent-soft);
   overflow: hidden;
 }
 
@@ -906,7 +906,7 @@
 }
 
 .bo-draft-history-item:hover {
-  background: #ffedd5;
+  background: var(--app-accent-soft);
   border-color: #fb923c;
 }
 
@@ -992,8 +992,8 @@
 }
 
 .bo-top-tabs button.active {
-  background: #fff7ed;
-  color: #f97316;
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
 }
 
 .bo-modal-backdrop {
@@ -1020,6 +1020,14 @@
   margin: 0;
   font-size: 1rem;
 }
+
+.bo-leads-bar > div { flex-wrap:wrap; }
+
+.bo-import-error { margin:0; padding:10px 12px; color:#b91c1c; background:#fef2f2; border:1px solid #fecaca; border-radius:7px; font-size:12px; }
+
+.bo-channel-selector { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:12px 16px; border:1px solid var(--app-border); border-radius:10px; background:var(--app-surface); }
+.bo-channel-selector > span { color:var(--app-text); font-size:12px; font-weight:600; }
+.bo-channel-selector > small { color:var(--app-muted); font-size:11px; }
 
 .bo-modal label {
   display: grid;
@@ -1106,7 +1114,7 @@
 .bo-import-summary button {
   border: 0;
   background: transparent;
-  color: #ea580c;
+  color: var(--app-accent-hover);
   font: inherit;
   font-size: .74rem;
   font-weight: 850;
