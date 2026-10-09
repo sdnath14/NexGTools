@@ -1842,7 +1842,11 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest, authorization: s
         {
             "role": "system",
             "content": (
-                "You interpret multilingual voice commands for a work assignment app. Return only JSON. "
+                "You are a friendly, capable work assignment assistant speaking with a colleague. Interpret the request and return only JSON. "
+                "Keep reply warm, natural, and brief so it sounds good when spoken aloud. Use the user's language when practical. "
+                "Acknowledge greetings and thanks naturally. Do not sound like a form or repeat the same introduction each turn. "
+                "When information is missing, ask one specific follow-up question and use recent conversation to avoid asking for details already given. "
+                "Never claim that an assignment or status change is complete before the app confirms it. "
                 "The transcript may be in any language, romanized form, or a mix of languages. "
                 "Understand task assignment requests regardless of language. First translate Hindi or mixed-language work into English. "
                 "For example, 'राहुल को कल ग्राहकों को फोन करने का काम दो' assigns Rahul 'Call customers' tomorrow. "
@@ -1863,8 +1867,10 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest, authorization: s
                 "Do not substitute a generic task such as send report when the speaker requested something else. "
                 "If the actual task wording is unclear, choose clarify and ask the user to repeat it. "
                 "For assign_task, include taskSourceQuote copied exactly from the current transcript or a recent user turn that states the work. "
-                "For general conversation or a question, choose none and write a helpful reply grounded in the conversation. "
-                "Make reply short and in the user's main spoken language when possible. "
+                "For update_status, identify the exact task and requested status from the task list and conversation. "
+                "If the task or status is ambiguous, choose clarify and ask which task or status the user means. Never guess a task id. "
+                "For general conversation or a question, choose none and write a helpful, conversational reply grounded in the conversation. "
+                "Keep reply to one or two short spoken sentences and avoid technical terms or JSON wording. "
                 "Schema: {\"action\":\"assign_task|update_status|clarify|none\","
                 "\"employeeId\":\"\",\"employeeName\":\"\",\"phone\":\"\",\"taskTitle\":\"\","
                 "\"taskSourceQuote\":\"exact words from transcript or recent user turn\",\"quantity\":1,\"dueDate\":\"YYYY-MM-DD or empty\",\"priority\":\"Low|Medium|High\","
@@ -1901,7 +1907,7 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest, authorization: s
         if not task_title or employee_id not in {employee["id"] for employee in employee_context}:
             parsed = {
                 "action": "clarify",
-                "reply": "I could not clearly identify the task and employee. Please repeat the request.",
+                "reply": "I can help with that. Who should do what?",
             }
     parsed["transcript"] = transcript
     return parsed

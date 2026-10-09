@@ -69,7 +69,19 @@ const emailDeliveryMessage = (status, task) => ({
   rejected_spam: 'The mail server rejected this message as spam. Ask the mail administrator to allow assignment emails.',
   failed: 'Email delivery failed. Check the SMTP settings.',
 }[status] || 'Email status is unavailable.');
-const welcomeMessage = { id: 'welcome', role: 'assistant', text: 'Hi. Tell me the employee name and task in your language. I will assign it and notify the employee.' };
+const spokenDeliveryMessage = (task, employeeName) => {
+  const email = {
+    sent: `The email notification was accepted for ${employeeName}.`,
+    missing_email: `I couldn't email ${employeeName} because their profile has no email address.`,
+    not_configured: 'Email notifications are not set up yet.',
+    rejected_spam: 'The mail server rejected the email notification.',
+    failed: 'I could not send the email notification.',
+  }[task.emailStatus] || '';
+  const whatsapp = task.notifications?.whatsapp;
+  const whatsappReply = whatsapp?.success ? 'I also sent a WhatsApp message.' : whatsapp?.error ? 'I could not send a WhatsApp message.' : '';
+  return [email, whatsappReply].filter(Boolean).join(' ');
+};
+const welcomeMessage = { id: 'welcome', role: 'assistant', text: "Hi! I'm here to help with your team's work. Who should do what today?" };
 const chatStorageKey = (userId) => `nexgtools_work_agent_chat_${userId}`;
 const loadChatMessages = (userId) => {
   try {
@@ -289,7 +301,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     const delivery = `Assignment saved. ${emailDeliveryMessage(data.email_status, data.task)}${whatsappMessage}`;
     setAssignmentNotice(delivery);
     setSyncError('');
-    return { ...data.task, emailStatus: data.email_status, deliveryMessage: delivery };
+    return { ...data.task, emailStatus: data.email_status, notifications: data.notifications, deliveryMessage: delivery };
   };
 
   const saveTask = async (event) => {
@@ -605,16 +617,38 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     }
 
     if (action.action === 'update_status') {
-      const status = ['Pending', 'In Progress', 'Done'].includes(action.status) ? action.status : 'Done';
+      const status = ['Pending', 'In Progress', 'Done'].find((value) => value.toLowerCase() === normalize(action.status).toLowerCase()) || '';
       const taskId = normalize(action.taskId);
       const taskNeedle = normalize(action.taskTitle).toLowerCase();
-      const target = tasks.find((task) => task.id === taskId) || tasks.find((task) => task.title.toLowerCase().includes(taskNeedle));
-      if (!target) {
-        speak(action.reply || 'I could not find that task. Please say a few exact words from the task title.');
+      const exactTask = tasksRef.current.find((task) => String(task.id) === taskId);
+      const matchingTasks = taskNeedle ? tasksRef.current.filter((task) => task.title.toLowerCase().includes(taskNeedle)) : [];
+      if (!status) {
+        speak('Sure. Should I mark that task as pending, in progress, or done?');
         return true;
       }
-      setTasks((current) => current.map((task) => task.id === target.id ? { ...task, status } : task));
-      speak(action.reply || `Updated ${target.title} to ${status}.`);
+      if (!exactTask && matchingTasks.length > 1) {
+        speak('I found a few tasks with that name. Which one do you mean?');
+        return true;
+      }
+      const target = exactTask || matchingTasks[0];
+      if (!target) {
+        speak('I could not find that task. Could you tell me a few words from its title?');
+        return true;
+      }
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks/${target.id}/status`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ status }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || 'Could not update the task.');
+        setTasks((current) => current.map((task) => task.id === target.id ? { ...task, ...data.task } : task));
+        speak(`Done, ${target.title} is now ${status}. What else can I help with?`);
+      } catch (error) {
+        setSyncError(error.message || 'Could not update the task.');
+        speak('Sorry, I found the task but could not save the status change. Please try again.');
+      }
       return true;
     }
 
@@ -622,7 +656,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       const employee = employees.find((item) => String(item.id) === String(action.employeeId));
       const title = cleanTaskTitle(action.taskTitle || '');
       if (!employee || !title || /^(?:task|work|do it|something)$/i.test(title)) {
-        speak('I need a clear employee name and task. Please say who should do what.');
+        speak('I can help with that. Who should do what?');
         return true;
       }
       const task = {
@@ -637,16 +671,17 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       try {
         const savedTask = await createTaskOnServer(task);
         lastEmployeeRef.current = employee.id;
-        speak(`${savedTask.title} assigned to ${employee.name}. ${savedTask.deliveryMessage}`);
+        const delivery = spokenDeliveryMessage(savedTask, employee.name);
+        speak([`Done! I assigned ${savedTask.title} to ${employee.name}.`, delivery, 'What else can I help with?'].filter(Boolean).join(' '));
       } catch (error) {
         setSyncError(error.message || 'Could not save task.');
-        speak('I understood the task, but could not save it.');
+        speak('Sorry, I understood the task but could not save it. Please try again.');
       }
       return true;
     }
 
     if (action.action === 'clarify') {
-      speak(action.reply || 'Please tell me a little more so I can assign it correctly.');
+      speak(action.reply || 'Of course. Could you tell me who should do what?');
       return true;
     }
 
@@ -686,12 +721,12 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       const action = await parseCommandWithOpenAi(command, history);
       if (sessionId !== null && voiceSessionRef.current !== sessionId) return false;
       if (await applyAiAction(command, action)) return true;
-      speak('I am not sure what you meant. Please tell me a little more.');
+      speak('I can help assign work or update a task. What would you like me to do?');
       return true;
     } catch (error) {
       if (sessionId !== null && voiceSessionRef.current !== sessionId) return false;
       setVoiceError(error.message || 'Could not analyze the command.');
-      speak('I could not analyze that command. Please try again.');
+      speak('Sorry, I had trouble with that request. Could you try again?');
       return true;
     } finally {
       commandBusyRef.current = false;

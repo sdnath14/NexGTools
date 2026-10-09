@@ -6,7 +6,7 @@ export default function VoiceAgentPanel({ listening, speaking, processing, voice
   const state = processing ? 'thinking' : speaking ? 'speaking' : listening ? 'listening' : voiceMode ? 'starting' : 'idle';
   const active = listening || voiceMode;
   const label = { idle: 'Ready when you are', starting: 'Opening your microphone', listening: "I'm listening", thinking: 'Thinking it through', speaking: 'Speaking to you' }[state];
-  const hint = { idle: 'Voice starts when you open this tab. Tap the microphone to restart it.', starting: 'Your conversation will begin in a moment.', listening: 'Tell me the employee, the task, and when it is due.', thinking: 'Working on your request. One moment.', speaking: 'I will listen again after this response.' }[state];
+  const hint = { idle: 'Voice starts when you open this tab. Tap the microphone to restart it.', starting: 'Your conversation will begin in a moment.', listening: 'Tell me what needs doing. I can ask for any missing details.', thinking: 'Working on your request. One moment.', speaking: 'I will listen again after this response.' }[state];
 
   return <div className={`gold-voice gold-voice-${state}`}>
     <header className="gold-voice-header">
