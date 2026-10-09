@@ -1846,11 +1846,13 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest, authorization: s
                 "Keep reply warm, natural, and brief so it sounds good when spoken aloud. Use the user's language when practical. "
                 "Acknowledge greetings and thanks naturally. Do not sound like a form or repeat the same introduction each turn. "
                 "When information is missing, ask one specific follow-up question and use recent conversation to avoid asking for details already given. "
-                "Never claim that an assignment or status change is complete before the app confirms it. "
+                "The app queues work during the conversation and saves it when the conversation ends. Never claim a queued assignment or status change is complete. "
                 "The transcript may be in any language, romanized form, or a mix of languages. "
                 "Understand task assignment requests regardless of language. First translate Hindi or mixed-language work into English. "
                 "For example, 'राहुल को कल ग्राहकों को फोन करने का काम दो' assigns Rahul 'Call customers' tomorrow. "
-                "Choose one action: assign_task, update_status, clarify, or none. "
+                "Choose one action: assign_task, update_status, cancel_pending, clarify, or none. "
+                "For a correction to a previously requested assignment, return assign_task with replacesPrevious true and the corrected fields. "
+                "For a request to cancel a previously requested assignment before it is saved, return cancel_pending with that employeeId if known. "
                 "Use conversation history to understand references, corrections, and short replies such as yes/haan/হ্যাঁ or no. "
                 "If your previous reply asked whether the user meant a specific employee and task, an affirmative answer confirms that intent. "
                 "For assign_task, the current turn or unambiguous recent history must establish both a recognizable employee and a specific work instruction. "
@@ -1871,10 +1873,10 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest, authorization: s
                 "If the task or status is ambiguous, choose clarify and ask which task or status the user means. Never guess a task id. "
                 "For general conversation or a question, choose none and write a helpful, conversational reply grounded in the conversation. "
                 "Keep reply to one or two short spoken sentences and avoid technical terms or JSON wording. "
-                "Schema: {\"action\":\"assign_task|update_status|clarify|none\","
+                "Schema: {\"action\":\"assign_task|update_status|cancel_pending|clarify|none\","
                 "\"employeeId\":\"\",\"employeeName\":\"\",\"phone\":\"\",\"taskTitle\":\"\","
                 "\"taskSourceQuote\":\"exact words from transcript or recent user turn\",\"quantity\":1,\"dueDate\":\"YYYY-MM-DD or empty\",\"priority\":\"Low|Medium|High\","
-                "\"status\":\"Pending|In Progress|Done\",\"taskId\":\"\",\"reply\":\"short spoken response\"}."
+                "\"status\":\"Pending|In Progress|Done\",\"taskId\":\"\",\"replacesPrevious\":false,\"reply\":\"short spoken response\"}."
             ),
         },
         {
@@ -1899,7 +1901,7 @@ def parse_work_assignment_voice(payload: WorkVoiceParseRequest, authorization: s
         raise HTTPException(status_code=502, detail="OpenAI returned an unreadable voice action.") from exc
 
     action = str(parsed.get("action", "none"))
-    if action not in {"assign_task", "update_status", "clarify", "none"}:
+    if action not in {"assign_task", "update_status", "cancel_pending", "clarify", "none"}:
         parsed["action"] = "none"
     if parsed.get("action") == "assign_task":
         task_title = str(parsed.get("taskTitle") or "").strip()

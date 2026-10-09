@@ -6,7 +6,7 @@ export default function VoiceAgentPanel({ listening, speaking, processing, voice
   const state = processing ? 'thinking' : speaking ? 'speaking' : listening ? 'listening' : voiceMode ? 'starting' : 'idle';
   const active = listening || voiceMode;
   const label = { idle: 'Ready when you are', starting: 'Opening your microphone', listening: "I'm listening", thinking: 'Thinking it through', speaking: 'Speaking to you' }[state];
-  const hint = { idle: 'Voice starts when you open this tab. Tap the microphone to restart it.', starting: 'Your conversation will begin in a moment.', listening: 'Tell me what needs doing. I can ask for any missing details.', thinking: 'Working on your request. One moment.', speaking: 'I will listen again after this response.' }[state];
+  const hint = { idle: 'Voice starts when you open this tab. Tap the microphone to restart it.', starting: 'Your conversation will begin in a moment.', listening: 'Tell me the work to plan. End the session when you are done.', thinking: 'Working on your request. One moment.', speaking: 'I will listen again after this response.' }[state];
 
   return <div className={`gold-voice gold-voice-${state}`}>
     <header className="gold-voice-header">
@@ -25,9 +25,9 @@ export default function VoiceAgentPanel({ listening, speaking, processing, voice
       <div className="gold-voice-controls">
         <button type="button" className={`gold-voice-control ${showConversation ? 'is-selected' : ''}`} aria-label="Show conversation and type a message" aria-expanded={showConversation} aria-controls="voice-conversation" onClick={() => setShowConversation((value) => !value)}><MessageSquare size={21} /></button>
         <button type="button" className={`gold-voice-mic ${active ? 'is-active' : ''}`} onClick={onToggle} disabled={processing || speaking} aria-label={active ? 'Stop listening and respond' : 'Start voice conversation'} aria-pressed={Boolean(active)}>{active ? <MicOff size={26} /> : <Mic size={26} />}</button>
-        <button type="button" className="gold-voice-control" onClick={onStop} disabled={!active && !speaking} aria-label="End voice session"><X size={23} /></button>
+        <button type="button" className="gold-voice-control" onClick={onStop} disabled={!active && !speaking} aria-label="End voice session and save assignments"><X size={23} /></button>
       </div>
-      <span className="gold-voice-control-hint">{speaking ? 'Tap close to end the session' : processing ? 'Preparing your response' : listening ? 'Tap the microphone to send this turn' : active ? 'Tap close to end the session' : 'Start talking'}</span>
+      <span className="gold-voice-control-hint">{speaking ? 'Tap close to finish and assign the work' : processing ? 'Preparing your response' : listening ? 'Tap the microphone to send this turn' : active ? 'Tap close to finish and assign the work' : 'Start talking'}</span>
     </footer>
     {showConversation && <aside className="gold-conversation" id="voice-conversation" aria-label="Conversation">
       <div className="gold-conversation-head"><h2>Conversation</h2><button type="button" aria-label="Close conversation" onClick={() => setShowConversation(false)}><X size={19} /></button></div>

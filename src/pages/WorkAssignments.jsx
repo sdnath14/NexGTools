@@ -1,6 +1,6 @@
 import VoiceAgentPanel from '../components/VoiceAgentPanel';
 import TaskTiming from '../components/TaskTiming';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   CalendarDays,
@@ -167,6 +167,9 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
   const runAssistantCommandRef = useRef(null);
   const autoStartVoiceRef = useRef(null);
   const commandBusyRef = useRef(false);
+  const pendingActionsRef = useRef([]);
+  const pendingVoiceTurnRef = useRef(null);
+  const finishingVoiceRef = useRef(false);
   const employeesRef = useRef(employees);
   const tasksRef = useRef(tasks);
   const realtimePeerRef = useRef(null);
@@ -218,10 +221,13 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     voiceModeRef.current = voiceMode;
   }, [voiceMode]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isVoicePage) return undefined;
-    const timer = window.setTimeout(() => autoStartVoiceRef.current?.(), 0);
-    return () => window.clearTimeout(timer);
+    let active = true;
+    queueMicrotask(() => {
+      if (active) autoStartVoiceRef.current?.();
+    });
+    return () => { active = false; };
   }, [isVoicePage]);
 
   useEffect(() => {
@@ -541,15 +547,16 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
   };
 
   const resumeVoiceCapture = (sessionId, delay = 350) => {
-    if (!voiceModeRef.current || voiceSessionRef.current !== sessionId) return;
+    if (!voiceModeRef.current || finishingVoiceRef.current || voiceSessionRef.current !== sessionId) return;
     window.clearTimeout(resumeTimeoutRef.current);
     resumeTimeoutRef.current = window.setTimeout(() => {
       resumeTimeoutRef.current = null;
-      if (voiceModeRef.current && voiceSessionRef.current === sessionId) startVoiceCapture();
+      if (voiceModeRef.current && !finishingVoiceRef.current && voiceSessionRef.current === sessionId) startVoiceCapture();
     }, delay);
   };
 
   const speak = async (message, { resumeAfter = true, addMessage = true } = {}) => {
+    if (finishingVoiceRef.current) return;
     const sessionId = voiceSessionRef.current;
     const controller = new AbortController();
     if (addMessage) addChatMessage('assistant', message);
@@ -608,6 +615,43 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
 
   const applyAiAction = async (command, action) => {
     if (!action) return false;
+    if (isVoicePage && ['assign_task', 'update_status', 'cancel_pending'].includes(action.action)) {
+      if (action.action === 'assign_task') {
+        const employee = employeesRef.current.find((item) => String(item.id) === String(action.employeeId));
+        const title = cleanTaskTitle(action.taskTitle);
+        if (!employee || !title) {
+          speak('I need the person and the work to be clear. Who should do what?');
+          return true;
+        }
+        const next = { ...action, employeeId: employee.id, taskTitle: title, command };
+        if (action.replacesPrevious === true) {
+          pendingActionsRef.current = pendingActionsRef.current.filter((item) => item.action !== 'assign_task' || String(item.employeeId) !== String(employee.id));
+        }
+        const existing = pendingActionsRef.current.findIndex((item) => item.action === 'assign_task'
+          && String(item.employeeId) === String(employee.id) && item.taskTitle.toLowerCase() === title.toLowerCase());
+        if (existing >= 0) pendingActionsRef.current[existing] = next;
+        else pendingActionsRef.current.push(next);
+        lastEmployeeRef.current = employee.id;
+        speak(`I've noted ${title} for ${employee.name}. What else?`);
+      } else if (action.action === 'cancel_pending') {
+        const employeeId = normalize(action.employeeId);
+        const index = employeeId
+          ? pendingActionsRef.current.findLastIndex((item) => item.action === 'assign_task' && String(item.employeeId) === employeeId)
+          : pendingActionsRef.current.length - 1;
+        if (index >= 0) pendingActionsRef.current.splice(index, 1);
+        speak(index >= 0 ? 'Okay, I removed that planned work. What else?' : 'There is no planned work to remove. What else?');
+      } else {
+        const task = tasksRef.current.find((item) => String(item.id) === String(action.taskId));
+        if (!task || !['Pending', 'In Progress', 'Done'].includes(action.status)) {
+          speak('Which task and status did you mean?');
+          return true;
+        }
+        pendingActionsRef.current = pendingActionsRef.current.filter((item) => item.action !== 'update_status' || String(item.taskId) !== String(task.id));
+        pendingActionsRef.current.push({ action: 'update_status', taskId: task.id, status: action.status });
+        speak(`Got it. I will mark ${task.title} as ${action.status} when we finish. What else?`);
+      }
+      return true;
+    }
     if (action.action === 'none') {
       if (normalize(action.reply)) {
         speak(action.reply);
@@ -738,6 +782,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     chatMessagesRef.current = [welcomeMessage];
     setChatMessages([welcomeMessage]);
     lastEmployeeRef.current = '';
+    pendingActionsRef.current = [];
     localStorage.removeItem(chatStorageKey(userId));
   };
 
@@ -817,7 +862,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
         if (!voiceModeRef.current || voiceSessionRef.current !== sessionId) return;
         const shouldSubmit = heardSpeech || forceSubmitRef.current;
         forceSubmitRef.current = false;
-        if (shouldSubmit) submitVoiceAudio(new Blob(chunks, { type: mimeType }), sessionId);
+        if (shouldSubmit) pendingVoiceTurnRef.current = submitVoiceAudio(new Blob(chunks, { type: mimeType }), sessionId);
         else resumeVoiceCapture(sessionId, 150);
       };
 
@@ -841,7 +886,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
         const volume = samples.reduce((total, sample) => total + Math.abs(sample - 128), 0) / samples.length;
         if (volume >= 2.8) heardSpeech = true;
         if (heardSpeech && volume < 2.8) {
-          if (!silenceTimerRef.current) silenceTimerRef.current = window.setTimeout(() => stopVoiceCapture(), 2300);
+          if (!silenceTimerRef.current) silenceTimerRef.current = window.setTimeout(() => stopVoiceCapture(), 900);
         } else {
           window.clearTimeout(silenceTimerRef.current);
           silenceTimerRef.current = null;
@@ -853,7 +898,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       recorder.start();
       captureTimeoutRef.current = window.setTimeout(() => {
         if (recorder.state === 'recording') stopVoiceCapture();
-      }, 14000);
+      }, 10000);
       window.requestAnimationFrame(watchSilence);
     } catch (error) {
       if (voiceSessionRef.current !== sessionId) return;
@@ -990,6 +1035,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       return;
     }
     const sessionId = ++voiceSessionRef.current;
+    finishingVoiceRef.current = false;
     setVoiceError('');
     voiceModeRef.current = true;
     setVoiceMode(true);
@@ -1012,6 +1058,68 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
   };
   autoStartVoiceRef.current = startVoiceSessionOnEntry;
 
+  const finishVoiceSession = async () => {
+    if (finishingVoiceRef.current) return;
+    finishingVoiceRef.current = true;
+    window.clearTimeout(resumeTimeoutRef.current);
+    replyAudioRef.current?.pause();
+    voiceRequestRef.current?.abort();
+    setSpeaking(false);
+    setProcessingVoice(true);
+    setAssignmentNotice('Analyzing the conversation and saving your work...');
+    const recorder = mediaRecorderRef.current;
+    if (recorder?.state === 'recording') {
+      const stopped = new Promise((resolve) => recorder.addEventListener('stop', resolve, { once: true }));
+      stopVoiceCapture(true);
+      await stopped;
+    }
+    if (pendingVoiceTurnRef.current) await pendingVoiceTurnRef.current;
+    stopVoiceMode();
+    const actions = [...pendingActionsRef.current];
+    pendingActionsRef.current = [];
+    if (!actions.length) {
+      setAssignmentNotice('Conversation finished. No assignments were ready to save.');
+      finishingVoiceRef.current = false;
+      return;
+    }
+    setProcessingVoice(true);
+    let saved = 0;
+    const failures = [];
+    for (const action of actions) {
+      try {
+        if (action.action === 'assign_task') {
+          await createTaskOnServer({
+            employeeId: action.employeeId,
+            title: action.taskTitle,
+            quantity: Math.max(1, Number(action.quantity) || 1),
+            dueDate: normalize(action.dueDate),
+            priority: ['Low', 'Medium', 'High'].includes(action.priority) ? action.priority : 'Medium',
+            status: 'Pending',
+            notes: `Created after voice conversation from: "${action.command}"`,
+          });
+        } else {
+          const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks/${action.taskId}/status`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ status: action.status }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.detail || 'Could not update a task.');
+          setTasks((current) => current.map((task) => String(task.id) === String(action.taskId) ? { ...task, ...data.task } : task));
+        }
+        saved += 1;
+      } catch (error) {
+        failures.push(`${action.taskTitle || action.taskId}: ${error.message}`);
+        pendingActionsRef.current.push(action);
+      }
+    }
+    const message = `${saved} work ${saved === 1 ? 'change' : 'changes'} saved after the conversation.${failures.length ? ` ${failures.length} could not be saved: ${failures.join('; ')}` : ''}`;
+    setAssignmentNotice(message);
+    addChatMessage('assistant', message);
+    setProcessingVoice(false);
+    finishingVoiceRef.current = false;
+  };
+
   const toggleListening = () => {
     setVoiceError('');
     if (listening) {
@@ -1019,7 +1127,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       return;
     }
     if (voiceModeRef.current) {
-      stopVoiceMode();
+      finishVoiceSession();
       return;
     }
     voiceModeRef.current = true;
@@ -1047,7 +1155,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       {isVoicePage && <section className="work-assistant" aria-label="Voice Agent">
         <VoiceAgentPanel listening={listening} speaking={speaking} processing={processingVoice} voiceMode={voiceMode}
           messages={chatMessages} chatEndRef={chatEndRef} text={voiceText} setText={setVoiceText}
-          onSend={() => runAssistantCommand()} onToggle={toggleListening} onStop={stopVoiceMode} onClear={clearConversation} />
+          onSend={() => runAssistantCommand()} onToggle={toggleListening} onStop={finishVoiceSession} onClear={clearConversation} />
         {microphoneState === 'missing' && !voiceError && <p className="work-inline-error"><AlertCircle size={15} /> No microphone input is detected. Connect or enable a microphone in Windows Sound settings before starting voice mode.</p>}
         {voiceError && <p className="work-inline-error"><AlertCircle size={15} /> {voiceError}</p>}
         {syncError && <p className="work-inline-error"><AlertCircle size={15} /> {syncError}</p>}
