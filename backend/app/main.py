@@ -125,11 +125,13 @@ def health() -> dict[str, object]:
         "ok": not missing,
         "model": settings.openai_model,
         "voice": {
+            "provider": "elevenlabs",
+            "configured": bool(settings.elevenlabs_api_key),
             "realtime_model": settings.openai_realtime_model,
             "realtime_voice": settings.openai_realtime_voice,
-            "transcription_model": settings.openai_transcription_model,
-            "speech_model": settings.openai_tts_model,
-            "voice": settings.openai_tts_voice,
+            "transcription_model": settings.elevenlabs_stt_model,
+            "speech_model": settings.elevenlabs_tts_model,
+            "voice": settings.elevenlabs_voice_id,
         },
         "missing": missing,
         "database": db_status,
@@ -139,6 +141,10 @@ def health() -> dict[str, object]:
 @app.get("/config/status")
 def config_status() -> dict[str, object]:
     return {
+        "elevenlabs_api_key": bool(settings.elevenlabs_api_key),
+        "elevenlabs_stt_model": settings.elevenlabs_stt_model,
+        "elevenlabs_tts_model": settings.elevenlabs_tts_model,
+        "elevenlabs_voice_id": settings.elevenlabs_voice_id,
         "openai_api_key": bool(settings.openai_api_key),
         "openai_model": settings.openai_model,
         "openai_reasoning_effort": settings.openai_reasoning_effort,
@@ -1770,32 +1776,35 @@ async def create_work_assignment_realtime_session(
 @app.post("/api/work-assignments/voice/transcribe")
 async def transcribe_work_assignment_voice(file: UploadFile = File(...), authorization: str | None = Header(default=None)) -> dict[str, str]:
     _require_permission(authorization, "work_assignments")
-    if not settings.openai_api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
+    if not settings.elevenlabs_api_key:
+        raise HTTPException(status_code=503, detail="ELEVENLABS_API_KEY is missing from the backend environment. Add it to the project root .env and restart the backend.")
 
-    audio_bytes = await file.read()
+    audio_bytes = await file.read(20 * 1024 * 1024 + 1)
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="No audio was received.")
+    if len(audio_bytes) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Voice recording is too large.")
 
     try:
-        from openai import OpenAI
-
-        audio_file = BytesIO(audio_bytes)
-        audio_file.name = file.filename or "work-command.webm"
-        transcript = OpenAI(api_key=settings.openai_api_key, timeout=30).audio.transcriptions.create(
-            model=settings.openai_transcription_model,
-            file=audio_file,
-            prompt=(
-                "The speaker may use English, Hindi, Bengali, Hinglish, or Banglish. "
-                "Write only the words actually spoken, in the spoken language and script. "
-                "Keep names, numbers, and dates as heard. Do not translate, complete, or guess missing words."
-            ),
+        response = requests.post(
+            "https://api.elevenlabs.io/v1/speech-to-text",
+            headers={"xi-api-key": settings.elevenlabs_api_key},
+            data={"model_id": settings.elevenlabs_stt_model},
+            files={"file": (file.filename or "work-command.webm", audio_bytes, file.content_type or "audio/webm")},
+            timeout=45,
         )
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"OpenAI voice transcription failed: {exc}") from exc
-
-    text = getattr(transcript, "text", "") or ""
-    return {"text": text.strip()}
+        response.raise_for_status()
+        return {"text": str(response.json().get("text") or "").strip()}
+    except requests.HTTPError as exc:
+        try:
+            detail = response.json().get("detail", {})
+        except (ValueError, AttributeError):
+            detail = {}
+        if isinstance(detail, dict):
+            detail = detail.get("message", "")
+        raise HTTPException(status_code=502, detail=f"ElevenLabs transcription failed: {detail or response.status_code}") from exc
+    except (requests.RequestException, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="Could not transcribe audio with ElevenLabs.") from exc
 
 
 @app.post("/api/work-assignments/voice/parse")
@@ -2325,57 +2334,32 @@ def my_work_tasks(authorization: str | None = Header(default=None)) -> dict[str,
 @app.post("/api/work-assignments/voice/speak")
 def speak_work_assignment_voice(payload: WorkVoiceSpeechRequest, authorization: str | None = Header(default=None)) -> StreamingResponse:
     _require_permission(authorization, "work_assignments")
-    if not settings.openai_api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
-
     text = payload.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Text is required.")
-
-    allowed_voices = {"alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse", "marin", "cedar"}
-    configured_voice = settings.openai_tts_voice if settings.openai_tts_voice in allowed_voices else "marin"
-    voice = payload.voice if payload.voice in allowed_voices else configured_voice
-
-    request = Request(
-        "https://api.openai.com/v1/audio/speech",
-        data=json.dumps(
-            {
-                "model": settings.openai_tts_model,
-                "voice": voice,
-                "input": text[:4096],
-                "response_format": "mp3",
-                "speed": 1,
-                "instructions": "Speak naturally and clearly like a helpful work assistant. Match the language of the text.",
-            }
-        ).encode("utf-8"),
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {settings.openai_api_key}",
-            "Content-Type": "application/json",
-        },
-    )
+    if not settings.elevenlabs_api_key:
+        raise HTTPException(status_code=503, detail="ELEVENLABS_API_KEY is missing from the backend environment. Add it to the project root .env and restart the backend.")
 
     try:
-        with urlopen(request, timeout=30) as response:
-            audio = response.read()
-    except HTTPError as exc:
-        details = exc.read().decode("utf-8", errors="replace")
+        response = requests.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{settings.elevenlabs_voice_id}",
+            params={"output_format": "mp3_44100_128"},
+            headers={"xi-api-key": settings.elevenlabs_api_key},
+            json={"text": text[:4096], "model_id": settings.elevenlabs_tts_model},
+            timeout=45,
+        )
+        response.raise_for_status()
+    except requests.HTTPError as exc:
         try:
-            message = json.loads(details).get("error", {}).get("message", "OpenAI voice generation failed.")
-        except json.JSONDecodeError:
-            message = "OpenAI voice generation failed."
-        raise HTTPException(status_code=exc.code, detail=message) from exc
-    except URLError as exc:
-        raise HTTPException(status_code=502, detail=f"Could not reach OpenAI voice generation: {exc.reason}") from exc
-
-    return StreamingResponse(
-        BytesIO(audio),
-        media_type="audio/mpeg",
-        headers={
-            "X-OpenAI-Speech-Model": settings.openai_tts_model,
-            "X-OpenAI-Voice": voice,
-        },
-    )
+            detail = response.json().get("detail", {})
+        except (ValueError, AttributeError):
+            detail = {}
+        if isinstance(detail, dict):
+            detail = detail.get("message", "")
+        raise HTTPException(status_code=502, detail=f"ElevenLabs voice generation failed: {detail or response.status_code}") from exc
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail="Could not reach ElevenLabs voice generation.") from exc
+    return StreamingResponse(BytesIO(response.content), media_type="audio/mpeg", headers={"X-Voice-Provider": "elevenlabs"})
 
 
 def _find_company_website_with_places(name: str, address: str = "") -> str:

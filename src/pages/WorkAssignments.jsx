@@ -19,7 +19,6 @@ import './WorkAssignments.css';
 
 const emptyTask = { employeeId: '', title: '', quantity: 1, dueDate: '', priority: 'Medium', status: 'Pending', notes: '' };
 const canRecordVoice = 'MediaRecorder' in window && navigator.mediaDevices?.getUserMedia;
-const canSpeak = 'speechSynthesis' in window;
 
 const microphoneErrorDetails = (error) => {
   const name = error?.name || '';
@@ -61,29 +60,6 @@ const requestMicrophone = async () => {
   }
 };
 
-const femaleVoiceNames = [
-  'Microsoft Neerja',
-  'Microsoft Heera',
-  'Google UK English Female',
-  'Google US English',
-  'Google हिन्दी',
-  'Samantha',
-  'Karen',
-  'Moira',
-  'Tessa',
-  'Veena',
-  'Serena',
-  'Victoria',
-  'Allison',
-  'Ava',
-  'Susan',
-  'Zira',
-  'Hazel',
-];
-
-const maleVoicePattern = /alex|daniel|david|fred|george|mark|rishi|ryan|tom|male|man/i;
-const femaleVoicePattern = /female|woman|samantha|karen|moira|tessa|veena|neerja|heera|serena|victoria|allison|ava|susan|zira|hazel/i;
-
 const uid = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const normalize = (value) => String(value || '').trim();
 const emailDeliveryMessage = (status, task) => ({
@@ -109,43 +85,6 @@ const cleanTaskTitle = (value) => normalize(value)
   .replace(/\s+(?:by\s+)?(?:today|tomorrow|next week|in\s+\d+\s+days?)\s*$/i, '')
   .replace(/[.,!?]+$/g, '')
   .trim();
-
-const chooseFemaleVoice = (voices) => {
-  if (!voices.length) return null;
-  const englishVoices = voices.filter((voice) => voice.lang?.toLowerCase().startsWith('en'));
-  const indianEnglishVoices = englishVoices.filter((voice) => voice.lang?.toLowerCase() === 'en-in');
-  const voicePool = [
-    ...indianEnglishVoices,
-    ...englishVoices.filter((voice) => !indianEnglishVoices.includes(voice)),
-    ...voices.filter((voice) => !englishVoices.includes(voice)),
-  ].filter((voice) => !maleVoicePattern.test(voice.name));
-  return (
-    femaleVoiceNames
-      .map((name) => voicePool.find((voice) => voice.name.toLowerCase().includes(name.toLowerCase())))
-      .find(Boolean)
-    || voicePool.find((voice) => femaleVoicePattern.test(voice.name))
-    || voicePool[0]
-    || null
-  );
-};
-
-const getBrowserVoices = () => new Promise((resolve) => {
-  const voices = window.speechSynthesis.getVoices();
-  if (voices.length) {
-    resolve(voices);
-    return;
-  }
-  const timeout = window.setTimeout(() => {
-    window.speechSynthesis.removeEventListener('voiceschanged', handleVoicesChanged);
-    resolve(window.speechSynthesis.getVoices());
-  }, 600);
-  function handleVoicesChanged() {
-    window.clearTimeout(timeout);
-    window.speechSynthesis.removeEventListener('voiceschanged', handleVoicesChanged);
-    resolve(window.speechSynthesis.getVoices());
-  }
-  window.speechSynthesis.addEventListener('voiceschanged', handleVoicesChanged);
-});
 
 const realtimeTools = [
   {
@@ -195,7 +134,6 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
   const [voiceMode, setVoiceMode] = useState(false);
   const [voiceError, setVoiceError] = useState('');
   const [microphoneState, setMicrophoneState] = useState(canRecordVoice ? 'checking' : 'unsupported');
-  const [speechVoices, setSpeechVoices] = useState([]);
   const [syncError, setSyncError] = useState('');
   const [assignmentNotice, setAssignmentNotice] = useState('');
   const mediaRecorderRef = useRef(null);
@@ -203,6 +141,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
   const audioContextRef = useRef(null);
   const replyAudioRef = useRef(null);
   const replyAudioUrlRef = useRef('');
+  const voiceRequestRef = useRef(null);
   const silenceTimerRef = useRef(null);
   const voiceModeRef = useRef(false);
   const chatEndRef = useRef(null);
@@ -243,6 +182,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     window.speechSynthesis?.cancel();
     replyAudioRef.current?.pause();
     if (replyAudioUrlRef.current) URL.revokeObjectURL(replyAudioUrlRef.current);
+    voiceRequestRef.current?.abort();
     voiceModeRef.current = false;
     window.clearTimeout(silenceTimerRef.current);
     if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
@@ -284,14 +224,6 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
   useEffect(() => {
     tasksRef.current = tasks;
   }, [tasks]);
-
-  useEffect(() => {
-    if (!isVoicePage || !canSpeak) return undefined;
-    const loadVoices = () => setSpeechVoices(window.speechSynthesis.getVoices());
-    loadVoices();
-    window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
-    return () => window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
-  }, [isVoicePage]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -567,39 +499,11 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     }
     replyAudioRef.current?.pause();
     window.speechSynthesis?.cancel();
+    voiceRequestRef.current?.abort();
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     mediaStreamRef.current = null;
     audioContextRef.current?.close();
     audioContextRef.current = null;
-  };
-
-  const speakWithBrowserFallback = async (message, { resumeAfter = true } = {}) => {
-    if (!canSpeak) {
-      if (resumeAfter && voiceModeRef.current && !realtimePeerRef.current) window.setTimeout(() => startVoiceCapture(), 350);
-      return;
-    }
-    const availableVoices = speechVoices.length ? speechVoices : await getBrowserVoices();
-    const femaleVoice = chooseFemaleVoice(availableVoices);
-    if (!speechVoices.length && availableVoices.length) setSpeechVoices(availableVoices);
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(message);
-    utterance.voice = femaleVoice;
-    utterance.lang = femaleVoice?.lang || 'en-IN';
-    utterance.rate = 0.88;
-    utterance.pitch = 1.35;
-    utterance.onstart = () => setSpeaking(true);
-    await new Promise((resolve) => {
-      utterance.onend = () => {
-        setSpeaking(false);
-        if (resumeAfter && voiceModeRef.current && !realtimePeerRef.current) window.setTimeout(() => startVoiceCapture(), 350);
-        resolve();
-      };
-      utterance.onerror = () => {
-        setSpeaking(false);
-        resolve();
-      };
-      window.speechSynthesis.speak(utterance);
-    });
   };
 
   const speak = async (message, { resumeAfter = true } = {}) => {
@@ -609,16 +513,20 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       replyAudioRef.current?.pause();
       if (replyAudioUrlRef.current) URL.revokeObjectURL(replyAudioUrlRef.current);
       setSpeaking(true);
+      const controller = new AbortController();
+      voiceRequestRef.current = controller;
       const response = await fetch(`${API_BASE_URL}/api/work-assignments/voice/speak`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ text: message }),
+        signal: controller.signal,
       });
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
-        throw new Error(error.detail || 'OpenAI voice generation failed.');
+        throw new Error(error.detail || 'Voice generation failed.');
       }
       const audioBlob = await response.blob();
+      if (voiceRequestRef.current === controller) voiceRequestRef.current = null;
       const audioUrl = URL.createObjectURL(audioBlob);
       replyAudioUrlRef.current = audioUrl;
       const audio = new Audio(audioUrl);
@@ -641,8 +549,10 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       });
     } catch (error) {
       setSpeaking(false);
-      setVoiceError(error.message || 'OpenAI voice generation failed. Using browser voice fallback.');
-      await speakWithBrowserFallback(message, { resumeAfter });
+      if (error.name === 'AbortError') return;
+      setVoiceError(error.message || 'ElevenLabs voice generation failed.');
+      voiceModeRef.current = false;
+      setVoiceMode(false);
     }
   };
 
@@ -763,25 +673,28 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       formData.append('file', audioBlob, 'work-command.webm');
       const response = await fetch(`${API_BASE_URL}/api/work-assignments/voice/transcribe`, { method: 'POST', headers: authHeaders(), body: formData });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'OpenAI could not transcribe the voice command.');
+      if (!response.ok) throw new Error(data.detail || 'Could not transcribe the voice command.');
       const transcript = normalize(data.text);
       if (!transcript) {
         setVoiceError('I could not hear any words. Press the microphone and speak closer to the input device.');
+        voiceModeRef.current = false;
+        setVoiceMode(false);
         return;
       }
       setVoiceText(transcript);
       addChatMessage('user', transcript);
-      await speak(`I heard: ${transcript}`, { resumeAfter: false });
       await runAssistantCommandRef.current(transcript, { addUserMessage: false });
     } catch (error) {
       setVoiceError(error.message || 'Could not process the voice command.');
+      voiceModeRef.current = false;
+      setVoiceMode(false);
     } finally {
       setProcessingVoice(false);
     }
   };
 
   const startVoiceCapture = async () => {
-    if (!voiceModeRef.current || listening || speaking || processingVoice) return;
+    if (!voiceModeRef.current || mediaRecorderRef.current?.state === 'recording') return;
     if (!canRecordVoice) {
       setVoiceError('Voice mode needs microphone recording support in this browser. You can still type the command.');
       setVoiceMode(false);
@@ -802,13 +715,13 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       };
       recorder.onstop = () => {
         setListening(false);
-        voiceModeRef.current = false;
-        setVoiceMode(false);
         window.clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = null;
         stream.getTracks().forEach((track) => track.stop());
         if (mediaStreamRef.current === stream) mediaStreamRef.current = null;
-        submitVoiceAudio(new Blob(chunks, { type: mimeType }));
+        audioContextRef.current?.close();
+        audioContextRef.current = null;
+        if (voiceModeRef.current) submitVoiceAudio(new Blob(chunks, { type: mimeType }));
       };
 
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -969,7 +882,11 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
 
   const toggleListening = () => {
     setVoiceError('');
-    if (voiceModeRef.current || listening) {
+    if (listening) {
+      stopVoiceCapture();
+      return;
+    }
+    if (voiceModeRef.current) {
       stopVoiceMode();
       return;
     }

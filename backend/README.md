@@ -14,6 +14,8 @@ pip install -r backend/requirements.txt
 
 The backend loads environment variables from the project root `.env`.
 
+For the work assignment voice agent, set `ELEVENLABS_API_KEY` in that file or in the backend process environment and restart the backend. Spoken requests use ElevenLabs Scribe v2 for transcription and ElevenLabs Multilingual v2 for replies. `ELEVENLABS_STT_MODEL`, `ELEVENLABS_TTS_MODEL`, and `ELEVENLABS_VOICE_ID` can override the defaults. The default voice ID is the George voice shown in the ElevenLabs API documentation. `OPENAI_API_KEY` is still needed to interpret commands and save assignments. Without the ElevenLabs key, voice requests return a configuration error.
+
 ## Run
 
 ```bash

@@ -39,6 +39,10 @@ class Settings:
     openai_tts_voice: str
     openai_realtime_model: str
     openai_realtime_voice: str
+    elevenlabs_api_key: str
+    elevenlabs_stt_model: str
+    elevenlabs_tts_model: str
+    elevenlabs_voice_id: str
     google_places_api_key: str
     google_search_api_key: str
     google_search_engine_id: str
@@ -86,6 +90,10 @@ class Settings:
             openai_tts_voice=getenv("OPENAI_TTS_VOICE", "marin"),
             openai_realtime_model=getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1"),
             openai_realtime_voice=getenv("OPENAI_REALTIME_VOICE", "marin"),
+            elevenlabs_api_key=getenv("ELEVENLABS_API_KEY"),
+            elevenlabs_stt_model=getenv("ELEVENLABS_STT_MODEL", "scribe_v2"),
+            elevenlabs_tts_model=getenv("ELEVENLABS_TTS_MODEL", "eleven_multilingual_v2"),
+            elevenlabs_voice_id=getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb"),
             google_places_api_key=getenv("GOOGLE_PLACES_API_KEY"),
             google_search_api_key=getenv("GOOGLE_SEARCH_API_KEY"),
             google_search_engine_id=getenv("GOOGLE_SEARCH_ENGINE_ID"),
