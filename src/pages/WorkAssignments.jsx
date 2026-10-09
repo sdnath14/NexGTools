@@ -143,6 +143,11 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
   const replyAudioUrlRef = useRef('');
   const voiceRequestRef = useRef(null);
   const silenceTimerRef = useRef(null);
+  const captureTimeoutRef = useRef(null);
+  const resumeTimeoutRef = useRef(null);
+  const captureStartingRef = useRef(false);
+  const forceSubmitRef = useRef(false);
+  const voiceSessionRef = useRef(0);
   const voiceModeRef = useRef(false);
   const chatEndRef = useRef(null);
   const lastEmployeeRef = useRef('');
@@ -184,7 +189,10 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     if (replyAudioUrlRef.current) URL.revokeObjectURL(replyAudioUrlRef.current);
     voiceRequestRef.current?.abort();
     voiceModeRef.current = false;
+    voiceSessionRef.current += 1;
     window.clearTimeout(silenceTimerRef.current);
+    window.clearTimeout(captureTimeoutRef.current);
+    window.clearTimeout(resumeTimeoutRef.current);
     if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     audioContextRef.current?.close();
@@ -470,14 +478,21 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     }
   };
 
-  const stopVoiceCapture = () => {
+  const stopVoiceCapture = (manual = false) => {
     window.clearTimeout(silenceTimerRef.current);
+    window.clearTimeout(captureTimeoutRef.current);
     silenceTimerRef.current = null;
+    captureTimeoutRef.current = null;
+    if (manual) forceSubmitRef.current = true;
     if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
   };
 
   const stopVoiceMode = () => {
+    voiceSessionRef.current += 1;
     voiceModeRef.current = false;
+    forceSubmitRef.current = false;
+    window.clearTimeout(resumeTimeoutRef.current);
+    resumeTimeoutRef.current = null;
     setVoiceMode(false);
     setListening(false);
     setSpeaking(false);
@@ -506,14 +521,24 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     audioContextRef.current = null;
   };
 
+  const resumeVoiceCapture = (sessionId, delay = 350) => {
+    if (!voiceModeRef.current || voiceSessionRef.current !== sessionId) return;
+    window.clearTimeout(resumeTimeoutRef.current);
+    resumeTimeoutRef.current = window.setTimeout(() => {
+      resumeTimeoutRef.current = null;
+      if (voiceModeRef.current && voiceSessionRef.current === sessionId) startVoiceCapture();
+    }, delay);
+  };
+
   const speak = async (message, { resumeAfter = true } = {}) => {
+    const sessionId = voiceSessionRef.current;
+    const controller = new AbortController();
     addChatMessage('assistant', message);
     try {
       window.speechSynthesis?.cancel();
       replyAudioRef.current?.pause();
       if (replyAudioUrlRef.current) URL.revokeObjectURL(replyAudioUrlRef.current);
       setSpeaking(true);
-      const controller = new AbortController();
       voiceRequestRef.current = controller;
       const response = await fetch(`${API_BASE_URL}/api/work-assignments/voice/speak`, {
         method: 'POST',
@@ -527,17 +552,20 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       }
       const audioBlob = await response.blob();
       if (voiceRequestRef.current === controller) voiceRequestRef.current = null;
+      if (voiceSessionRef.current !== sessionId) {
+        setSpeaking(false);
+        return;
+      }
       const audioUrl = URL.createObjectURL(audioBlob);
       replyAudioUrlRef.current = audioUrl;
       const audio = new Audio(audioUrl);
       replyAudioRef.current = audio;
-      await audio.play();
       await new Promise((resolve, reject) => {
         audio.onended = () => {
           setSpeaking(false);
           URL.revokeObjectURL(audioUrl);
           if (replyAudioUrlRef.current === audioUrl) replyAudioUrlRef.current = '';
-          if (resumeAfter && voiceModeRef.current && !realtimePeerRef.current) window.setTimeout(() => startVoiceCapture(), 350);
+          if (resumeAfter) resumeVoiceCapture(sessionId);
           resolve();
         };
         audio.onerror = () => {
@@ -546,13 +574,14 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
           if (replyAudioUrlRef.current === audioUrl) replyAudioUrlRef.current = '';
           reject(new Error('The generated voice response could not be played.'));
         };
+        audio.play().catch(reject);
       });
     } catch (error) {
       setSpeaking(false);
+      if (voiceRequestRef.current === controller) voiceRequestRef.current = null;
       if (error.name === 'AbortError') return;
       setVoiceError(error.message || 'ElevenLabs voice generation failed.');
-      voiceModeRef.current = false;
-      setVoiceMode(false);
+      if (resumeAfter) resumeVoiceCapture(sessionId);
     }
   };
 
@@ -594,7 +623,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
         dueDate: normalize(action.dueDate),
         priority: ['Low', 'Medium', 'High'].includes(action.priority) ? action.priority : 'Medium',
         status: 'Pending',
-        notes: `Created by OpenAI voice assistant from: "${command}"`,
+        notes: `Created by voice agent from: "${command}"`,
       };
       try {
         const savedTask = await createTaskOnServer(task);
@@ -632,13 +661,13 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     return data;
   };
 
-  const runAssistantCommand = async (commandText = voiceText, { addUserMessage = true } = {}) => {
+  const runAssistantCommand = async (commandText = voiceText, { addUserMessage = true, sessionId = null } = {}) => {
     const command = normalize(commandText);
     if (!command) {
       speak('Please say or type a command first.');
       return;
     }
-    if (commandBusyRef.current) return;
+    if (commandBusyRef.current) return false;
     commandBusyRef.current = true;
 
     const history = chatMessagesRef.current;
@@ -646,11 +675,15 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     setVoiceText('');
     try {
       const action = await parseCommandWithOpenAi(command, history);
-      if (await applyAiAction(command, action)) return;
+      if (sessionId !== null && voiceSessionRef.current !== sessionId) return false;
+      if (await applyAiAction(command, action)) return true;
       speak('I am not sure what you meant. Please tell me a little more.');
+      return true;
     } catch (error) {
+      if (sessionId !== null && voiceSessionRef.current !== sessionId) return false;
       setVoiceError(error.message || 'Could not analyze the command.');
       speak('I could not analyze that command. Please try again.');
+      return true;
     } finally {
       commandBusyRef.current = false;
     }
@@ -664,8 +697,11 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     localStorage.removeItem(chatStorageKey(userId));
   };
 
-  const submitVoiceAudio = async (audioBlob) => {
-    if (!audioBlob.size) return;
+  const submitVoiceAudio = async (audioBlob, sessionId) => {
+    if (!audioBlob.size) {
+      resumeVoiceCapture(sessionId, 150);
+      return;
+    }
     setProcessingVoice(true);
     setVoiceError('');
     try {
@@ -673,55 +709,72 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       formData.append('file', audioBlob, 'work-command.webm');
       const response = await fetch(`${API_BASE_URL}/api/work-assignments/voice/transcribe`, { method: 'POST', headers: authHeaders(), body: formData });
       const data = await response.json();
+      if (voiceSessionRef.current !== sessionId) return;
       if (!response.ok) throw new Error(data.detail || 'Could not transcribe the voice command.');
       const transcript = normalize(data.text);
       if (!transcript) {
-        setVoiceError('I could not hear any words. Press the microphone and speak closer to the input device.');
-        voiceModeRef.current = false;
-        setVoiceMode(false);
+        setVoiceError('I could not hear any words. I am still listening.');
+        resumeVoiceCapture(sessionId, 200);
         return;
       }
       setVoiceText(transcript);
       addChatMessage('user', transcript);
-      await runAssistantCommandRef.current(transcript, { addUserMessage: false });
+      const handled = await runAssistantCommandRef.current(transcript, { addUserMessage: false, sessionId });
+      if (!handled) resumeVoiceCapture(sessionId);
     } catch (error) {
-      setVoiceError(error.message || 'Could not process the voice command.');
-      voiceModeRef.current = false;
-      setVoiceMode(false);
+      if (voiceSessionRef.current === sessionId) {
+        setVoiceError(error.message || 'Could not process the voice command. I am still listening.');
+        resumeVoiceCapture(sessionId, 700);
+      }
     } finally {
       setProcessingVoice(false);
     }
   };
 
   const startVoiceCapture = async () => {
-    if (!voiceModeRef.current || mediaRecorderRef.current?.state === 'recording') return;
+    if (!voiceModeRef.current || captureStartingRef.current || mediaRecorderRef.current?.state === 'recording') return;
+    const sessionId = voiceSessionRef.current;
+    captureStartingRef.current = true;
     if (!canRecordVoice) {
       setVoiceError('Voice mode needs microphone recording support in this browser. You can still type the command.');
       setVoiceMode(false);
       voiceModeRef.current = false;
+      captureStartingRef.current = false;
       return;
     }
     try {
       window.speechSynthesis?.cancel();
-      const stream = mediaStreamRef.current || await requestMicrophone();
+      const stream = mediaStreamRef.current?.getAudioTracks().some((track) => track.readyState === 'live')
+        ? mediaStreamRef.current : await requestMicrophone();
+      if (!voiceModeRef.current || voiceSessionRef.current !== sessionId) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       mediaStreamRef.current = stream;
       setMicrophoneState('ready');
       const chunks = [];
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
       const recorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = recorder;
+      forceSubmitRef.current = false;
+      let heardSpeech = false;
+      let source;
       recorder.ondataavailable = (event) => {
         if (event.data?.size) chunks.push(event.data);
       };
       recorder.onstop = () => {
         setListening(false);
         window.clearTimeout(silenceTimerRef.current);
+        window.clearTimeout(captureTimeoutRef.current);
         silenceTimerRef.current = null;
-        stream.getTracks().forEach((track) => track.stop());
-        if (mediaStreamRef.current === stream) mediaStreamRef.current = null;
-        audioContextRef.current?.close();
-        audioContextRef.current = null;
-        if (voiceModeRef.current) submitVoiceAudio(new Blob(chunks, { type: mimeType }));
+        captureTimeoutRef.current = null;
+        source?.disconnect();
+        if (mediaRecorderRef.current === recorder) mediaRecorderRef.current = null;
+        if (!voiceModeRef.current || voiceSessionRef.current !== sessionId) return;
+        const shouldSubmit = heardSpeech || forceSubmitRef.current;
+        forceSubmitRef.current = false;
+        if (shouldSubmit) submitVoiceAudio(new Blob(chunks, { type: mimeType }), sessionId);
+        else resumeVoiceCapture(sessionId, 150);
       };
 
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -730,10 +783,14 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       if (audioContext.state === 'suspended') await audioContext.resume();
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 1024;
-      const source = audioContext.createMediaStreamSource(stream);
+      source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
       const samples = new Uint8Array(analyser.fftSize);
-      let heardSpeech = false;
+      if (!voiceModeRef.current || voiceSessionRef.current !== sessionId) {
+        source.disconnect();
+        if (mediaRecorderRef.current === recorder) mediaRecorderRef.current = null;
+        return;
+      }
       const watchSilence = () => {
         if (!voiceModeRef.current || recorder.state !== 'recording') return;
         analyser.getByteTimeDomainData(samples);
@@ -750,17 +807,18 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
 
       setListening(true);
       recorder.start();
-      window.setTimeout(() => {
+      captureTimeoutRef.current = window.setTimeout(() => {
         if (recorder.state === 'recording') stopVoiceCapture();
       }, 14000);
       window.requestAnimationFrame(watchSilence);
     } catch (error) {
+      if (voiceSessionRef.current !== sessionId) return;
       const details = microphoneErrorDetails(error);
-      setListening(false);
-      setVoiceMode(false);
-      voiceModeRef.current = false;
+      stopVoiceMode();
       setMicrophoneState(details.state);
       setVoiceError(details.message);
+    } finally {
+      captureStartingRef.current = false;
     }
   };
 
@@ -883,7 +941,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
   const toggleListening = () => {
     setVoiceError('');
     if (listening) {
-      stopVoiceCapture();
+      stopVoiceCapture(true);
       return;
     }
     if (voiceModeRef.current) {
