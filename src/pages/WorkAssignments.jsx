@@ -153,6 +153,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
   const lastEmployeeRef = useRef('');
   const chatMessagesRef = useRef(chatMessages);
   const runAssistantCommandRef = useRef(null);
+  const autoStartVoiceRef = useRef(null);
   const commandBusyRef = useRef(false);
   const employeesRef = useRef(employees);
   const tasksRef = useRef(tasks);
@@ -204,6 +205,12 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
   useEffect(() => {
     voiceModeRef.current = voiceMode;
   }, [voiceMode]);
+
+  useEffect(() => {
+    if (!isVoicePage) return undefined;
+    const timer = window.setTimeout(() => autoStartVoiceRef.current?.(), 0);
+    return () => window.clearTimeout(timer);
+  }, [isVoicePage]);
 
   useEffect(() => {
     if (!isVoicePage || !navigator.mediaDevices?.enumerateDevices) return undefined;
@@ -530,10 +537,10 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     }, delay);
   };
 
-  const speak = async (message, { resumeAfter = true } = {}) => {
+  const speak = async (message, { resumeAfter = true, addMessage = true } = {}) => {
     const sessionId = voiceSessionRef.current;
     const controller = new AbortController();
-    addChatMessage('assistant', message);
+    if (addMessage) addChatMessage('assistant', message);
     try {
       window.speechSynthesis?.cancel();
       replyAudioRef.current?.pause();
@@ -580,7 +587,9 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       setSpeaking(false);
       if (voiceRequestRef.current === controller) voiceRequestRef.current = null;
       if (error.name === 'AbortError') return;
-      setVoiceError(error.message || 'ElevenLabs voice generation failed.');
+      setVoiceError(error.name === 'NotAllowedError'
+        ? 'Your browser blocked automatic audio. Allow sound for this site; I am still listening.'
+        : error.message || 'ElevenLabs voice generation failed.');
       if (resumeAfter) resumeVoiceCapture(sessionId);
     }
   };
@@ -937,6 +946,36 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       if (voiceModeRef.current && stream) startVoiceCapture();
     }
   };
+
+  const startVoiceSessionOnEntry = async () => {
+    if (voiceModeRef.current) return;
+    if (!canRecordVoice) {
+      setMicrophoneState('unsupported');
+      setVoiceError('Voice mode needs microphone recording support in this browser.');
+      return;
+    }
+    const sessionId = ++voiceSessionRef.current;
+    setVoiceError('');
+    voiceModeRef.current = true;
+    setVoiceMode(true);
+    try {
+      const stream = await requestMicrophone();
+      if (!voiceModeRef.current || voiceSessionRef.current !== sessionId) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      mediaStreamRef.current = stream;
+      setMicrophoneState('ready');
+      await speak(welcomeMessage.text, { addMessage: false });
+    } catch (error) {
+      if (voiceSessionRef.current !== sessionId) return;
+      const details = microphoneErrorDetails(error);
+      stopVoiceMode();
+      setMicrophoneState(details.state);
+      setVoiceError(details.message);
+    }
+  };
+  autoStartVoiceRef.current = startVoiceSessionOnEntry;
 
   const toggleListening = () => {
     setVoiceError('');
