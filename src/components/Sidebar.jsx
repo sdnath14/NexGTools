@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { X, Bell, Home, Search, Database, Settings, ChevronLeft, ChevronRight, FileSpreadsheet, Send, BarChart3, Table2, ClipboardList, Mic } from 'lucide-react';
+import { X, Bell, Home, Search, Database, Settings, ChevronLeft, ChevronRight, FileSpreadsheet, Send, BarChart3, Table2, ClipboardList, Mic, Users } from 'lucide-react';
 import Brand from './Brand';
 import { useNotifications } from '../notificationContext';
 
@@ -11,6 +11,7 @@ const navItems = [
   { path: '/business-outreach', label: 'Business Outreach', icon: Send, permission: 'outreach' },
   { path: '/notifications', label: 'Notifications', icon: Bell },
   { path: '/my-tasks', label: 'My Tasks', icon: ClipboardList },
+  { path: '/employee-db', label: 'Employee DB', icon: Users, adminOnly: true },
   { path: '/work-assignments', label: 'Work Assignments', icon: ClipboardList, permission: 'work_assignments' },
   { path: '/voice-agent', label: 'Voice Agent', icon: Mic, permission: 'work_assignments' },
   { path: '/data-library', label: 'Data Library', icon: Database, permission: 'data_library' },
@@ -61,6 +62,7 @@ const Sidebar = ({ user, collapsed, onToggle, permissions = [], isNexgAdmin = fa
   }, [isMobile, mobileOpen, onClose]);
   const isDashboard = pathname === '/';
   const visibleNavItems = navItems
+    .filter((item) => !item.adminOnly || isNexgAdmin)
     .filter((item) => isNexgAdmin || (item.permissions ? item.permissions.some((permission) => permissions.includes(permission)) : !item.permission || permissions.includes(item.permission)))
     .filter((item) => !(item.path === '/my-tasks' && isNexgAdmin));
 
@@ -77,7 +79,7 @@ const Sidebar = ({ user, collapsed, onToggle, permissions = [], isNexgAdmin = fa
       <nav className="sidebar-nav" ref={navRef}>
         <span className={`sidebar-active-indicator ${indicator ? 'sidebar-active-indicator-visible' : ''}`} aria-hidden="true" style={{ transform: `translateY(${indicator?.top || 0}px)`, height: indicator?.height || 43 }} />
         {[...visibleNavItems].sort((a, b) => {
-          const order = ['/', '/lead-search', '/business-outreach', '/work-assignments', '/voice-agent', '/data-library', '/data-analytics', '/notifications', '/my-tasks', '/lead-search/csv', '/used-oil-india'];
+          const order = ['/', '/lead-search', '/business-outreach', '/work-assignments', '/employee-db', '/voice-agent', '/data-library', '/data-analytics', '/notifications', '/my-tasks', '/lead-search/csv', '/used-oil-india'];
           return order.indexOf(a.path) - order.indexOf(b.path);
         }).map((item) => (
           <NavLink

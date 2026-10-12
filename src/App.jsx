@@ -8,6 +8,7 @@ import LeadSearch from './pages/LeadSearch';
 import BusinessSearch from './pages/BusinessSearch';
 import CsvHistory from './pages/CsvHistory';
 import AdminPage from './pages/AdminPage';
+import EmployeeDB from './pages/EmployeeDB';
 import AuthPage from './pages/AuthPage';
 import SettingsPage from './pages/SettingsPage';
 import DataLibrary from './pages/DataLibrary';
@@ -163,6 +164,7 @@ function App() {
               <Route path="/data-analytics" element={hasPermission('data_analytics') ? <DataAnalytics /> : <Navigate to="/" replace />} />
               <Route path="/used-oil-india" element={hasPermission('used_oil_india') ? <UsedOilIndia /> : <Navigate to="/" replace />} />
               <Route path="/settings" element={hasPermission('settings') ? <SettingsPage appearance={appearance} onAppearanceChange={updateAppearance} /> : <Navigate to="/" replace />} />
+              <Route path="/employee-db" element={user.is_nexg_admin ? <EmployeeDB onAdminUnlocked={setIsAdmin} /> : <Navigate to="/" replace />} />
               <Route path="/admin" element={<AdminPage onAdminUnlocked={setIsAdmin} />} />
             </Routes>
           </main>

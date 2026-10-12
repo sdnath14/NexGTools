@@ -634,6 +634,37 @@
   height: 34px;
 }
 
+.work-status-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  min-width: 145px;
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 1px solid;
+  border-radius: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.work-status-pending { background: #ef85b5; border-color: #ed65a3; color: #fff; }
+.work-status-in-progress { background: #e8f2ff; border-color: #cce3ff; color: #0866ee; }
+.work-status-done { background: #e7f6e9; border-color: #c9eacd; color: #23934c; }
+.work-status-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ed529a;
+}
+.work-status-in-progress .work-status-icon { background: #3896ff; }
+.work-status-done .work-status-icon { background: #5bc67e; }
+.work-status-button:hover:not(:disabled) { filter: brightness(.96); }
+.work-status-button:focus-visible { outline: 2px solid #1878c9; outline-offset: 3px; }
+.work-status-button:disabled { cursor: wait; opacity: .65; }
+
 .work-priority {
   display: inline-flex;
   align-items: center;

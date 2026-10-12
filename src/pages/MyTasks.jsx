@@ -3,6 +3,7 @@ import { CalendarDays, CheckCircle2, ClipboardList, LoaderCircle } from 'lucide-
 import { API_BASE_URL, AUTH_TOKEN_KEY, authHeaders } from '../auth';
 import './WorkAssignments.css';
 import TaskTiming from '../components/TaskTiming';
+import WorkStatusButton from '../components/WorkStatusButton';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 export default function MyTasks() {
@@ -114,7 +115,7 @@ export default function MyTasks() {
                     <td>{task.quantity}</td>
                     <td><CalendarDays size={14} /> {task.dueDate || '-'}</td>
                     <td><em className={`work-priority work-priority-${task.priority.toLowerCase()}`}>{task.priority}</em></td>
-                    <td><select value={task.status} onChange={(event) => updateStatus(task.id, event.target.value)}><option>Pending</option><option>In Progress</option><option>Done</option></select></td>
+                    <td><WorkStatusButton status={task.status} onChange={(status) => updateStatus(task.id, status)} /></td>
                     <td><TaskTiming task={task} /></td>
                   </tr>
                 ))}
