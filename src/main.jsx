@@ -4,6 +4,7 @@ import './index.css'
 import App from './App.jsx'
 import './redesign.css'
 import './sidebar-motion.css'
+import './employee-shell.css'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

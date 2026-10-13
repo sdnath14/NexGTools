@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 from backend.app import whatsapp_service
 
 
+
 class WhatsAppServiceTests(unittest.TestCase):
     def test_normalize_indian_numbers(self):
         for source in ("98765 43210", "+91 (98765) 43210", "09876543210"):
@@ -28,6 +29,8 @@ class WhatsAppServiceTests(unittest.TestCase):
             [parameter["text"] for parameter in post.call_args.kwargs["json"]["template"]["components"][0]["parameters"]],
             ["Rahul", "Contact BPCL", "2026-09-21"],
         )
+
+
 
     def test_missing_number_does_not_send(self):
         with patch.object(whatsapp_service.requests, "post") as post:

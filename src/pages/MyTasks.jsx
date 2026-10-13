@@ -1,132 +1,44 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, CheckCircle2, ClipboardList, LoaderCircle } from 'lucide-react';
-import { API_BASE_URL, AUTH_TOKEN_KEY, authHeaders } from '../auth';
-import './WorkAssignments.css';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { API_BASE_URL, authHeaders } from '../auth';
 import TaskTiming from '../components/TaskTiming';
 import TaskStatusButtons from '../components/TaskStatusButtons';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import './EmployeeWorkspace.css';
 
 export default function MyTasks() {
-  const [searchParams] = useSearchParams();
+  const [params] = useSearchParams();
   const navigate = useNavigate();
-  const selectedTaskId = searchParams.get('taskId');
   const [tasks, setTasks] = useState([]);
-  const [user, setUser] = useState(null);
+  const [filter, setFilter] = useState('All');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [updatingTaskIds, setUpdatingTaskIds] = useState([]);
-
+  const [busyId, setBusyId] = useState(null);
   useEffect(() => {
-    const loadTasks = async () => {
-      try {
-        if (localStorage.getItem(AUTH_TOKEN_KEY)) {
-          const meResponse = await fetch(`${API_BASE_URL}/api/auth/me`, { headers: authHeaders() });
-          const meData = await meResponse.json();
-          if (meResponse.ok) setUser(meData.user);
-        }
-        const response = await fetch(`${API_BASE_URL}/api/my-tasks`, { headers: authHeaders() });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || 'Could not load your tasks.');
-        setTasks(data.tasks || []);
-      } catch (loadError) {
-        setError(loadError.message || 'Could not load your tasks.');
-      } finally {
-        setLoading(false);
-      }
+    let live = true;
+    const load = async () => {
+      try { const response = await fetch(`${API_BASE_URL}/api/my-tasks`, { headers: authHeaders() }); const data = await response.json(); if (!response.ok) throw new Error(data.detail || 'Could not load tasks.'); if (live) { setTasks(data.tasks || []); setError(''); } }
+      catch (err) { if (live) setError(err.message); }
+      finally { if (live) setLoading(false); }
     };
-    loadTasks();
-    const timer = window.setInterval(loadTasks, 10000);
-    return () => window.clearInterval(timer);
+    load(); const timer = window.setInterval(load, 10000);
+    return () => { live = false; window.clearInterval(timer); };
   }, []);
-
-  useEffect(() => {
-    if (loading || !selectedTaskId) return;
-    document.getElementById(`task-${selectedTaskId}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    let active = true;
-    const markSeen = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks/${selectedTaskId}/seen`, { method: 'POST', headers: authHeaders() });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || 'Could not mark task as seen.');
-        if (active) setTasks((current) => current.map((task) => String(task.id) === selectedTaskId ? { ...task, seenAt: data.seenAt } : task));
-        window.dispatchEvent(new Event('nexg-notifications-refresh'));
-      } catch (err) { if (active) setError(err.message); }
-    };
-    markSeen();
-    return () => { active = false; };
-  }, [loading, selectedTaskId]);
-
-  const summary = useMemo(() => ({
-    pending: tasks.filter((task) => task.status === 'Pending').length,
-    progress: tasks.filter((task) => task.status === 'In Progress').length,
-    done: tasks.filter((task) => task.status === 'Done').length,
-  }), [tasks]);
-
-  const isAdminView = Boolean(user?.is_nexg_admin);
-
-  const updateStatus = async (taskId, status) => {
-    if (updatingTaskIds.includes(taskId)) return;
-    setUpdatingTaskIds((current) => [...current, taskId]);
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks/${taskId}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ status }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.detail || 'Could not update task status.');
-      setTasks((current) => current.map((task) => task.id === taskId ? { ...task, ...data.task } : task));
-      setError('');
-      window.dispatchEvent(new Event('nexg-notifications-refresh'));
-    } catch (statusError) {
-      setError(statusError.message || 'Could not update task status.');
-    } finally {
-      setUpdatingTaskIds((current) => current.filter((id) => id !== taskId));
-    }
+  useEffect(() => { const id = params.get('taskId'); if (id && !loading) navigate(`/my-tasks/${encodeURIComponent(id)}`, { replace: true }); }, [params, loading, navigate]);
+  const shown = useMemo(() => tasks.filter((task) => filter === 'All' || task.status === filter), [tasks, filter]);
+  const update = async (id, status) => {
+    setBusyId(id);
+    try { const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks/${id}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ status }) }); const data = await response.json(); if (!response.ok) throw new Error(data.detail || 'Could not update status.'); setTasks((current) => current.map((task) => task.id === id ? { ...task, ...data.task } : task)); setError(''); window.dispatchEvent(new Event('nexg-notifications-refresh')); }
+    catch (err) { setError(err.message); } finally { setBusyId(null); }
   };
-
-  return (
-    <div className="work-page">
-      <header className="work-hero">
-        <div>
-          <span>Employee Task Bar</span>
-          <h1>{isAdminView ? 'Work Assignments' : 'My assigned work'}</h1>
-          <p>{isAdminView ? 'Admin can review every employee task from this task bar.' : 'Tasks assigned to your employee profile appear here when your login email matches the employee email.'}</p>
-        </div>
-        <div className="work-hero-stats">
-          <div><ClipboardList size={18} /><strong>{tasks.length}</strong><small>Total</small></div>
-          <div><LoaderCircle size={18} /><strong>{summary.progress}</strong><small>In Progress</small></div>
-          <div><CheckCircle2 size={18} /><strong>{summary.done}</strong><small>Done</small></div>
-        </div>
-      </header>
-
-      <section className="work-table-panel">
-        <div className="work-table-toolbar">
-          <div><h2>Task Bar</h2><p>{summary.pending} pending · {summary.progress} in progress · {summary.done} done</p></div>
-        </div>
-        {error && <p className="work-inline-error">{error}</p>}
-        {loading ? <div className="work-empty">Loading tasks...</div> : (
-          <div className="work-table-scroll">
-            <table className="work-table">
-              <thead><tr>{isAdminView && <th>Employee</th>}<th>Task</th><th>Qty</th><th>Due</th><th>Priority</th><th>Status</th><th>Time / Seen</th></tr></thead>
-              <tbody>
-                {tasks.map((task) => (
-                  <tr key={task.id} id={`task-${task.id}`} className={String(task.id) === selectedTaskId ? 'notification-task-highlight' : ''}>
-                    {isAdminView && <td><strong>{task.employeeName || '-'}</strong><small>{task.employeeEmail || ''}</small></td>}
-                    <td><button type="button" className="task-open-button" onClick={() => navigate(`/my-tasks?taskId=${encodeURIComponent(task.id)}`)}>{task.title}</button>{task.notes && <small>{task.notes}</small>}</td>
-                    <td>{task.quantity}</td>
-                    <td><CalendarDays size={14} /> {task.dueDate || '-'}</td>
-                    <td><em className={`work-priority work-priority-${task.priority.toLowerCase()}`}>{task.priority}</em></td>
-                    <td><TaskStatusButtons status={task.status} onChange={(status) => updateStatus(task.id, status)} disabled={updatingTaskIds.includes(task.id)} /></td>
-                    <td><TaskTiming task={task} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!tasks.length && <div className="work-empty">No tasks have been assigned to your login yet.</div>}
-          </div>
-        )}
-      </section>
-    </div>
-  );
+  return <div className="employee-tasks">
+    <nav className="employee-page-nav"><Link to="/">← Dashboard</Link><span>My Tasks</span></nav>
+    <div className="employee-tasks-header"><div><small>YOUR WORK</small><h1>Total Tasks ({tasks.length})</h1></div><Link to="/notifications">🔔 Notifications</Link></div>
+    <div className="employee-task-filters">{['All', 'Pending', 'In Progress', 'Done'].map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item} ({item === 'All' ? tasks.length : tasks.filter((task) => task.status === item).length})</button>)}</div>
+    {error && <p className="employee-message error" role="alert">{error}</p>}
+    {loading ? <p className="employee-message">Loading tasks...</p> : !shown.length ? <p className="employee-message">No tasks in this view yet.</p> : <div className="employee-task-grid">{shown.map((task, index) => <article key={task.id} className={`employee-task-card status-${task.status.replaceAll(' ', '-')}`}>
+      <TaskTiming task={task} /><h2>Task {tasks.length - index}</h2><small>{task.priority} priority · Due {task.dueDate || 'not set'}</small><p>{task.title}</p>{task.notes && <p>{task.notes}</p>}
+      <Link className="employee-task-open" to={`/my-tasks/${task.id}`}>Open task & report</Link>
+      <TaskStatusButtons status={task.status} onChange={(status) => update(task.id, status)} disabled={busyId === task.id} />
+    </article>)}</div>}
+  </div>;
 }

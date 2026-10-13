@@ -14,6 +14,7 @@ import re
 import smtplib
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -167,6 +168,16 @@ def config_status() -> dict[str, object]:
 def ensure_work_assignment_tables() -> None:
     with db_connection() as connection:
         with connection.cursor() as cursor:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS employee_profiles (
+                    user_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+                    employee_code VARCHAR(80) NOT NULL DEFAULT '',
+                    company VARCHAR(255) NOT NULL DEFAULT '',
+                    job_title VARCHAR(160) NOT NULL DEFAULT '',
+                    tool_permissions_json JSON NULL,
+                    CONSTRAINT fk_employee_profile_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS work_employees (
@@ -254,6 +265,21 @@ def ensure_work_assignment_tables() -> None:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS work_task_reports (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    task_id BIGINT UNSIGNED NOT NULL,
+                    author_user_id BIGINT UNSIGNED NOT NULL,
+                    message TEXT NOT NULL,
+                    link_url TEXT NULL,
+                    file_name VARCHAR(255) NULL,
+                    stored_name VARCHAR(80) NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_task_reports_task (task_id, created_at),
+                    CONSTRAINT fk_task_report_task FOREIGN KEY (task_id) REFERENCES work_tasks(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_task_report_author FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS fcm_device_tokens (
@@ -583,6 +609,13 @@ class RoleRequest(BaseModel):
 
 class UserRoleRequest(BaseModel):
     role_id: int
+
+
+class EmployeeProfileRequest(BaseModel):
+    employee_code: str = ''
+    company: str = ''
+    job_title: str = ''
+    tool_permissions: list[str] | None = None
 
 
 class CsvExportRequest(BaseModel):
@@ -1971,7 +2004,8 @@ def create_work_task(
     if not title:
         raise HTTPException(status_code=400, detail="Task title is required.")
     priority = payload.priority if payload.priority in {"Low", "Medium", "High"} else "Medium"
-    status = payload.status if payload.status in {"Pending", "In Progress", "Done"} else "Pending"
+    # Assignment starts pending; only the assigned employee advances it.
+    status = "Pending"
     due_date = payload.due_date.strip() or None
     with db_connection() as connection:
         with connection.cursor() as cursor:
@@ -2157,6 +2191,8 @@ def update_work_task_status(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     user = _require_user(authorization)
+    if user.get("is_nexg_admin"):
+        raise HTTPException(status_code=403, detail="Task progress is updated by the assigned employee.")
     status = payload.status if payload.status in {"Pending", "In Progress", "Done"} else ""
     if not status:
         raise HTTPException(status_code=400, detail="Invalid task status.")
@@ -2170,10 +2206,11 @@ def update_work_task_status(
                 JOIN work_employees ON work_employees.id = work_tasks.employee_id
                 LEFT JOIN work_task_assignees ON work_task_assignees.task_id = work_tasks.id
                 WHERE work_tasks.id = %s
-                  AND (work_tasks.created_by_user_id = %s OR work_task_assignees.user_id = %s OR work_tasks.employee_user_id = %s OR %s)
+                  AND (work_task_assignees.user_id = %s OR work_tasks.employee_user_id = %s
+                       OR LOWER(work_employees.email) = %s)
                 LIMIT 1 FOR UPDATE
                 """,
-                (task_id, user["id"], user["id"], user["id"], bool(user.get("is_nexg_admin"))),
+                (task_id, user["id"], user["id"], (user.get("email") or "").strip().lower()),
             )
             task = cursor.fetchone()
             if not task:
@@ -2343,6 +2380,108 @@ def my_work_tasks(authorization: str | None = Header(default=None)) -> dict[str,
             )
             tasks = [_work_task_row(row) for row in cursor.fetchall()]
     return {"tasks": tasks}
+
+
+def _accessible_task(cursor: Any, task_id: int, user: dict[str, Any]) -> dict[str, Any]:
+    cursor.execute("""
+        SELECT work_tasks.id, work_tasks.title, work_tasks.created_by_user_id,
+               work_tasks.employee_user_id, work_employees.email AS employee_email,
+               EXISTS(SELECT 1 FROM work_task_assignees
+                      WHERE task_id = work_tasks.id AND user_id = %s) AS assigned
+        FROM work_tasks JOIN work_employees ON work_employees.id = work_tasks.employee_id
+        WHERE work_tasks.id = %s AND (
+            work_tasks.created_by_user_id = %s OR work_tasks.employee_user_id = %s
+            OR LOWER(work_employees.email) = %s OR %s
+            OR EXISTS(SELECT 1 FROM work_task_assignees WHERE task_id = work_tasks.id AND user_id = %s)
+        )
+    """, (user["id"], task_id, user["id"], user["id"], user["email"].strip().lower(), bool(user.get("is_nexg_admin")), user["id"]))
+    task = cursor.fetchone()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    return task
+
+
+def _report_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {"id": row["id"], "taskId": str(row["task_id"]), "author": row["author_name"],
+            "message": row["message"], "linkUrl": row.get("link_url") or "",
+            "fileName": row.get("file_name") or "", "createdAt": row["created_at"].isoformat()}
+
+
+@app.get("/api/my-tasks/{task_id}/reports")
+def task_reports(task_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            _accessible_task(cursor, task_id, user)
+            cursor.execute("""SELECT work_task_reports.*, users.name AS author_name FROM work_task_reports
+                           JOIN users ON users.id = work_task_reports.author_user_id
+                           WHERE task_id = %s ORDER BY work_task_reports.id DESC""", (task_id,))
+            return {"reports": [_report_row(row) for row in cursor.fetchall()]}
+
+
+@app.post("/api/my-tasks/{task_id}/reports", status_code=201)
+async def submit_task_report(task_id: int, request: FastAPIRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    if user.get("is_nexg_admin"):
+        raise HTTPException(status_code=403, detail="Reports are submitted by the assigned employee.")
+    form = await request.form()
+    message = str(form.get("message") or "").strip()
+    link_url = str(form.get("link_url") or "").strip()
+    file = form.get("file")
+    if link_url and (urlparse(link_url).scheme not in ("http", "https") or not urlparse(link_url).netloc):
+        raise HTTPException(status_code=400, detail="Enter a valid http or https link.")
+    if len(message) > 10000 or len(link_url) > 2000:
+        raise HTTPException(status_code=400, detail="Report text is too long.")
+    content = await file.read(10 * 1024 * 1024 + 1) if file is not None and hasattr(file, "read") else None
+    if not (message or link_url or content):
+        raise HTTPException(status_code=400, detail="Add a message, link, or file.")
+    if content is not None and len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Files must be 10 MB or smaller.")
+    file_name = Path((file.filename or "attachment").replace("\\", "/")).name[:255] if content is not None else None
+    stored_name = uuid.uuid4().hex if content is not None else None
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            task = _accessible_task(cursor, task_id, user)
+            if not (task["assigned"] or task["employee_user_id"] == user["id"]
+                    or (task.get("employee_email") or "").strip().lower() == user["email"].strip().lower()):
+                raise HTTPException(status_code=403, detail="Only the assigned employee can send a report.")
+            if content is not None:
+                upload_dir = Path(__file__).resolve().parent.parent / "task_uploads"
+                upload_dir.mkdir(parents=True, exist_ok=True)
+                (upload_dir / stored_name).write_bytes(content)
+            cursor.execute("""INSERT INTO work_task_reports (task_id, author_user_id, message, link_url, file_name, stored_name)
+                           VALUES (%s, %s, %s, %s, %s, %s)""",
+                           (task_id, user["id"], message, link_url or None, file_name, stored_name))
+            report_id = cursor.lastrowid
+            recipients = {int(task["created_by_user_id"]), int(task["employee_user_id"] or 0)} - {0, int(user["id"])}
+            admin_id = _default_admin_user_id(cursor)
+            if admin_id and admin_id != user["id"]:
+                recipients.add(admin_id)
+            for recipient in recipients:
+                cursor.execute("""INSERT INTO work_task_notifications
+                               (task_id, recipient_user_id, actor_user_id, event_type, message)
+                               VALUES (%s, %s, %s, 'task_report', %s)""",
+                               (task_id, recipient, user["id"], f"{user['name']} sent an update for {task['title']}"))
+            cursor.execute("""SELECT work_task_reports.*, users.name AS author_name FROM work_task_reports
+                           JOIN users ON users.id = work_task_reports.author_user_id WHERE work_task_reports.id = %s""", (report_id,))
+            report = _report_row(cursor.fetchone())
+    return {"report": report}
+
+
+@app.get("/api/my-tasks/{task_id}/reports/{report_id}/file")
+def download_task_report_file(task_id: int, report_id: int, authorization: str | None = Header(default=None)) -> FileResponse:
+    user = _require_user(authorization)
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            _accessible_task(cursor, task_id, user)
+            cursor.execute("SELECT file_name, stored_name FROM work_task_reports WHERE id = %s AND task_id = %s", (report_id, task_id))
+            report = cursor.fetchone()
+    if not report or not report.get("stored_name"):
+        raise HTTPException(status_code=404, detail="File not found.")
+    path = Path(__file__).resolve().parent.parent / "task_uploads" / report["stored_name"]
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found.")
+    return FileResponse(path, filename=report["file_name"], media_type="application/octet-stream")
 
 
 @app.post("/api/work-assignments/voice/speak")
@@ -3567,6 +3706,31 @@ def admin_roles(authorization: str | None = Header(default=None), x_admin_token:
 def admin_users_with_roles(authorization: str | None = Header(default=None), x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     _require_admin(authorization, x_admin_token)
     return {"users": list_users_with_roles()}
+
+
+@app.put("/api/admin/users/{user_id}/employee-profile")
+def admin_save_employee_profile(user_id: int, payload: EmployeeProfileRequest,
+                                authorization: str | None = Header(default=None),
+                                x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_admin(authorization, x_admin_token)
+    from .database import TOOL_PERMISSIONS
+    if payload.tool_permissions is not None and any(item not in TOOL_PERMISSIONS for item in payload.tool_permissions):
+        raise HTTPException(status_code=400, detail="Unknown tool permission.")
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT email FROM users WHERE id = %s", (user_id,))
+            target = cursor.fetchone()
+            if not target:
+                raise HTTPException(status_code=404, detail="Employee not found.")
+            if target["email"].strip().lower() == settings.default_login_email.strip().lower():
+                raise HTTPException(status_code=400, detail="The NexG Admin profile cannot be restricted.")
+            cursor.execute("""INSERT INTO employee_profiles (user_id, employee_code, company, job_title, tool_permissions_json)
+                           VALUES (%s, %s, %s, %s, %s)
+                           ON DUPLICATE KEY UPDATE employee_code = VALUES(employee_code), company = VALUES(company),
+                           job_title = VALUES(job_title), tool_permissions_json = VALUES(tool_permissions_json)""",
+                           (user_id, payload.employee_code.strip()[:80], payload.company.strip()[:255],
+                            payload.job_title.strip()[:160], json.dumps(payload.tool_permissions) if payload.tool_permissions is not None else None))
+    return {"updated": True}
 
 
 @app.post("/api/admin/roles")

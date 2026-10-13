@@ -941,7 +941,9 @@ def create_user(name: str, email: str, password_salt: str, password_hash: str) -
                 (name, email, password_salt, password_hash),
             )
             user_id = cursor.lastrowid
-            return {"id": user_id, "name": name, "email": email, "role": "Member", "permissions": TOOL_PERMISSIONS}
+            cursor.execute("INSERT INTO employee_profiles (user_id, tool_permissions_json) VALUES (%s, %s)",
+                           (user_id, json.dumps([])))
+            return {"id": user_id, "name": name, "email": email, "role": "Member", "permissions": []}
 
 
 def ensure_default_user(name: str, email: str, password: str) -> None:
@@ -1091,10 +1093,13 @@ def get_user_by_token(token: str) -> dict[str, Any] | None:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT users.id, users.name, users.email, roles.name AS role, roles.permissions_json
+                SELECT users.id, users.name, users.email, roles.name AS role, roles.permissions_json,
+                       employee_profiles.employee_code, employee_profiles.company,
+                       employee_profiles.job_title, employee_profiles.tool_permissions_json
                 FROM user_sessions
                 JOIN users ON users.id = user_sessions.user_id
                 LEFT JOIN roles ON roles.id = users.role_id
+                LEFT JOIN employee_profiles ON employee_profiles.user_id = users.id
                 WHERE user_sessions.token = %s
                 """,
                 (token,),
@@ -1104,8 +1109,10 @@ def get_user_by_token(token: str) -> dict[str, Any] | None:
         value = user.pop("permissions_json", None)
         is_nexg_admin = user.get("email", "").strip().lower() == settings.default_login_email.strip().lower()
         user["is_nexg_admin"] = is_nexg_admin
-        user["permissions"] = TOOL_PERMISSIONS if is_nexg_admin else (json.loads(value) if isinstance(value, str) else (value or TOOL_PERMISSIONS))
-        user["role"] = "NexG Admin" if is_nexg_admin else (user.get("role") or "Member")
+        override = user.pop("tool_permissions_json", None)
+        role_permissions = json.loads(value) if isinstance(value, str) else value
+        user["permissions"] = TOOL_PERMISSIONS if is_nexg_admin else (json.loads(override) if isinstance(override, str) else override if override is not None else role_permissions if role_permissions is not None else TOOL_PERMISSIONS)
+        user["role"] = "NexG Admin" if is_nexg_admin else (user.get("job_title") or user.get("role") or "Employee")
     return user
 
 
@@ -1127,11 +1134,17 @@ def list_users_with_roles() -> list[dict[str, Any]]:
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT users.id, users.name, users.email, users.role_id, roles.name AS role, "
+                "employee_profiles.employee_code, employee_profiles.company, employee_profiles.job_title, employee_profiles.tool_permissions_json, "
                 "LOWER(users.email) = %s AS is_nexg_admin "
-                "FROM users LEFT JOIN roles ON roles.id = users.role_id ORDER BY users.name, users.id",
+                "FROM users LEFT JOIN roles ON roles.id = users.role_id "
+                "LEFT JOIN employee_profiles ON employee_profiles.user_id = users.id ORDER BY users.name, users.id",
                 (settings.default_login_email.strip().lower(),),
             )
-            return cursor.fetchall()
+            users = cursor.fetchall()
+    for user in users:
+        override = user.pop("tool_permissions_json", None)
+        user["tool_permissions"] = json.loads(override) if isinstance(override, str) else override
+    return users
 
 
 def set_user_role(user_id: int, role_id: int) -> dict[str, Any]:

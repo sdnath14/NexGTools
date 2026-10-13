@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { AlertCircle, Database, KeyRound, RefreshCcw, Save, ShieldCheck, Table2, Trash2, UserPlus } from 'lucide-react';
 import '../AdminPage.css';
 import { ADMIN_TOKEN_KEY, API_BASE_URL, adminHeaders, authHeaders } from '../auth';
@@ -34,6 +35,10 @@ const AdminPage = ({ onAdminUnlocked }) => {
   const [permissions, setPermissions] = useState([]);
   const [newRole, setNewRole] = useState({ name: '', permissions: [] });
   const [editingRole, setEditingRole] = useState(null);
+  const [editingEmployee, setEditingEmployee] = useState(null);
+  const [employeeDraft, setEmployeeDraft] = useState(null);
+  const [taskDraft, setTaskDraft] = useState({ employee_id: '', title: '', notes: '', due_date: '', priority: 'Medium' });
+  const [success, setSuccess] = useState('');
 
   const selectedOverview = useMemo(
     () => overview.find((table) => table.name === activeTable),
@@ -277,6 +282,34 @@ const AdminPage = ({ onAdminUnlocked }) => {
     } catch (err) { setError(err.message || 'Could not delete role.'); } finally { setBusy(false); }
   };
 
+  const saveEmployee = async (event) => {
+    event.preventDefault(); setBusy(true); setError(''); setSuccess('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/users/${editingEmployee}/employee-profile`, {
+        method: 'PUT', headers: requestHeaders(), body: JSON.stringify(employeeDraft),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not save employee.');
+      await loadAccessControl(); setEditingEmployee(null); setSuccess('Employee details and tool access saved.');
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
+
+  const assignQuickTask = async (event) => {
+    event.preventDefault(); setBusy(true); setError(''); setSuccess('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ employee_id: Number(taskDraft.employee_id), title: taskDraft.title,
+          notes: taskDraft.notes, due_date: taskDraft.due_date, priority: taskDraft.priority,
+          quantity: 1, status: 'Pending' }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not assign task.');
+      setTaskDraft({ employee_id: '', title: '', notes: '', due_date: '', priority: 'Medium' });
+      setSuccess('Task assigned. The employee will see it on their dashboard and in notifications.');
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
+
   const assignRole = async (userId, roleId) => {
     setBusy(true); setError('');
     try {
@@ -335,12 +368,44 @@ const AdminPage = ({ onAdminUnlocked }) => {
         </button>
       </div>
 
+      <Link className="admin-work-review-link" to="/team-work">Review employee progress, reports and files →</Link>
+
       {error && (
         <div className="admin-error">
           <AlertCircle size={18} />
           <span>{error}</span>
         </div>
       )}
+      {success && <div className="admin-success" role="status">{success}</div>}
+
+      <section className="employee-admin-grid" aria-label="Employee work administration">
+        <article className="employee-admin-card employee-policy-card">
+          <span className="employee-admin-kicker">Team handbook</span><h2>Working policy</h2>
+          <strong>Monday to Saturday</strong>
+          <p>Monday to Friday<br />10:00 am – 7:00 pm</p>
+          <p>Saturday<br />10:00 am – 5:00 pm</p>
+          <small>Task time begins when an employee marks a task In Progress.</small>
+        </article>
+        <form className="employee-admin-card employee-assign-card" onSubmit={assignQuickTask}>
+          <span className="employee-admin-kicker">Daily work</span><h2>Assign a task</h2>
+          <label>Employee<select required value={taskDraft.employee_id} onChange={(event) => setTaskDraft((value) => ({ ...value, employee_id: event.target.value }))}><option value="">Select employee</option>{workspaceUsers.filter((item) => !item.is_nexg_admin).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <label>Work type / title<input required value={taskDraft.title} onChange={(event) => setTaskDraft((value) => ({ ...value, title: event.target.value }))} placeholder="e.g. Design UI" /></label>
+          <label>Work details<textarea value={taskDraft.notes} onChange={(event) => setTaskDraft((value) => ({ ...value, notes: event.target.value }))} placeholder="What should be done?" /></label>
+          <div className="employee-admin-inline"><label>Expiry date<input type="date" value={taskDraft.due_date} onChange={(event) => setTaskDraft((value) => ({ ...value, due_date: event.target.value }))} /></label><label>Priority<select value={taskDraft.priority} onChange={(event) => setTaskDraft((value) => ({ ...value, priority: event.target.value }))}><option>Low</option><option>Medium</option><option>High</option></select></label></div>
+          <button type="submit" disabled={busy}>Assign task</button>
+        </form>
+        <article className="employee-admin-card employee-profile-card">
+          <span className="employee-admin-kicker">Admin access</span><h2>Employee details & tools</h2>
+          <label>Employee<select value={editingEmployee || ''} onChange={(event) => { const id = Number(event.target.value); const item = workspaceUsers.find((entry) => entry.id === id); setEditingEmployee(id || null); setEmployeeDraft(item ? { employee_code: item.employee_code || '', company: item.company || '', job_title: item.job_title || '', tool_permissions: item.tool_permissions ?? roles.find((role) => role.id === item.role_id)?.permissions ?? [] } : null); }}><option value="">Select employee</option>{workspaceUsers.filter((item) => !item.is_nexg_admin).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          {employeeDraft && <form onSubmit={saveEmployee}>
+            <label>Employee ID<input value={employeeDraft.employee_code} onChange={(event) => setEmployeeDraft((value) => ({ ...value, employee_code: event.target.value }))} placeholder="EMP-2026-01" /></label>
+            <label>Company<input value={employeeDraft.company} onChange={(event) => setEmployeeDraft((value) => ({ ...value, company: event.target.value }))} /></label>
+            <label>Role / job title<input value={employeeDraft.job_title} onChange={(event) => setEmployeeDraft((value) => ({ ...value, job_title: event.target.value }))} /></label>
+            <div className="employee-tool-picker"><strong>Tools this employee can access</strong>{permissions.filter((permission) => !['dashboard'].includes(permission)).map((permission) => <label key={permission}><input type="checkbox" checked={employeeDraft.tool_permissions.includes(permission)} onChange={() => setEmployeeDraft((value) => ({ ...value, tool_permissions: value.tool_permissions.includes(permission) ? value.tool_permissions.filter((item) => item !== permission) : [...value.tool_permissions, permission] }))} /> {permissionLabel(permission)}</label>)}</div>
+            <button type="submit" disabled={busy}>Save employee</button>
+          </form>}
+        </article>
+      </section>
 
       <form className="admin-create-user" onSubmit={createUser}>
         <div>
@@ -354,7 +419,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
       </form>
 
       <section className="admin-access-control">
-        <div><h2>Roles & tool access</h2><p>Choose exactly which tools each role can use. Edit a role to grant or revoke access for every user assigned to it.</p></div>
+        <div><h2>Roles & tool access</h2><p>Set role defaults here. Employee-specific choices above take priority for that employee.</p></div>
         <form onSubmit={createRole} className="admin-role-form">
           <input value={newRole.name} onChange={(event) => setNewRole((value) => ({ ...value, name: event.target.value }))} placeholder="New role name" required />
           <div className="admin-permission-list">{permissions.map((permission) => <label key={permission}><input type="checkbox" checked={newRole.permissions.includes(permission)} onChange={() => setNewRole((value) => ({ ...value, permissions: value.permissions.includes(permission) ? value.permissions.filter((item) => item !== permission) : [...value.permissions, permission] }))} /> {permissionLabel(permission)}</label>)}</div>

@@ -12,6 +12,7 @@ const navItems = [
   { path: '/notifications', label: 'Notifications', icon: Bell },
   { path: '/my-tasks', label: 'My Tasks', icon: ClipboardList },
   { path: '/work-assignments', label: 'Work Assignments', icon: ClipboardList, permission: 'work_assignments' },
+  { path: '/team-work', label: 'Employee Work', icon: ClipboardList, adminOnly: true },
   { path: '/voice-agent', label: 'Voice Agent', icon: Mic, permission: 'work_assignments' },
   { path: '/data-library', label: 'Data Library', icon: Database, permission: 'data_library' },
   { path: '/data-analytics', label: 'Analytics', icon: BarChart3, permission: 'data_analytics' },
@@ -61,7 +62,7 @@ const Sidebar = ({ user, collapsed, onToggle, permissions = [], isNexgAdmin = fa
   }, [isMobile, mobileOpen, onClose]);
   const isDashboard = pathname === '/';
   const visibleNavItems = navItems
-    .filter((item) => isNexgAdmin || (item.permissions ? item.permissions.some((permission) => permissions.includes(permission)) : !item.permission || permissions.includes(item.permission)))
+    .filter((item) => isNexgAdmin || (!item.adminOnly && (item.permissions ? item.permissions.some((permission) => permissions.includes(permission)) : !item.permission || permissions.includes(item.permission))))
     .filter((item) => !(item.path === '/my-tasks' && isNexgAdmin));
 
   return (
@@ -77,13 +78,13 @@ const Sidebar = ({ user, collapsed, onToggle, permissions = [], isNexgAdmin = fa
       <nav className="sidebar-nav" ref={navRef}>
         <span className={`sidebar-active-indicator ${indicator ? 'sidebar-active-indicator-visible' : ''}`} aria-hidden="true" style={{ transform: `translateY(${indicator?.top || 0}px)`, height: indicator?.height || 43 }} />
         {[...visibleNavItems].sort((a, b) => {
-          const order = ['/', '/lead-search', '/business-outreach', '/work-assignments', '/voice-agent', '/data-library', '/data-analytics', '/notifications', '/my-tasks', '/lead-search/csv', '/used-oil-india'];
+          const order = ['/', '/lead-search', '/business-outreach', '/work-assignments', '/team-work', '/voice-agent', '/data-library', '/data-analytics', '/notifications', '/my-tasks', '/lead-search/csv', '/used-oil-india'];
           return order.indexOf(a.path) - order.indexOf(b.path);
         }).map((item) => (
           <NavLink
             key={item.path}
             to={item.path}
-            end
+            end={item.path === '/'}
             className={({ isActive }) => `sidebar-link ${isActive ? 'sidebar-link-active' : ''} ${item.path === '/notifications' ? 'sidebar-notification-link' : ''}`}
             title={item.label}
             onClick={isMobile ? onClose : undefined}

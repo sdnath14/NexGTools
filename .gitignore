@@ -15,6 +15,7 @@ node_modules
 .mysql-run/
 .data/
 .knowledge-uploads/
+backend/task_uploads/
 backend/app/Data/
 *.cleaned.json
 __pycache__/

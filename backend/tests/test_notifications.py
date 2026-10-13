@@ -40,7 +40,7 @@ class NotificationTests(unittest.TestCase):
         for status in ["In Progress", "Done"]:
             with self.subTest(status=status):
                 self.cursor.reset_mock()
-                self.cursor.fetchone.return_value = {"id": 3, "title": "Prepare report", "status": "Pending",
+                self.cursor.fetchone.return_value = {"id": 3, "title": "Prepare report", "status": "In Progress" if status == "Done" else "Pending",
                     "created_by_user_id": 1, "employee_user_id": 7}
                 background = BackgroundTasks()
                 with patch.object(main, "_require_user", return_value=self.user), patch.object(main, "db_connection", return_value=self.connection), patch.object(main, "_default_admin_user_id", return_value=1):
@@ -50,6 +50,8 @@ class NotificationTests(unittest.TestCase):
                 self.assertEqual(inserts[0].args[1][:3], (3, 1, 7))
                 self.assertIn(status, inserts[0].args[1][-1])
                 self.assertEqual(background.tasks[0].args[0], [1])
+
+
 
     def test_unchanged_status_does_not_duplicate_alert(self):
         self.cursor.fetchone.return_value = {"id": 3, "title": "Report", "status": "Done", "created_by_user_id": 1}
@@ -65,6 +67,12 @@ class NotificationTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as error:
                 main.update_work_task_status(3, main.WorkTaskStatusRequest(status="Done"), BackgroundTasks(), authorization="Bearer test")
         self.assertEqual(error.exception.status_code, 404)
+
+    def test_admin_cannot_change_employee_progress(self):
+        with patch.object(main, "_require_user", return_value={"id": 1, "is_nexg_admin": True}):
+            with self.assertRaises(HTTPException) as error:
+                main.update_work_task_status(3, main.WorkTaskStatusRequest(status="Done"), BackgroundTasks())
+        self.assertEqual(error.exception.status_code, 403)
 
     def test_assignment_is_persisted_before_push_is_queued(self):
         self.cursor.lastrowid = 42

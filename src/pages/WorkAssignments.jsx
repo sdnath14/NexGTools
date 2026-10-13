@@ -1,6 +1,5 @@
 import VoiceAgentPanel from '../components/VoiceAgentPanel';
 import TaskTiming from '../components/TaskTiming';
-import TaskStatusButtons from '../components/TaskStatusButtons';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -116,19 +115,6 @@ const realtimeTools = [
       required: ['employee_id', 'task_title'],
     },
   },
-  {
-    type: 'function',
-    name: 'update_task_status',
-    description: 'Update the status of an existing task using its exact task ID.',
-    parameters: {
-      type: 'object',
-      properties: {
-        task_id: { type: 'string', description: 'The exact task ID from the provided task list.' },
-        status: { type: 'string', enum: ['Pending', 'In Progress', 'Done'] },
-      },
-      required: ['task_id', 'status'],
-    },
-  },
 ];
 
 export default function WorkAssignments({ userId, mode = 'tasks' }) {
@@ -148,7 +134,6 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
   const [voiceError, setVoiceError] = useState('');
   const [microphoneState, setMicrophoneState] = useState(canRecordVoice ? 'checking' : 'unsupported');
   const [syncError, setSyncError] = useState('');
-  const [updatingTaskIds, setUpdatingTaskIds] = useState([]);
   const [assignmentNotice, setAssignmentNotice] = useState('');
   const mediaRecorderRef = useRef(null);
   const mediaStreamRef = useRef(null);
@@ -317,8 +302,6 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     if (!taskDraft.employeeId || !normalize(taskDraft.title)) return;
     const nextTask = { ...taskDraft, title: normalize(taskDraft.title), quantity: Math.max(1, Number(taskDraft.quantity) || 1), notes: normalize(taskDraft.notes) };
     if (editingTaskId) {
-      const original = tasks.find((task) => task.id === editingTaskId);
-      if (original && original.status !== nextTask.status && !(await updateTaskStatus(editingTaskId, nextTask.status))) return;
       setTasks((current) => current.map((task) => task.id === editingTaskId ? { ...task, ...nextTask } : task));
     } else {
       try {
@@ -369,28 +352,6 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     setEditingTaskId(task.id);
   };
 
-  const updateTaskStatus = async (taskId, status) => {
-    if (updatingTaskIds.includes(taskId)) return false;
-    setUpdatingTaskIds((current) => [...current, taskId]);
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks/${taskId}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ status }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.detail || 'Could not update task status.');
-      setTasks((current) => current.map((task) => task.id === taskId ? { ...task, ...data.task } : task));
-      setSyncError('');
-      return true;
-    } catch (error) {
-      setSyncError(error.message || 'Could not update task status.');
-      return false;
-    } finally {
-      setUpdatingTaskIds((current) => current.filter((id) => id !== taskId));
-    }
-  };
-
   const addChatMessage = (role, text) => {
     const next = [...chatMessagesRef.current, { id: uid(), role, text }].slice(-30);
     chatMessagesRef.current = next;
@@ -425,19 +386,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       }
 
       if (call.name === 'update_task_status') {
-        const task = tasksRef.current.find((item) => String(item.id) === String(args.task_id));
-        const status = ['Pending', 'In Progress', 'Done'].includes(args.status) ? args.status : '';
-        if (!task) return { success: false, error: 'Task not found. Ask the user which task they mean.' };
-        if (!status) return { success: false, error: 'The requested task status is invalid.' };
-        const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks/${task.id}/status`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ status }),
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.detail || 'Could not update task status.');
-        setTasks((current) => current.map((item) => item.id === task.id ? { ...item, ...data.task } : item));
-        return { success: true, message: `${task.title} is now ${status}.` };
+        return { success: false, error: 'Only the assigned employee can update task progress.' };
       }
 
       return { success: false, error: `Unknown tool: ${call.name}` };
@@ -624,6 +573,10 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
 
   const applyAiAction = async (command, action) => {
     if (!action) return false;
+    if (action.action === 'update_status') {
+      speak('The assigned employee updates progress from their task dashboard. I can help assign new work.');
+      return true;
+    }
     if (isVoicePage && ['assign_task', 'update_status', 'cancel_pending'].includes(action.action)) {
       if (action.action === 'assign_task') {
         const employee = employeesRef.current.find((item) => String(item.id) === String(action.employeeId));
@@ -962,7 +915,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
             instructions: [
               'You are the NexGTools Work Assignment voice assistant.',
               'Speak briefly, naturally, and in the user\'s language.',
-              'Use assign_task or update_task_status whenever the user requests one of those actions.',
+              'Use assign_task when the user requests an assignment. The assigned employee updates task progress from their own dashboard.',
               'For an assignment, match the spoken employee name to the employee list, preserve the requested task wording accurately, and call assign_task immediately when both are clear.',
               'The assign_task result includes the real email delivery status. State that result clearly after the tool finishes.',
               'Do not only explain how to assign a task; perform the tool call.',
@@ -1192,7 +1145,6 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
           <div className="work-form-row">
             <label>Due date<input type="date" value={taskDraft.dueDate} onChange={(event) => setTaskDraft((draft) => ({ ...draft, dueDate: event.target.value }))} /></label>
             <label>Priority<select value={taskDraft.priority} onChange={(event) => setTaskDraft((draft) => ({ ...draft, priority: event.target.value }))}><option>Low</option><option>Medium</option><option>High</option></select></label>
-            <label>Status<TaskStatusButtons status={taskDraft.status} onChange={(status) => setTaskDraft((draft) => ({ ...draft, status }))} canAdvance={taskDraft.status === 'Pending' || (editingTaskId && tasks.find((task) => task.id === editingTaskId)?.status === 'In Progress')} /></label>
           </div>
           <label>Notes<textarea value={taskDraft.notes} onChange={(event) => setTaskDraft((draft) => ({ ...draft, notes: event.target.value }))} placeholder="Extra instructions, customer details, route, etc." /></label>
           <button className="work-primary-btn" type="submit"><Plus size={17} /> {editingTaskId ? 'Save Task' : 'Assign Task'}</button>
@@ -1210,7 +1162,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
             <tbody>
               {filteredTasks.map((task) => {
                 const employee = employeeById.get(task.employeeId);
-                return <tr key={task.id}><td><strong>{employee?.name || task.employeeName || 'Unassigned'}</strong></td><td>{employee?.email || task.employeeEmail || '-'}</td><td><span>{task.title}</span>{task.notes && <small>{task.notes}</small>}</td><td>{task.quantity}</td><td><CalendarDays size={14} /> {task.dueDate || '-'}</td><td><em className={`work-priority work-priority-${task.priority.toLowerCase()}`}>{task.priority}</em></td><td><TaskStatusButtons status={task.status} onChange={(status) => updateTaskStatus(task.id, status)} disabled={updatingTaskIds.includes(task.id)} /></td><td><TaskTiming task={task} /></td><td><div className="work-row-actions"><button type="button" onClick={() => resendTaskEmail(task)} title="Send task email"><Send size={15} /></button><button type="button" onClick={() => editTask(task)} title="Edit task"><Edit3 size={15} /></button><button type="button" onClick={() => removeTask(task.id)} title="Delete task"><Trash2 size={15} /></button></div></td></tr>;
+                return <tr key={task.id}><td><strong>{employee?.name || task.employeeName || 'Unassigned'}</strong></td><td>{employee?.email || task.employeeEmail || '-'}</td><td><span>{task.title}</span>{task.notes && <small>{task.notes}</small>}</td><td>{task.quantity}</td><td><CalendarDays size={14} /> {task.dueDate || '-'}</td><td><em className={`work-priority work-priority-${task.priority.toLowerCase()}`}>{task.priority}</em></td><td><span className={`work-priority work-status-${task.status.toLowerCase().replaceAll(' ', '-')}`}>{task.status}</span></td><td><TaskTiming task={task} /></td><td><div className="work-row-actions"><button type="button" onClick={() => resendTaskEmail(task)} title="Send task email"><Send size={15} /></button><button type="button" onClick={() => editTask(task)} title="Edit task"><Edit3 size={15} /></button><button type="button" onClick={() => removeTask(task.id)} title="Delete task"><Trash2 size={15} /></button></div></td></tr>;
               })}
             </tbody>
           </table>

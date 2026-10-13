@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
 import MobileNav from './components/MobileNav';
@@ -17,6 +17,9 @@ import UsedOilIndia from './pages/UsedOilIndia';
 import WorkAssignments from './pages/WorkAssignments';
 import VoiceAgent from './pages/VoiceAgent';
 import MyTasks from './pages/MyTasks';
+import EmployeeDashboard from './pages/EmployeeDashboard';
+import TaskDetail from './pages/TaskDetail';
+import AdminWork from './pages/AdminWork';
 import Notifications from './pages/Notifications';
 import { NotificationProvider } from './notifications';
 import { ADMIN_TOKEN_KEY, API_BASE_URL, AUTH_TOKEN_KEY, adminHeaders, authHeaders } from './auth';
@@ -41,6 +44,21 @@ function PushNotificationBridge({ user }) {
   }, [navigate, user]);
 
   return null;
+}
+
+function WorkspaceLayout({ user, sidebarCollapsed, setSidebarCollapsed, isMobile, mobileMenuOpen, setMobileMenuOpen, closeMobileMenu, logout, children }) {
+  const { pathname } = useLocation();
+  const employee = !user.is_nexg_admin;
+  const employeeScreen = employee && (pathname === '/' || pathname === '/my-tasks' || pathname.startsWith('/my-tasks/') || pathname === '/notifications');
+  return <div className={`app-layout ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} ${employee ? 'employee-layout' : ''} ${employeeScreen ? 'employee-screen' : 'employee-tool-screen'}`}>
+    <PushNotificationBridge user={user} />
+    {!employee && <Sidebar user={user} collapsed={!isMobile && sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} permissions={user.permissions || []} isNexgAdmin={user.is_nexg_admin} isMobile={isMobile} mobileOpen={mobileMenuOpen} onClose={closeMobileMenu} />}
+    <div className="app-main">
+      {!employeeScreen && <Topbar user={user} onLogout={logout} mobileMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />}
+      <main className="app-content">{children}</main>
+    </div>
+    {!employee && <MobileNav user={user} mobileMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />}
+  </div>;
 }
 
 function App() {
@@ -141,14 +159,9 @@ function App() {
   return (
     <Router>
       <NotificationProvider key={user.id}>
-      <div className={`app-layout ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''}`}>
-        <PushNotificationBridge user={user} />
-        <Sidebar user={user} collapsed={!isMobile && sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} permissions={user.permissions || []} isNexgAdmin={user.is_nexg_admin} isMobile={isMobile} mobileOpen={mobileMenuOpen} onClose={closeMobileMenu} />
-        <div className="app-main">
-          <Topbar user={user} onLogout={logout} mobileMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />
-          <main className="app-content">
+      <WorkspaceLayout user={user} sidebarCollapsed={sidebarCollapsed} setSidebarCollapsed={setSidebarCollapsed} isMobile={isMobile} mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} closeMobileMenu={closeMobileMenu} logout={logout}>
             <Routes>
-              <Route path="/" element={<Dashboard user={user} />} />
+              <Route path="/" element={user.is_nexg_admin ? <Dashboard user={user} /> : <EmployeeDashboard user={user} onLogout={logout} />} />
               <Route path="/lead-search" element={hasPermission('lead_search') ? <LeadSearch /> : <Navigate to="/" replace />} />
               <Route path="/lead-search/history" element={hasPermission('lead_search_history') || hasPermission('exports') ? <Navigate to="/lead-search/csv?view=searches" replace /> : <Navigate to="/" replace />} />
               <Route path="/lead-search/csv" element={hasPermission('exports') || hasPermission('lead_search_history') ? <CsvHistory type="lead_search" canViewExports={hasPermission('exports')} canViewSearchHistory={hasPermission('lead_search_history')} /> : <Navigate to="/" replace />} />
@@ -156,7 +169,10 @@ function App() {
               <Route path="/business-search/csv" element={hasPermission('exports') ? <CsvHistory type="business_search" /> : <Navigate to="/" replace />} />
               <Route path="/business-outreach" element={hasPermission('outreach') ? <BusinessOutreach canImportSavedCsv={hasPermission('exports')} /> : <Navigate to="/" replace />} />
               <Route path="/notifications" element={<Notifications user={user} />} />
-              <Route path="/my-tasks" element={<MyTasks />} />
+              <Route path="/my-tasks" element={user.is_nexg_admin ? <AdminWork /> : <MyTasks />} />
+              <Route path="/my-tasks/:taskId" element={user.is_nexg_admin ? <AdminWork /> : <TaskDetail />} />
+              <Route path="/team-work" element={user.is_nexg_admin ? <AdminWork /> : <Navigate to="/" replace />} />
+              <Route path="/team-work/:taskId" element={user.is_nexg_admin ? <AdminWork /> : <Navigate to="/" replace />} />
               <Route path="/work-assignments" element={hasPermission('work_assignments') ? <WorkAssignments key={`tasks-${user.id}`} userId={user.id} /> : <Navigate to="/" replace />} />
               <Route path="/voice-agent" element={hasPermission('work_assignments') ? <VoiceAgent key={`voice-${user.id}`} userId={user.id} /> : <Navigate to="/" replace />} />
               <Route path="/data-library" element={hasPermission('data_library') ? <DataLibrary /> : <Navigate to="/" replace />} />
@@ -165,10 +181,7 @@ function App() {
               <Route path="/settings" element={hasPermission('settings') ? <SettingsPage appearance={appearance} onAppearanceChange={updateAppearance} /> : <Navigate to="/" replace />} />
               <Route path="/admin" element={<AdminPage onAdminUnlocked={setIsAdmin} />} />
             </Routes>
-          </main>
-        </div>
-        <MobileNav user={user} mobileMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />
-      </div>
+      </WorkspaceLayout>
       </NotificationProvider>
     </Router>
   );

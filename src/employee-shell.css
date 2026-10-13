@@ -1,0 +1,227 @@
+.app-layout.employee-layout {
+  margin: 0;
+  min-height: 100dvh;
+  border-radius: 0;
+  box-shadow: none;
+  background: #e9edf7;
+}
+
+.employee-layout .app-main,
+.employee-layout.sidebar-is-collapsed .app-main {
+  width: 100%;
+  margin-left: 0;
+  border-radius: 0;
+}
+
+.employee-layout .mobile-menu-button,
+.employee-layout .mobile-brand-button {
+  display: none;
+}
+
+.employee-screen .app-content {
+  display: flex;
+  padding: 0;
+  min-height: 100dvh;
+  background: #e9edf7;
+  border-radius: 0;
+}
+
+.employee-screen .app-content > div {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+.employee-screen .employee-dashboard,
+.employee-screen .employee-tasks,
+.employee-screen .employee-task-detail,
+.employee-screen .notification-page {
+  width: 100%;
+  max-width: none;
+  min-height: 100dvh;
+  margin: 0;
+  padding: clamp(20px, 3vw, 46px);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: #e9edf7;
+}
+
+.employee-layout .employee-dashboard-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 1100px;
+  margin: 0 auto 38px;
+  color: #52647d;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.employee-layout .employee-dashboard-top {
+  justify-content: flex-end;
+}
+
+
+.employee-dashboard-top > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.employee-dashboard-top a,
+.employee-dashboard-top button,
+.employee-page-nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 15px;
+  border: 1px solid #cad5e8;
+  border-radius: 999px;
+  background: #fff;
+  color: #35547f;
+  text-decoration: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.employee-page-nav {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  max-width: 1100px;
+  margin: 0 auto 35px;
+  color: #172238;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.employee-screen .employee-dashboard-intro {
+  margin-bottom: 36px;
+}
+
+.employee-dashboard-eyebrow {
+  display: block;
+  margin-bottom: 12px;
+  color: #5c7eb4;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.employee-screen .employee-dashboard-actions {
+  margin: 38px auto 0;
+}
+
+.employee-tool-section {
+  max-width: 850px;
+  margin: 48px auto 0;
+}
+
+.employee-tool-section h2 {
+  margin: 0 0 16px;
+  text-align: center;
+  font-size: 18px;
+}
+
+.employee-screen .employee-tool-links {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  max-width: none;
+  gap: 12px;
+  margin: 0;
+}
+
+.employee-screen .employee-tool-links a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 62px;
+  padding: 16px 18px;
+  border: 1px solid #d6e0ef;
+  border-radius: 16px;
+  background: #fff;
+  color: #365f99;
+  font-size: 13px;
+  box-shadow: 0 8px 20px #2336530b;
+}
+
+.employee-screen .employee-tasks-header,
+.employee-screen .employee-task-grid {
+  max-width: 1100px;
+}
+
+.employee-screen .employee-tasks-header {
+  margin-top: 48px;
+}
+
+.employee-screen .employee-task-grid {
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+}
+
+.employee-screen .employee-task-card {
+  min-height: 290px;
+}
+
+.employee-screen .notification-hero {
+  max-width: 1100px;
+  margin: 0 auto 20px;
+  padding: 15px 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.employee-screen .notification-hero h1,
+.employee-screen .notification-hero p {
+  color: #172238;
+}
+
+.employee-screen .notification-inbox {
+  max-width: 1100px;
+  margin: 0 auto;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.employee-screen .notification-counter {
+  background: #8eabe1;
+  color: white;
+}
+
+.employee-screen .notification-counter span {
+  color: white;
+}
+
+.employee-screen .notification-card {
+  border: 0;
+  border-radius: 16px;
+  background: white;
+}
+
+.employee-screen .notification-unread {
+  background: #e1edff;
+}
+
+.employee-layout.employee-tool-screen .app-content {
+  padding: 20px clamp(18px, 3vw, 40px) 40px;
+}
+
+@media (max-width: 600px) {
+  .employee-layout .employee-dashboard-top {
+    margin-bottom: 28px;
+  }
+
+  .employee-dashboard-top > span {
+    max-width: 130px;
+  }
+
+  .employee-screen .employee-tasks-header {
+    margin-top: 24px;
+  }
+}
