@@ -1,5 +1,6 @@
 import VoiceAgentPanel from '../components/VoiceAgentPanel';
 import TaskTiming from '../components/TaskTiming';
+import { Capacitor } from '@capacitor/core';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -19,19 +20,27 @@ import './WorkAssignments.css';
 
 const emptyTask = { employeeId: '', title: '', quantity: 1, dueDate: '', priority: 'Medium', status: 'Pending', notes: '' };
 const canRecordVoice = 'MediaRecorder' in window && navigator.mediaDevices?.getUserMedia;
+const isMobileVoice = Capacitor.isNativePlatform() || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const recordingMimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4;codecs=mp4a.40.2', 'audio/mp4'];
+const supportedRecordingMimeType = () => recordingMimeTypes.find((type) => MediaRecorder.isTypeSupported?.(type)) || '';
+const recordingFilename = (type) => type.includes('mp4') ? 'work-command.m4a' : type.includes('webm') ? 'work-command.webm' : 'work-command.audio';
 
 const microphoneErrorDetails = (error) => {
   const name = error?.name || '';
+  const platform = Capacitor.getPlatform();
+  const deviceSettings = platform === 'ios' ? 'iPhone Settings > Privacy & Security > Microphone'
+    : platform === 'android' ? 'Android Settings > Apps > NexgTools > Permissions > Microphone'
+      : isMobileVoice ? 'your phone settings and browser site settings' : 'your browser and Windows Settings > Privacy & security > Microphone';
   if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
     return {
       state: 'missing',
-      message: 'Windows has no microphone input available. Connect a headset with a microphone (USB, Bluetooth, or a 4-pole TRRS plug), select it in Settings > System > Sound > Input, then start voice mode again.',
+      message: isMobileVoice ? 'No microphone input is available. Check your device microphone and try again.' : 'Windows has no microphone input available. Connect a headset with a microphone (USB, Bluetooth, or a 4-pole TRRS plug), select it in Settings > System > Sound > Input, then start voice mode again.',
     };
   }
   if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
     return {
       state: 'blocked',
-      message: 'Microphone access is blocked. Allow microphone access for this site in the browser and in Windows Settings > Privacy & security > Microphone.',
+      message: `Microphone access is blocked. Allow it in ${deviceSettings}, then try again.`,
     };
   }
   if (name === 'NotReadableError' || name === 'TrackStartError') {
@@ -209,7 +218,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
   }, [voiceMode]);
 
   useLayoutEffect(() => {
-    if (!isVoicePage) return undefined;
+    if (!isVoicePage || isMobileVoice) return undefined;
     let active = true;
     queueMicrotask(() => {
       if (active) autoStartVoiceRef.current?.();
@@ -218,7 +227,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
   }, [isVoicePage]);
 
   useEffect(() => {
-    if (!isVoicePage || !navigator.mediaDevices?.enumerateDevices) return undefined;
+    if (!isVoicePage || isMobileVoice || !navigator.mediaDevices?.enumerateDevices) return undefined;
     let active = true;
     const refreshMicrophones = async () => {
       try {
@@ -757,7 +766,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     setVoiceError('');
     try {
       const formData = new FormData();
-      formData.append('file', audioBlob, 'work-command.webm');
+      formData.append('file', audioBlob, recordingFilename(audioBlob.type));
       const response = await fetch(`${API_BASE_URL}/api/work-assignments/voice/transcribe`, { method: 'POST', headers: authHeaders(), body: formData });
       const data = await response.json();
       if (voiceSessionRef.current !== sessionId) return;
@@ -804,8 +813,9 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       mediaStreamRef.current = stream;
       setMicrophoneState('ready');
       const chunks = [];
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
-      const recorder = new MediaRecorder(stream, { mimeType });
+      const mimeType = supportedRecordingMimeType();
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const actualMimeType = recorder.mimeType || mimeType;
       mediaRecorderRef.current = recorder;
       forceSubmitRef.current = false;
       let heardSpeech = false;
@@ -824,26 +834,37 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
         if (!voiceModeRef.current || voiceSessionRef.current !== sessionId) return;
         const shouldSubmit = heardSpeech || forceSubmitRef.current;
         forceSubmitRef.current = false;
-        if (shouldSubmit) pendingVoiceTurnRef.current = submitVoiceAudio(new Blob(chunks, { type: mimeType }), sessionId);
+        if (shouldSubmit) pendingVoiceTurnRef.current = submitVoiceAudio(new Blob(chunks, { type: actualMimeType }), sessionId);
         else resumeVoiceCapture(sessionId, 150);
       };
 
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      const audioContext = audioContextRef.current || new AudioContextClass();
-      audioContextRef.current = audioContext;
-      if (audioContext.state === 'suspended') await audioContext.resume();
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 1024;
-      source = audioContext.createMediaStreamSource(stream);
-      source.connect(analyser);
-      const samples = new Uint8Array(analyser.fftSize);
+      let analyser;
+      let samples;
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (AudioContextClass && !isMobileVoice) {
+          const audioContext = audioContextRef.current || new AudioContextClass();
+          audioContextRef.current = audioContext;
+          if (audioContext.state === 'suspended') await audioContext.resume();
+          analyser = audioContext.createAnalyser();
+          analyser.fftSize = 1024;
+          source = audioContext.createMediaStreamSource(stream);
+          source.connect(analyser);
+          samples = new Uint8Array(analyser.fftSize);
+        }
+      } catch {
+        source?.disconnect();
+        source = null;
+        analyser = null;
+      }
+      if (!analyser) heardSpeech = true;
       if (!voiceModeRef.current || voiceSessionRef.current !== sessionId) {
-        source.disconnect();
+        source?.disconnect();
         if (mediaRecorderRef.current === recorder) mediaRecorderRef.current = null;
         return;
       }
       const watchSilence = () => {
-        if (!voiceModeRef.current || recorder.state !== 'recording') return;
+        if (!analyser || !voiceModeRef.current || recorder.state !== 'recording') return;
         analyser.getByteTimeDomainData(samples);
         const volume = samples.reduce((total, sample) => total + Math.abs(sample - 128), 0) / samples.length;
         if (volume >= 2.8) heardSpeech = true;
@@ -860,8 +881,8 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       recorder.start();
       captureTimeoutRef.current = window.setTimeout(() => {
         if (recorder.state === 'recording') stopVoiceCapture();
-      }, 10000);
-      window.requestAnimationFrame(watchSilence);
+      }, isMobileVoice ? 15000 : 10000);
+      if (analyser) window.requestAnimationFrame(watchSilence);
     } catch (error) {
       if (voiceSessionRef.current !== sessionId) return;
       const details = microphoneErrorDetails(error);
@@ -1118,7 +1139,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
         <VoiceAgentPanel listening={listening} speaking={speaking} processing={processingVoice} voiceMode={voiceMode}
           messages={chatMessages} chatEndRef={chatEndRef} text={voiceText} setText={setVoiceText}
           onSend={() => runAssistantCommand()} onToggle={toggleListening} onStop={finishVoiceSession} onClear={clearConversation} />
-        {microphoneState === 'missing' && !voiceError && <p className="work-inline-error"><AlertCircle size={15} /> No microphone input is detected. Connect or enable a microphone in Windows Sound settings before starting voice mode.</p>}
+        {microphoneState === 'missing' && !voiceError && <p className="work-inline-error"><AlertCircle size={15} /> {isMobileVoice ? 'No microphone input is detected. Check the microphone permission in your device settings.' : 'No microphone input is detected. Connect or enable a microphone in Windows Sound settings before starting voice mode.'}</p>}
         {voiceError && <p className="work-inline-error"><AlertCircle size={15} /> {voiceError}</p>}
         {syncError && <p className="work-inline-error"><AlertCircle size={15} /> {syncError}</p>}
         {assignmentNotice && <p className="work-voice-state">{assignmentNotice}</p>}

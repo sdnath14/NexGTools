@@ -88,6 +88,91 @@
   cursor: pointer;
 }
 
+.employee-dashboard-top .employee-profile-trigger {
+  max-width: 200px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.employee-profile-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  justify-content: flex-end;
+  background: #101d35a6;
+}
+
+.employee-profile-panel {
+  width: min(390px, 100%);
+  min-height: 100%;
+  padding: 30px;
+  background: #f6f8fd;
+  box-shadow: -18px 0 45px #101d352b;
+}
+
+.employee-profile-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid #d9e2f0;
+}
+
+.employee-profile-heading span {
+  color: #6b85ad;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+}
+
+.employee-profile-heading h2 {
+  margin: 6px 0 0;
+  font-size: 24px;
+}
+
+.employee-profile-heading button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid #d9e2f0;
+  border-radius: 50%;
+  background: #fff;
+  color: #35547f;
+  cursor: pointer;
+}
+
+.employee-profile-facts {
+  margin: 18px 0 0;
+}
+
+.employee-profile-facts div {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 17px 0;
+  border-bottom: 1px solid #e1e8f2;
+}
+
+.employee-profile-facts dt {
+  color: #61728d;
+  font-size: 13px;
+}
+
+.employee-profile-facts dd {
+  margin: 0;
+  max-width: 55%;
+  color: #172238;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
 .employee-page-nav {
   display: flex;
   align-items: center;
