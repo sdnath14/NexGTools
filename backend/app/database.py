@@ -930,20 +930,28 @@ def save_lead_ai_message(
         return None
 
 
-def create_user(name: str, email: str, password_salt: str, password_hash: str) -> dict[str, Any]:
+def create_user(name: str, email: str, password_salt: str, password_hash: str, role_id: int | None = None) -> dict[str, Any]:
     with db_connection() as connection:
         with connection.cursor() as cursor:
+            if role_id is None:
+                cursor.execute("SELECT id, name, permissions_json FROM roles WHERE name = 'Member' LIMIT 1")
+            else:
+                cursor.execute("SELECT id, name, permissions_json FROM roles WHERE id = %s", (role_id,))
+            role = cursor.fetchone()
+            if not role:
+                raise ValueError("Role not found.")
             cursor.execute(
-                """
-                INSERT INTO users (name, email, password_salt, password_hash, role_id)
-                VALUES (%s, %s, %s, %s, (SELECT id FROM roles WHERE name = 'Member' LIMIT 1))
-                """,
-                (name, email, password_salt, password_hash),
+                "INSERT INTO users (name, email, password_salt, password_hash, role_id) VALUES (%s, %s, %s, %s, %s)",
+                (name, email, password_salt, password_hash, role["id"]),
             )
             user_id = cursor.lastrowid
+            value = role.get("permissions_json") or []
+            permissions = json.loads(value) if isinstance(value, str) else value
+            tool_permissions = None if role_id is not None else []
             cursor.execute("INSERT INTO employee_profiles (user_id, tool_permissions_json) VALUES (%s, %s)",
-                           (user_id, json.dumps([])))
-            return {"id": user_id, "name": name, "email": email, "role": "Member", "permissions": []}
+                           (user_id, json.dumps(tool_permissions) if tool_permissions is not None else None))
+            return {"id": user_id, "name": name, "email": email, "role_id": role["id"],
+                    "role": role["name"], "permissions": permissions if tool_permissions is None else tool_permissions}
 
 
 def ensure_default_user(name: str, email: str, password: str) -> None:

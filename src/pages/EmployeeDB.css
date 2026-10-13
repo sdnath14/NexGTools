@@ -1,0 +1,18 @@
+.employee-db-layout { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 20px; align-items: start; }
+.employee-db-form, .employee-db-directory { border: 1px solid var(--app-border); border-radius: 12px; background: var(--app-surface); color: var(--app-text); overflow: hidden; }
+.employee-db-form { padding: 24px; }
+.employee-db h2 { display: flex; align-items: center; gap: 9px; font-size: 17px; }
+.employee-db-form p { color: var(--app-muted); font-size: 13px; line-height: 1.6; margin: 10px 0 20px; }
+.employee-db-form fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 17px; min-width: 0; }
+.employee-db-form label { display: grid; gap: 7px; font-size: 12px; font-weight: 650; }
+.employee-db-form input, .employee-db select { width: 100%; min-height: 42px; border: 1px solid var(--app-border); border-radius: 7px; padding: 9px 11px; background: var(--app-surface); color: var(--app-text); font: inherit; }
+.employee-db-form .admin-save-btn { min-height: 42px; }
+.employee-db-directory-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 20px; border-bottom: 1px solid var(--app-border); }
+.employee-db-directory-head h2 span { font-size: 12px; background: var(--app-subtle); border-radius: 20px; padding: 4px 9px; }
+.employee-db-search { display: flex; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--app-border); border-radius: 7px; color: var(--app-muted); }
+.employee-db-search input { border: 0; outline: 0; min-width: 0; background: transparent; color: var(--app-text); font: inherit; font-size: 12px; }
+.employee-db .admin-table { min-width: 540px; }
+.employee-db-notice { padding: 13px 16px; border-radius: 8px; background: #e7f6e9; color: #176b35; }
+.employee-db-admin { color: var(--app-accent); font-weight: 700; white-space: nowrap; }
+.employee-db input:focus-visible, .employee-db select:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+@media (max-width: 1100px) { .employee-db-layout { grid-template-columns: 1fr; } }

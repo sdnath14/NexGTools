@@ -599,7 +599,7 @@ class RegisterRequest(AuthRequest):
 
 
 class AdminCreateUserRequest(RegisterRequest):
-    pass
+    role_id: int | None = None
 
 
 class RoleRequest(BaseModel):
@@ -3693,7 +3693,10 @@ def admin_create_user(
     if get_user_by_email(email):
         raise HTTPException(status_code=409, detail="A user with this email already exists.")
     salt, password_hash = hash_password(payload.password)
-    return {"user": create_user(name, email, salt, password_hash)}
+    try:
+        return {"user": create_user(name, email, salt, password_hash, role_id=payload.role_id)}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @app.get("/api/admin/roles")
