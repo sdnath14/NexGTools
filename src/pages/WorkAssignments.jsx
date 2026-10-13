@@ -1,5 +1,6 @@
 import VoiceAgentPanel from '../components/VoiceAgentPanel';
 import TaskTiming from '../components/TaskTiming';
+import TaskStatusButtons from '../components/TaskStatusButtons';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -147,6 +148,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
   const [voiceError, setVoiceError] = useState('');
   const [microphoneState, setMicrophoneState] = useState(canRecordVoice ? 'checking' : 'unsupported');
   const [syncError, setSyncError] = useState('');
+  const [updatingTaskIds, setUpdatingTaskIds] = useState([]);
   const [assignmentNotice, setAssignmentNotice] = useState('');
   const mediaRecorderRef = useRef(null);
   const mediaStreamRef = useRef(null);
@@ -315,6 +317,8 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
     if (!taskDraft.employeeId || !normalize(taskDraft.title)) return;
     const nextTask = { ...taskDraft, title: normalize(taskDraft.title), quantity: Math.max(1, Number(taskDraft.quantity) || 1), notes: normalize(taskDraft.notes) };
     if (editingTaskId) {
+      const original = tasks.find((task) => task.id === editingTaskId);
+      if (original && original.status !== nextTask.status && !(await updateTaskStatus(editingTaskId, nextTask.status))) return;
       setTasks((current) => current.map((task) => task.id === editingTaskId ? { ...task, ...nextTask } : task));
     } else {
       try {
@@ -366,7 +370,8 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
   };
 
   const updateTaskStatus = async (taskId, status) => {
-    setTasks((current) => current.map((task) => task.id === taskId ? { ...task, status } : task));
+    if (updatingTaskIds.includes(taskId)) return false;
+    setUpdatingTaskIds((current) => [...current, taskId]);
     try {
       const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks/${taskId}/status`, {
         method: 'PATCH',
@@ -377,8 +382,12 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
       if (!response.ok) throw new Error(data.detail || 'Could not update task status.');
       setTasks((current) => current.map((task) => task.id === taskId ? { ...task, ...data.task } : task));
       setSyncError('');
+      return true;
     } catch (error) {
       setSyncError(error.message || 'Could not update task status.');
+      return false;
+    } finally {
+      setUpdatingTaskIds((current) => current.filter((id) => id !== taskId));
     }
   };
 
@@ -1183,7 +1192,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
           <div className="work-form-row">
             <label>Due date<input type="date" value={taskDraft.dueDate} onChange={(event) => setTaskDraft((draft) => ({ ...draft, dueDate: event.target.value }))} /></label>
             <label>Priority<select value={taskDraft.priority} onChange={(event) => setTaskDraft((draft) => ({ ...draft, priority: event.target.value }))}><option>Low</option><option>Medium</option><option>High</option></select></label>
-            <label>Status<select value={taskDraft.status} onChange={(event) => setTaskDraft((draft) => ({ ...draft, status: event.target.value }))}><option>Pending</option><option>In Progress</option><option>Done</option></select></label>
+            <label>Status<TaskStatusButtons status={taskDraft.status} onChange={(status) => setTaskDraft((draft) => ({ ...draft, status }))} canAdvance={taskDraft.status === 'Pending' || (editingTaskId && tasks.find((task) => task.id === editingTaskId)?.status === 'In Progress')} /></label>
           </div>
           <label>Notes<textarea value={taskDraft.notes} onChange={(event) => setTaskDraft((draft) => ({ ...draft, notes: event.target.value }))} placeholder="Extra instructions, customer details, route, etc." /></label>
           <button className="work-primary-btn" type="submit"><Plus size={17} /> {editingTaskId ? 'Save Task' : 'Assign Task'}</button>
@@ -1201,7 +1210,7 @@ export default function WorkAssignments({ userId, mode = 'tasks' }) {
             <tbody>
               {filteredTasks.map((task) => {
                 const employee = employeeById.get(task.employeeId);
-                return <tr key={task.id}><td><strong>{employee?.name || task.employeeName || 'Unassigned'}</strong></td><td>{employee?.email || task.employeeEmail || '-'}</td><td><span>{task.title}</span>{task.notes && <small>{task.notes}</small>}</td><td>{task.quantity}</td><td><CalendarDays size={14} /> {task.dueDate || '-'}</td><td><em className={`work-priority work-priority-${task.priority.toLowerCase()}`}>{task.priority}</em></td><td><select value={task.status} onChange={(event) => updateTaskStatus(task.id, event.target.value)}><option>Pending</option><option>In Progress</option><option>Done</option></select></td><td><TaskTiming task={task} /></td><td><div className="work-row-actions"><button type="button" onClick={() => resendTaskEmail(task)} title="Send task email"><Send size={15} /></button><button type="button" onClick={() => editTask(task)} title="Edit task"><Edit3 size={15} /></button><button type="button" onClick={() => removeTask(task.id)} title="Delete task"><Trash2 size={15} /></button></div></td></tr>;
+                return <tr key={task.id}><td><strong>{employee?.name || task.employeeName || 'Unassigned'}</strong></td><td>{employee?.email || task.employeeEmail || '-'}</td><td><span>{task.title}</span>{task.notes && <small>{task.notes}</small>}</td><td>{task.quantity}</td><td><CalendarDays size={14} /> {task.dueDate || '-'}</td><td><em className={`work-priority work-priority-${task.priority.toLowerCase()}`}>{task.priority}</em></td><td><TaskStatusButtons status={task.status} onChange={(status) => updateTaskStatus(task.id, status)} disabled={updatingTaskIds.includes(task.id)} /></td><td><TaskTiming task={task} /></td><td><div className="work-row-actions"><button type="button" onClick={() => resendTaskEmail(task)} title="Send task email"><Send size={15} /></button><button type="button" onClick={() => editTask(task)} title="Edit task"><Edit3 size={15} /></button><button type="button" onClick={() => removeTask(task.id)} title="Delete task"><Trash2 size={15} /></button></div></td></tr>;
               })}
             </tbody>
           </table>
