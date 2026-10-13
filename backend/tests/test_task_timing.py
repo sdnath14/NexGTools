@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import MagicMock, patch
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from backend.app import main, fcm_service
 
 
@@ -47,6 +47,38 @@ class TaskTimingTests(unittest.TestCase):
                 main.mark_work_task_seen(4)
         self.assertEqual(error.exception.status_code, 404)
         self.assertFalse(any(call.args[0].lstrip().startswith("UPDATE") for call in self.cursor.execute.call_args_list))
+
+    def test_started_task_cannot_return_to_pending(self):
+        self.cursor.fetchone.return_value = {"id": 4, "title": "Report", "status": "In Progress", "created_by_user_id": 9, "employee_name": "Employee"}
+        with patch.object(main, "_require_user", return_value=self.user), patch.object(main, "db_connection", return_value=self.connection):
+            with self.assertRaises(HTTPException) as error:
+                main.update_work_task_status(4, main.WorkTaskStatusRequest(status="Pending"), BackgroundTasks())
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertFalse(any(call.args[0].lstrip().startswith("UPDATE work_tasks") for call in self.cursor.execute.call_args_list))
+
+    def test_pending_task_must_start_before_done(self):
+        self.cursor.fetchone.return_value = {"id": 4, "title": "Report", "status": "Pending", "created_by_user_id": 9, "employee_name": "Employee"}
+        with patch.object(main, "_require_user", return_value=self.user), patch.object(main, "db_connection", return_value=self.connection):
+            with self.assertRaises(HTTPException) as error:
+                main.update_work_task_status(4, main.WorkTaskStatusRequest(status="Done"), BackgroundTasks())
+        self.assertEqual(error.exception.status_code, 409)
+
+    def test_done_task_cannot_restart(self):
+        self.cursor.fetchone.return_value = {"id": 4, "title": "Report", "status": "Done", "created_by_user_id": 9, "employee_name": "Employee"}
+        with patch.object(main, "_require_user", return_value=self.user), patch.object(main, "db_connection", return_value=self.connection):
+            with self.assertRaises(HTTPException) as error:
+                main.update_work_task_status(4, main.WorkTaskStatusRequest(status="In Progress"), BackgroundTasks())
+        self.assertEqual(error.exception.status_code, 409)
+
+    def test_progress_starts_timer(self):
+        self.cursor.fetchone.side_effect = [
+            {"id": 4, "title": "Report", "status": "Pending", "created_by_user_id": 7, "employee_name": "Employee"},
+            {"id": 4, "status": "In Progress"},
+        ]
+        with patch.object(main, "_require_user", return_value=self.user), patch.object(main, "db_connection", return_value=self.connection), patch.object(main, "_default_admin_user_id", return_value=None), patch.object(main, "_work_task_row", return_value={"id": 4, "status": "In Progress"}):
+            result = main.update_work_task_status(4, main.WorkTaskStatusRequest(status="In Progress"), BackgroundTasks())
+        self.assertEqual(result["task"]["status"], "In Progress")
+        self.assertTrue(any("started_at" in call.args[0] for call in self.cursor.execute.call_args_list))
 
 
 if __name__ == "__main__":

@@ -2178,6 +2178,12 @@ def update_work_task_status(
             task = cursor.fetchone()
             if not task:
                 raise HTTPException(status_code=404, detail="Task not found.")
+            current_status = task.get("status")
+            if status != current_status and (current_status, status) not in {
+                ("Pending", "In Progress"),
+                ("In Progress", "Done"),
+            }:
+                raise HTTPException(status_code=409, detail="Tasks must move from Pending to In Progress to Done. A started task cannot return to Pending.")
             if status != task.get("status"):
                 if status == "In Progress":
                     cursor.execute("UPDATE work_tasks SET started_at = IF(completed_at IS NOT NULL, CURRENT_TIMESTAMP, COALESCE(started_at, CURRENT_TIMESTAMP)), completed_at = NULL WHERE id = %s", (task_id,))

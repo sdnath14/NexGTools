@@ -3,7 +3,7 @@ import { CalendarDays, CheckCircle2, ClipboardList, LoaderCircle } from 'lucide-
 import { API_BASE_URL, AUTH_TOKEN_KEY, authHeaders } from '../auth';
 import './WorkAssignments.css';
 import TaskTiming from '../components/TaskTiming';
-import WorkStatusButton from '../components/WorkStatusButton';
+import TaskStatusButtons from '../components/TaskStatusButtons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 export default function MyTasks() {
@@ -14,6 +14,7 @@ export default function MyTasks() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [updatingTaskIds, setUpdatingTaskIds] = useState([]);
 
   useEffect(() => {
     const loadTasks = async () => {
@@ -64,8 +65,8 @@ export default function MyTasks() {
   const isAdminView = Boolean(user?.is_nexg_admin);
 
   const updateStatus = async (taskId, status) => {
-    const previousStatus = tasks.find((task) => task.id === taskId)?.status;
-    setTasks((current) => current.map((task) => task.id === taskId ? { ...task, status } : task));
+    if (updatingTaskIds.includes(taskId)) return;
+    setUpdatingTaskIds((current) => [...current, taskId]);
     try {
       const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks/${taskId}/status`, {
         method: 'PATCH',
@@ -78,8 +79,9 @@ export default function MyTasks() {
       setError('');
       window.dispatchEvent(new Event('nexg-notifications-refresh'));
     } catch (statusError) {
-      setTasks((current) => current.map((task) => task.id === taskId ? { ...task, status: previousStatus } : task));
       setError(statusError.message || 'Could not update task status.');
+    } finally {
+      setUpdatingTaskIds((current) => current.filter((id) => id !== taskId));
     }
   };
 
@@ -115,7 +117,7 @@ export default function MyTasks() {
                     <td>{task.quantity}</td>
                     <td><CalendarDays size={14} /> {task.dueDate || '-'}</td>
                     <td><em className={`work-priority work-priority-${task.priority.toLowerCase()}`}>{task.priority}</em></td>
-                    <td><WorkStatusButton status={task.status} onChange={(status) => updateStatus(task.id, status)} /></td>
+                    <td><TaskStatusButtons status={task.status} onChange={(status) => updateStatus(task.id, status)} disabled={updatingTaskIds.includes(task.id)} /></td>
                     <td><TaskTiming task={task} /></td>
                   </tr>
                 ))}
