@@ -879,40 +879,8 @@ def expense_bill(month: str = '', user_id: int | None = Query(default=None, ge=1
 
 @app.post('/api/expenses')
 def create_expense(payload: ExpenseRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_permission(authorization, 'expense_tracker')
-    if user.get('is_nexg_admin'):
-        raise HTTPException(status_code=403, detail='Administrators can review expenses but cannot submit them.')
-    if payload.expense_type not in ('Advance', 'Reimbursement') or payload.payment_method not in ('UPI', 'NEFT'):
-        raise HTTPException(status_code=400, detail='Choose a valid expense type and payment method.')
-    if payload.payment_method == 'UPI' and not payload.upi_id.strip():
-        raise HTTPException(status_code=400, detail='UPI ID is required.')
-    if payload.payment_method == 'NEFT' and (not payload.account_number.strip() or not payload.ifsc_code.strip()):
-        raise HTTPException(status_code=400, detail='Account number and IFSC code are required.')
-    attachment = None
-    if payload.attachment_base64:
-        if payload.attachment_type not in ('application/pdf', 'image/jpeg', 'image/png') or not payload.attachment_name:
-            raise HTTPException(status_code=400, detail='Only PDF, JPG, and PNG attachments are allowed.')
-        if len(payload.attachment_base64) > 7_000_000:
-            raise HTTPException(status_code=400, detail='Attachment must be at most 5 MB.')
-        try:
-            attachment = base64.b64decode(payload.attachment_base64, validate=True)
-        except binascii.Error:
-            raise HTTPException(status_code=400, detail='Invalid attachment.')
-        if len(attachment) > 5 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail='Attachment must be at most 5 MB.')
-    with db_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute('''INSERT INTO expenses (user_id, category, particulars, amount, expense_type,
-                              payment_method, upi_id, account_number, ifsc_code, attachment_name,
-                              attachment_type, attachment_data) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''',
-                           (user['id'], payload.category.strip(), payload.particulars.strip(),
-                            payload.amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
-                            payload.expense_type, payload.payment_method, payload.upi_id.strip() if payload.payment_method == 'UPI' else '',
-                            payload.account_number.strip() if payload.payment_method == 'NEFT' else '',
-                            payload.ifsc_code.strip().upper() if payload.payment_method == 'NEFT' else '',
-                            payload.attachment_name if attachment else None, payload.attachment_type if attachment else None, attachment))
-            expense_id = cursor.lastrowid
-    return {'id': expense_id}
+    _require_permission(authorization, 'expense_tracker')
+    raise HTTPException(status_code=403, detail='Expense submissions are disabled. Your access is view-only.')
 
 
 @app.get('/api/expenses/{expense_id}')

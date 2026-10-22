@@ -16,9 +16,17 @@ class ExpenseEditTests(unittest.TestCase):
     def test_only_admin_can_read_and_edit(self):
         with patch.object(main, '_require_permission', return_value={'id': 2, 'is_nexg_admin': False}):
             for action in (lambda: main.get_expense_for_edit(7, 'token'),
-                           lambda: main.edit_expense(7, self.payload, 'token')):
+                           lambda: main.edit_expense(7, self.payload, 'token'),
+                           lambda: main.update_expense_status(7, main.ExpenseStatusRequest(status='Approved'), 'token')):
                 with self.assertRaises(HTTPException) as error:
                     action()
+                self.assertEqual(error.exception.status_code, 403)
+
+    def test_expense_creation_is_disabled_for_users_and_admins(self):
+        for is_admin in (False, True):
+            with patch.object(main, '_require_permission', return_value={'id': 1, 'is_nexg_admin': is_admin}):
+                with self.assertRaises(HTTPException) as error:
+                    main.create_expense(self.payload, 'token')
                 self.assertEqual(error.exception.status_code, 403)
 
     def test_admin_edit_updates_fields_without_changing_owner_or_status(self):
