@@ -880,6 +880,8 @@ def expense_bill(month: str = '', user_id: int | None = Query(default=None, ge=1
 @app.post('/api/expenses')
 def create_expense(payload: ExpenseRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     user = _require_permission(authorization, 'expense_tracker')
+    if user.get('is_nexg_admin'):
+        raise HTTPException(status_code=403, detail='Administrators can review expenses but cannot submit them.')
     if payload.expense_type not in ('Advance', 'Reimbursement') or payload.payment_method not in ('UPI', 'NEFT'):
         raise HTTPException(status_code=400, detail='Choose a valid expense type and payment method.')
     if payload.payment_method == 'UPI' and not payload.upi_id.strip():
