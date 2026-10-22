@@ -4,8 +4,8 @@ import { ArrowUpRight, Bell, LogOut, UserRound, X } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './EmployeeWorkspace.css';
 
-const names = { lead_search: 'Lead Search', business_search: 'Business Search', outreach: 'Business Outreach', work_assignments: 'Work Assignments', data_library: 'Data Library', data_analytics: 'Analytics', used_oil_india: 'Used Oil India', exports: 'Exports', settings: 'Settings' };
-const paths = { lead_search: '/lead-search', business_search: '/business-search', outreach: '/business-outreach', work_assignments: '/work-assignments', data_library: '/data-library', data_analytics: '/data-analytics', used_oil_india: '/used-oil-india', exports: '/lead-search/csv', settings: '/settings', lead_search_history: '/lead-search/csv' };
+const names = { lead_search: 'Lead Search', business_search: 'Business Search', outreach: 'Business Outreach', work_assignments: 'Work Assignments', data_library: 'Data Library', data_analytics: 'Analytics', used_oil_india: 'Used Oil India', expense_tracker: 'Expense Tracker', exports: 'Exports', settings: 'Settings' };
+const paths = { lead_search: '/lead-search', business_search: '/business-search', outreach: '/business-outreach', work_assignments: '/work-assignments', data_library: '/data-library', data_analytics: '/data-analytics', used_oil_india: '/used-oil-india', expense_tracker: '/expense-tracker', exports: '/lead-search/csv', settings: '/settings', lead_search_history: '/lead-search/csv' };
 
 export default function EmployeeDashboard({ user, onLogout }) {
   const [tasks, setTasks] = useState([]);

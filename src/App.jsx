@@ -22,6 +22,7 @@ import EmployeeDashboard from './pages/EmployeeDashboard';
 import TaskDetail from './pages/TaskDetail';
 import AdminWork from './pages/AdminWork';
 import Notifications from './pages/Notifications';
+import ExpenseTracker from './pages/ExpenseTracker';
 import { NotificationProvider } from './notifications';
 import { ADMIN_TOKEN_KEY, API_BASE_URL, AUTH_TOKEN_KEY, adminHeaders, authHeaders } from './auth';
 import { applyAppearance, loadAppearance, saveAppearance } from './appearance';
@@ -179,6 +180,7 @@ function App() {
               <Route path="/data-library" element={hasPermission('data_library') ? <DataLibrary /> : <Navigate to="/" replace />} />
               <Route path="/data-analytics" element={hasPermission('data_analytics') ? <DataAnalytics /> : <Navigate to="/" replace />} />
               <Route path="/used-oil-india" element={hasPermission('used_oil_india') ? <UsedOilIndia /> : <Navigate to="/" replace />} />
+              <Route path="/expense-tracker" element={hasPermission('expense_tracker') ? <ExpenseTracker user={user} /> : <Navigate to="/" replace />} />
               <Route path="/settings" element={hasPermission('settings') ? <SettingsPage appearance={appearance} onAppearanceChange={updateAppearance} /> : <Navigate to="/" replace />} />
               <Route path="/employee-db" element={user.is_nexg_admin ? <EmployeeDB onAdminUnlocked={setIsAdmin} /> : <Navigate to="/" replace />} />
               <Route path="/admin" element={<AdminPage onAdminUnlocked={setIsAdmin} />} />

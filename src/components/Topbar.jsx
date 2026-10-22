@@ -4,7 +4,7 @@ import { Menu, LogOut, ArrowLeft, Bell, FileSpreadsheet, Search, ChevronDown, Se
 import { useNotifications } from '../notificationContext';
 import Brand from './Brand';
 
-const titles = { '/': 'Home', '/lead-search': 'Lead Search', '/lead-search/history': 'Lead CSV History', '/lead-search/csv': 'Lead CSV History', '/business-search': 'Business Search', '/business-search/csv': 'Business CSV History', '/business-outreach': 'Business Outreach', '/my-tasks': 'My Tasks', '/team-work': 'Employee Work', '/notifications': 'Notifications', '/data-library': 'Data Library', '/data-analytics': 'Analytics', '/used-oil-india': 'Used Oil India Data', '/admin': 'Admin', '/settings': 'Settings', '/work-assignments': 'Work Assignments', '/voice-agent': 'Voice Agent' };
+const titles = { '/': 'Home', '/lead-search': 'Lead Search', '/lead-search/history': 'Lead CSV History', '/lead-search/csv': 'Lead CSV History', '/business-search': 'Business Search', '/business-search/csv': 'Business CSV History', '/business-outreach': 'Business Outreach', '/my-tasks': 'My Tasks', '/team-work': 'Employee Work', '/notifications': 'Notifications', '/data-library': 'Data Library', '/data-analytics': 'Analytics', '/used-oil-india': 'Used Oil India Data', '/expense-tracker': 'Expense Tracker', '/admin': 'Admin', '/settings': 'Settings', '/work-assignments': 'Work Assignments', '/voice-agent': 'Voice Agent' };
 
 export default function Topbar({ user, onLogout, mobileMenuOpen, onOpenMenu }) {
   const location = useLocation(), navigate = useNavigate();

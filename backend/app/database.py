@@ -14,7 +14,7 @@ from pymysql.cursors import DictCursor
 from .auth import create_token, hash_password, verify_password
 from .config import settings
 
-TOOL_PERMISSIONS = ["dashboard", "lead_search", "lead_search_history", "business_search", "business_search_history", "outreach", "work_assignments", "data_library", "data_analytics", "used_oil_india", "exports", "settings"]
+TOOL_PERMISSIONS = ["dashboard", "lead_search", "lead_search_history", "business_search", "business_search_history", "outreach", "work_assignments", "data_library", "data_analytics", "used_oil_india", "expense_tracker", "exports", "settings"]
 
 
 def _connect(database: str | None = None):
@@ -55,6 +55,27 @@ def initialize_database() -> None:
 
     with db_connection() as connection:
         with connection.cursor() as cursor:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS expenses (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT UNSIGNED NOT NULL,
+                    category VARCHAR(80) NOT NULL,
+                    particulars VARCHAR(500) NOT NULL,
+                    amount DECIMAL(12, 2) NOT NULL,
+                    expense_type VARCHAR(20) NOT NULL,
+                    payment_method VARCHAR(20) NOT NULL,
+                    upi_id VARCHAR(255),
+                    account_number VARCHAR(80),
+                    ifsc_code VARCHAR(40),
+                    status VARCHAR(20) NOT NULL DEFAULT 'Pending',
+                    attachment_name VARCHAR(255),
+                    attachment_type VARCHAR(100),
+                    attachment_data MEDIUMBLOB,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_expenses_created (created_at),
+                    INDEX idx_expenses_user (user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS lead_searches (

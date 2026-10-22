@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState } from 'react';
-import { ArrowRight, Database, BarChart3, Search, Send, ClipboardList, Users, CheckCircle2, Mic } from 'lucide-react';
+import { ArrowRight, Database, BarChart3, Search, Send, ClipboardList, Users, CheckCircle2, Mic, Wallet } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './Dashboard.css';
@@ -12,6 +12,7 @@ const tools = [
   { permission: 'work_assignments', label: 'Voice Agent', description: 'Speak to assign work and update progress.', path: '/voice-agent', icon: Mic, color: '#1260ff', image: 'office-interior.png' },
   { permission: 'data_analytics', label: 'Analytics', description: 'Turn your business data into insights.', path: '/data-analytics', icon: BarChart3, color: '#1260ff', image: 'office-library.png' },
   { permission: 'used_oil_india', label: 'Used Oil India Data', description: 'Explore and maintain industry records.', path: '/used-oil-india', icon: Database, color: '#12b99a', image: 'office-interior.png' },
+  { permission: 'expense_tracker', label: 'NexGTools Expense Tracker', description: 'Record expenses and track reimbursements.', path: '/expense-tracker', icon: Wallet, color: '#147b65', image: 'office-interior.png' },
 ];
 const greeting = () => new Date().getHours() < 12 ? 'Good morning' : new Date().getHours() < 17 ? 'Good afternoon' : 'Good evening';
 const initials = (name) => (name || 'Employee').split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase();

@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { X, Bell, Home, Search, Database, Settings, ChevronLeft, ChevronRight, FileSpreadsheet, Send, BarChart3, Table2, ClipboardList, Mic, Users } from 'lucide-react';
+import { X, Bell, Home, Search, Database, Settings, ChevronLeft, ChevronRight, FileSpreadsheet, Send, BarChart3, Table2, ClipboardList, Mic, Users, Wallet } from 'lucide-react';
 import Brand from './Brand';
 import { useNotifications } from '../notificationContext';
 
@@ -18,6 +18,7 @@ const navItems = [
   { path: '/data-library', label: 'Data Library', icon: Database, permission: 'data_library' },
   { path: '/data-analytics', label: 'Analytics', icon: BarChart3, permission: 'data_analytics' },
   { path: '/used-oil-india', label: 'Used Oil India Data', icon: Table2, permission: 'used_oil_india' },
+  { path: '/expense-tracker', label: 'Expense Tracker', icon: Wallet, permission: 'expense_tracker' },
 ];
 
 const Sidebar = ({ user, collapsed, onToggle, permissions = [], isNexgAdmin = false, isMobile = false, mobileOpen = false, onClose }) => {
@@ -80,7 +81,7 @@ const Sidebar = ({ user, collapsed, onToggle, permissions = [], isNexgAdmin = fa
       <nav className="sidebar-nav" ref={navRef}>
         <span className={`sidebar-active-indicator ${indicator ? 'sidebar-active-indicator-visible' : ''}`} aria-hidden="true" style={{ transform: `translateY(${indicator?.top || 0}px)`, height: indicator?.height || 43 }} />
         {[...visibleNavItems].sort((a, b) => {
-          const order = ['/', '/lead-search', '/business-outreach', '/work-assignments', '/employee-db', '/team-work', '/voice-agent', '/data-library', '/data-analytics', '/notifications', '/my-tasks', '/lead-search/csv', '/used-oil-india'];
+          const order = ['/', '/lead-search', '/business-outreach', '/work-assignments', '/employee-db', '/team-work', '/voice-agent', '/data-library', '/data-analytics', '/expense-tracker', '/notifications', '/my-tasks', '/lead-search/csv', '/used-oil-india'];
           return order.indexOf(a.path) - order.indexOf(b.path);
         }).map((item) => (
           <NavLink

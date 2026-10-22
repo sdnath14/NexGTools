@@ -6,6 +6,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 from io import BytesIO
+from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
+import base64
+import binascii
 import hashlib
 import json
 import logging
@@ -39,6 +43,7 @@ from .analytics import (
 )
 from .config import settings
 from .fcm_service import send_task_assignment_notification, send_task_status_notification
+from .expense_bill import render_expense_bill
 from .whatsapp_service import send_whatsapp_task
 from .database import (
     admin_overview,
@@ -607,6 +612,24 @@ class RoleRequest(BaseModel):
     permissions: list[str] = Field(default_factory=list)
 
 
+class ExpenseRequest(BaseModel):
+    category: str = Field(min_length=1, max_length=80)
+    particulars: str = Field(min_length=1, max_length=500)
+    amount: Decimal = Field(gt=0, le=9999999999)
+    expense_type: str
+    payment_method: str
+    upi_id: str = Field(default='', max_length=255)
+    account_number: str = Field(default='', max_length=80)
+    ifsc_code: str = Field(default='', max_length=40)
+    attachment_name: str = Field(default='', max_length=255)
+    attachment_type: str = Field(default='')
+    attachment_base64: str = Field(default='')
+
+
+class ExpenseStatusRequest(BaseModel):
+    status: str
+
+
 class UserRoleRequest(BaseModel):
     role_id: int
 
@@ -793,6 +816,131 @@ def _require_permission(authorization: str | None, permission: str) -> dict[str,
     if permission not in user.get("permissions", []):
         raise HTTPException(status_code=403, detail=f"You do not have access to {permission.replace('_', ' ')}.")
     return user
+
+
+def _expense_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {key: (float(value) if key == 'amount' else value.isoformat() if key == 'created_at' else value)
+            for key, value in row.items()}
+
+
+@app.get('/api/expenses')
+def list_expenses(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, 'expense_tracker')
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('''SELECT e.id, e.user_id, u.name AS submitted_by, e.category, e.particulars,
+                              e.amount, e.expense_type, e.payment_method, e.status, e.attachment_name, e.created_at
+                              FROM expenses e JOIN users u ON u.id = e.user_id
+                              WHERE (%s = 1 OR e.user_id = %s)
+                              ORDER BY e.created_at DESC, e.id DESC''',
+                           (int(bool(user.get('is_nexg_admin'))), user['id']))
+            return {'expenses': [_expense_row(row) for row in cursor.fetchall()]}
+
+
+@app.get('/api/expenses/bill')
+def expense_bill(month: str = '', user_id: int | None = Query(default=None, ge=1),
+                 authorization: str | None = Header(default=None)):
+    user = _require_permission(authorization, 'expense_tracker')
+    if user_id is not None and not user.get('is_nexg_admin') and user_id != user['id']:
+        raise HTTPException(status_code=403, detail='You can only generate your own expense bill.')
+    owner_id = user_id if user.get('is_nexg_admin') else user['id']
+    start = end = None
+    period = 'All dates'
+    if month:
+        try:
+            start = datetime.strptime(month, '%Y-%m')
+        except ValueError:
+            raise HTTPException(status_code=400, detail='Month must be in YYYY-MM format.')
+        end = datetime(start.year + (start.month == 12), start.month % 12 + 1, 1)
+        period = start.strftime('%B %Y')
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            scope = 'All users'
+            if owner_id is not None:
+                cursor.execute('SELECT name FROM users WHERE id = %s', (owner_id,))
+                owner = cursor.fetchone()
+                if not owner:
+                    raise HTTPException(status_code=404, detail='User not found.')
+                scope = owner['name']
+            cursor.execute('''SELECT e.created_at, u.name AS submitted_by, e.particulars, e.category,
+                              e.expense_type, e.status, e.amount
+                              FROM expenses e JOIN users u ON u.id = e.user_id
+                              WHERE (%s IS NULL OR e.user_id = %s)
+                                AND (%s IS NULL OR e.created_at >= %s)
+                                AND (%s IS NULL OR e.created_at < %s)
+                              ORDER BY e.created_at, e.id''',
+                           (owner_id, owner_id, start, start, end, end))
+            rows = cursor.fetchall()
+    pdf = render_expense_bill(rows, scope, period)
+    filename = f'expense-bill-{month or "all"}{f"-user-{owner_id}" if owner_id else ""}.pdf'
+    return StreamingResponse(BytesIO(pdf), media_type='application/pdf',
+                             headers={'Content-Disposition': f'attachment; filename="{filename}"'})
+
+
+@app.post('/api/expenses')
+def create_expense(payload: ExpenseRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, 'expense_tracker')
+    if payload.expense_type not in ('Advance', 'Reimbursement') or payload.payment_method not in ('UPI', 'NEFT'):
+        raise HTTPException(status_code=400, detail='Choose a valid expense type and payment method.')
+    if payload.payment_method == 'UPI' and not payload.upi_id.strip():
+        raise HTTPException(status_code=400, detail='UPI ID is required.')
+    if payload.payment_method == 'NEFT' and (not payload.account_number.strip() or not payload.ifsc_code.strip()):
+        raise HTTPException(status_code=400, detail='Account number and IFSC code are required.')
+    attachment = None
+    if payload.attachment_base64:
+        if payload.attachment_type not in ('application/pdf', 'image/jpeg', 'image/png') or not payload.attachment_name:
+            raise HTTPException(status_code=400, detail='Only PDF, JPG, and PNG attachments are allowed.')
+        if len(payload.attachment_base64) > 7_000_000:
+            raise HTTPException(status_code=400, detail='Attachment must be at most 5 MB.')
+        try:
+            attachment = base64.b64decode(payload.attachment_base64, validate=True)
+        except binascii.Error:
+            raise HTTPException(status_code=400, detail='Invalid attachment.')
+        if len(attachment) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail='Attachment must be at most 5 MB.')
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('''INSERT INTO expenses (user_id, category, particulars, amount, expense_type,
+                              payment_method, upi_id, account_number, ifsc_code, attachment_name,
+                              attachment_type, attachment_data) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''',
+                           (user['id'], payload.category.strip(), payload.particulars.strip(),
+                            payload.amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                            payload.expense_type, payload.payment_method, payload.upi_id.strip() if payload.payment_method == 'UPI' else '',
+                            payload.account_number.strip() if payload.payment_method == 'NEFT' else '',
+                            payload.ifsc_code.strip().upper() if payload.payment_method == 'NEFT' else '',
+                            payload.attachment_name if attachment else None, payload.attachment_type if attachment else None, attachment))
+            expense_id = cursor.lastrowid
+    return {'id': expense_id}
+
+
+@app.patch('/api/expenses/{expense_id}/status')
+def update_expense_status(expense_id: int, payload: ExpenseStatusRequest, authorization: str | None = Header(default=None)) -> dict[str, str]:
+    user = _require_permission(authorization, 'expense_tracker')
+    if not user.get('is_nexg_admin'):
+        raise HTTPException(status_code=403, detail='Only an administrator can update expense status.')
+    if payload.status not in ('Pending', 'Approved', 'Rejected', 'Reimbursed'):
+        raise HTTPException(status_code=400, detail='Invalid expense status.')
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('UPDATE expenses SET status = %s WHERE id = %s', (payload.status, expense_id))
+            if not cursor.rowcount:
+                raise HTTPException(status_code=404, detail='Expense not found.')
+    return {'status': payload.status}
+
+
+@app.get('/api/expenses/{expense_id}/attachment')
+def expense_attachment(expense_id: int, authorization: str | None = Header(default=None)):
+    user = _require_permission(authorization, 'expense_tracker')
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('''SELECT attachment_name, attachment_type, attachment_data FROM expenses
+                              WHERE id = %s AND (%s = 1 OR user_id = %s)''',
+                           (expense_id, int(bool(user.get('is_nexg_admin'))), user['id']))
+            row = cursor.fetchone()
+    if not row or not row['attachment_data']:
+        raise HTTPException(status_code=404, detail='Attachment not found.')
+    return StreamingResponse(BytesIO(row['attachment_data']), media_type=row['attachment_type'],
+                             headers={'Content-Disposition': "attachment; filename*=UTF-8''" + quote_plus(row['attachment_name'])})
 
 
 def _clean_push_value(value: str, max_length: int = 255) -> str:
@@ -3702,7 +3850,7 @@ def admin_create_user(
 @app.get("/api/admin/roles")
 def admin_roles(authorization: str | None = Header(default=None), x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     _require_admin(authorization, x_admin_token)
-    return {"roles": list_roles(), "permissions": ["dashboard", "lead_search", "lead_search_history", "business_search", "business_search_history", "outreach", "work_assignments", "data_library", "data_analytics", "used_oil_india", "exports", "settings"]}
+    return {"roles": list_roles(), "permissions": ["dashboard", "lead_search", "lead_search_history", "business_search", "business_search_history", "outreach", "work_assignments", "data_library", "data_analytics", "used_oil_india", "expense_tracker", "exports", "settings"]}
 
 
 @app.get("/api/admin/users-with-roles")

@@ -9,6 +9,7 @@ const permissionLabel = (permission) => ({
   work_assignments: 'Work Assignments',
   data_analytics: 'Business Analytics Platform',
   data_library: 'Data Library',
+  expense_tracker: 'Expense Tracker',
 }[permission] || permission.replaceAll('_', ' '));
 
 const compactValue = (value) => {
