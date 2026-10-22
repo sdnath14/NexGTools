@@ -145,8 +145,8 @@
 .expense-actions { position: relative; }
 .expense-actions > button { width: 28px; height: 27px; border: 1px solid var(--expense-border); border-radius: 7px; background: var(--expense-surface); color: var(--expense-text); font-weight: 800; cursor: pointer; }
 .expense-actions > button:hover { background: #e9f6f1; }
-.expense-action-menu { position: absolute; z-index: 5; top: 31px; right: 0; min-width: 170px; padding: 5px; border: 1px solid var(--expense-border); border-radius: 9px; background: var(--expense-surface); box-shadow: 0 12px 28px #24384c25; }
-.expense-action-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border: 0; border-radius: 5px; background: transparent; color: var(--expense-text); text-align: left; font-size: 11px; cursor: pointer; }
+.expense-action-menu { position: fixed; z-index: 1000; min-width: 180px; padding: 5px; border: 1px solid var(--app-border, #e1e9f0); border-radius: 9px; background: var(--app-surface, #fff); box-shadow: 0 12px 28px #24384c35; }
+.expense-action-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border: 0; border-radius: 5px; background: transparent; color: var(--app-text, #172437); text-align: left; font-size: 11px; cursor: pointer; }
 .expense-action-menu button:hover { background: #e9f6f1; }
 .expense-action-menu .expense-menu-danger { color: #ae3f45; }
 .expense-action-menu .expense-menu-danger:hover { background: #ffeded; }

@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowRight, BarChart3, Check, ChevronDown, Clock3, Download, FileText, Pencil, PieChart, ReceiptText, TrendingUp, UploadCloud, UsersRound, Wallet, X } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './ExpenseTracker.css';
@@ -19,6 +20,7 @@ export default function ExpenseTracker({ user }) {
   const [error, setError] = useState('');
   const [viewAll, setViewAll] = useState(false);
   const [activeMenu, setActiveMenu] = useState(null);
+  const actionMenuRef = useRef(null);
   const [issueExpense, setIssueExpense] = useState(null);
   const [issueNote, setIssueNote] = useState('');
   const [billMonth, setBillMonth] = useState('');
@@ -36,6 +38,29 @@ export default function ExpenseTracker({ user }) {
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+  useLayoutEffect(() => {
+    const menu = actionMenuRef.current;
+    if (!activeMenu || !menu) return;
+    const top = activeMenu.bottom + menu.offsetHeight + 6 > window.innerHeight - 8
+      ? activeMenu.top - menu.offsetHeight - 6 : activeMenu.bottom + 6;
+    menu.style.top = `${Math.max(8, Math.min(top, window.innerHeight - menu.offsetHeight - 8))}px`;
+    menu.style.left = `${Math.max(8, Math.min(activeMenu.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8))}px`;
+  }, [activeMenu]);
+  useEffect(() => {
+    if (!activeMenu) return undefined;
+    const close = () => setActiveMenu(null);
+    const closeOutside = (event) => {
+      if (!actionMenuRef.current?.contains(event.target) && !event.target.closest('.expense-actions')) close();
+    };
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    document.addEventListener('pointerdown', closeOutside);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+      document.removeEventListener('pointerdown', closeOutside);
+    };
+  }, [activeMenu]);
 
   const total = expenses.reduce((sum, item) => sum + Number(item.amount), 0);
   const pending = expenses.filter((item) => ['Pending', 'Issue Raised'].includes(item.status)).length;
@@ -49,6 +74,11 @@ export default function ExpenseTracker({ user }) {
   const donut = total ? categoryTotals.map((item, index) => `${item.color} ${categoryTotals.slice(0, index).reduce((sum, entry) => sum + entry.total, 0) / total * 100}% ${categoryTotals.slice(0, index + 1).reduce((sum, entry) => sum + entry.total, 0) / total * 100}%`).join(', ') : '#e9eef3 0% 100%';
 
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const toggleActions = (event, id) => {
+    if (activeMenu?.id === id) { setActiveMenu(null); return; }
+    const { top, bottom, right } = event.currentTarget.getBoundingClientRect();
+    setActiveMenu({ id, top, bottom, right });
+  };
   const openEditor = async (id) => {
     setActiveMenu(null); setError('');
     try {
@@ -164,8 +194,8 @@ export default function ExpenseTracker({ user }) {
             <td className="expense-amount">{money(item.amount)}</td><td>{item.expense_type}</td>
             <td><span className={`expense-status ${item.status.toLowerCase().replace(/\s+/g, '-')}`}>{item.status === 'Reimbursed' ? 'Paid' : item.status}</span></td>
             <td>{item.payment_method || '-'}</td>
-            <td>{(user?.is_nexg_admin || item.attachment_name) ? <div className="expense-actions"><button aria-label={`Actions for ${item.particulars}`} onClick={() => setActiveMenu(activeMenu === item.id ? null : item.id)}>...</button>
-              {activeMenu === item.id && <div className="expense-action-menu">
+            <td>{(user?.is_nexg_admin || item.attachment_name) ? <div className="expense-actions"><button aria-label={`Actions for ${item.particulars}`} aria-expanded={activeMenu?.id === item.id} onClick={(event) => toggleActions(event, item.id)}>...</button>
+              {activeMenu?.id === item.id && createPortal(<div ref={actionMenuRef} className="expense-action-menu">
                 {user?.is_nexg_admin && !finalStatus && <>
                   <button onClick={() => openEditor(item.id)}><Pencil size={14} /> Edit expense</button>
                   <button onClick={() => openIssue(item)}><FileText size={14} /> {item.status === 'Issue Raised' ? 'Edit issue' : 'Raise issue'}</button>
@@ -174,7 +204,7 @@ export default function ExpenseTracker({ user }) {
                 </>}
                 {item.attachment_name && <button onClick={() => { setActiveMenu(null); download(item); }}><Download size={14} /> Download receipt</button>}
                 {user?.is_nexg_admin && !item.attachment_name && finalStatus && <span className="expense-menu-locked">Final status - no changes</span>}
-              </div>}
+              </div>, document.body)}
             </div> : '-'}</td>
           </tr>;
         })}</tbody>
