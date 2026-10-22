@@ -22,12 +22,22 @@ class ExpenseEditTests(unittest.TestCase):
                     action()
                 self.assertEqual(error.exception.status_code, 403)
 
-    def test_expense_creation_is_disabled_for_users_and_admins(self):
-        for is_admin in (False, True):
-            with patch.object(main, '_require_permission', return_value={'id': 1, 'is_nexg_admin': is_admin}):
-                with self.assertRaises(HTTPException) as error:
-                    main.create_expense(self.payload, 'token')
-                self.assertEqual(error.exception.status_code, 403)
+    def test_user_can_add_own_expense_but_admin_cannot(self):
+        cursor = MagicMock()
+        cursor.lastrowid = 23
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_permission', return_value={'id': 8, 'is_nexg_admin': False}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            self.assertEqual(main.create_expense(self.payload, 'token'), {'id': 23})
+        sql, values = cursor.execute.call_args.args
+        self.assertIn('INSERT INTO expenses', sql)
+        self.assertEqual(values[0], 8)
+        self.assertEqual(values[3], Decimal('215.50'))
+        with patch.object(main, '_require_permission', return_value={'id': 1, 'is_nexg_admin': True}):
+            with self.assertRaises(HTTPException) as error:
+                main.create_expense(self.payload, 'token')
+            self.assertEqual(error.exception.status_code, 403)
 
     def test_admin_edit_updates_fields_without_changing_owner_or_status(self):
         cursor = MagicMock()
