@@ -915,6 +915,69 @@ def create_expense(payload: ExpenseRequest, authorization: str | None = Header(d
     return {'id': expense_id}
 
 
+@app.get('/api/expenses/{expense_id}')
+def get_expense_for_edit(expense_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, 'expense_tracker')
+    if not user.get('is_nexg_admin'):
+        raise HTTPException(status_code=403, detail='Only an administrator can edit expenses.')
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('''SELECT e.id, e.user_id, u.name AS submitted_by, e.category, e.particulars,
+                              e.amount, e.expense_type, e.payment_method, e.upi_id, e.account_number,
+                              e.ifsc_code, e.status, e.attachment_name, e.created_at
+                              FROM expenses e JOIN users u ON u.id = e.user_id WHERE e.id = %s''', (expense_id,))
+            row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail='Expense not found.')
+    return {'expense': _expense_row(row)}
+
+
+@app.put('/api/expenses/{expense_id}')
+def edit_expense(expense_id: int, payload: ExpenseRequest,
+                 authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_permission(authorization, 'expense_tracker')
+    if not user.get('is_nexg_admin'):
+        raise HTTPException(status_code=403, detail='Only an administrator can edit expenses.')
+    if not payload.category.strip() or not payload.particulars.strip():
+        raise HTTPException(status_code=400, detail='Category and particulars are required.')
+    if payload.expense_type not in ('Advance', 'Reimbursement') or payload.payment_method not in ('UPI', 'NEFT'):
+        raise HTTPException(status_code=400, detail='Choose a valid expense type and payment method.')
+    if payload.payment_method == 'UPI' and not payload.upi_id.strip():
+        raise HTTPException(status_code=400, detail='UPI ID is required.')
+    if payload.payment_method == 'NEFT' and (not payload.account_number.strip() or not payload.ifsc_code.strip()):
+        raise HTTPException(status_code=400, detail='Account number and IFSC code are required.')
+    attachment = None
+    if payload.attachment_base64:
+        if payload.attachment_type not in ('application/pdf', 'image/jpeg', 'image/png') or not payload.attachment_name:
+            raise HTTPException(status_code=400, detail='Only PDF, JPG, and PNG attachments are allowed.')
+        if len(payload.attachment_base64) > 7_000_000:
+            raise HTTPException(status_code=400, detail='Attachment must be at most 5 MB.')
+        try:
+            attachment = base64.b64decode(payload.attachment_base64, validate=True)
+        except binascii.Error:
+            raise HTTPException(status_code=400, detail='Invalid attachment.')
+        if len(attachment) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail='Attachment must be at most 5 MB.')
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT id FROM expenses WHERE id = %s', (expense_id,))
+            if not cursor.fetchone():
+                raise HTTPException(status_code=404, detail='Expense not found.')
+            fields = '''category = %s, particulars = %s, amount = %s, expense_type = %s,
+                        payment_method = %s, upi_id = %s, account_number = %s, ifsc_code = %s'''
+            values = [payload.category.strip(), payload.particulars.strip(),
+                      payload.amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                      payload.expense_type, payload.payment_method,
+                      payload.upi_id.strip() if payload.payment_method == 'UPI' else '',
+                      payload.account_number.strip() if payload.payment_method == 'NEFT' else '',
+                      payload.ifsc_code.strip().upper() if payload.payment_method == 'NEFT' else '']
+            if attachment is not None:
+                fields += ', attachment_name = %s, attachment_type = %s, attachment_data = %s'
+                values.extend((payload.attachment_name, payload.attachment_type, attachment))
+            cursor.execute(f'UPDATE expenses SET {fields} WHERE id = %s', (*values, expense_id))
+    return {'id': expense_id}
+
+
 @app.patch('/api/expenses/{expense_id}/status')
 def update_expense_status(expense_id: int, payload: ExpenseStatusRequest, authorization: str | None = Header(default=None)) -> dict[str, str]:
     user = _require_permission(authorization, 'expense_tracker')
