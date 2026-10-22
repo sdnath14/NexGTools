@@ -628,6 +628,7 @@ class ExpenseRequest(BaseModel):
 
 class ExpenseStatusRequest(BaseModel):
     status: str
+    issue_note: str = Field(default='', max_length=500)
 
 
 class UserRoleRequest(BaseModel):
@@ -828,9 +829,13 @@ def list_expenses(authorization: str | None = Header(default=None)) -> dict[str,
     user = _require_permission(authorization, 'expense_tracker')
     with db_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute('''SELECT e.id, e.user_id, u.name AS submitted_by, e.category, e.particulars,
-                              e.amount, e.expense_type, e.payment_method, e.status, e.attachment_name, e.created_at
+            cursor.execute('''SELECT e.id, e.user_id, u.name AS submitted_by,
+                              COALESCE(NULLIF(p.job_title, ''), NULLIF(NULLIF(r.name, 'Member'), ''), 'Employee') AS `rank`,
+                              e.category, e.particulars, e.amount, e.expense_type, e.payment_method,
+                              e.status, e.issue_note, e.attachment_name, e.created_at
                               FROM expenses e JOIN users u ON u.id = e.user_id
+                              LEFT JOIN employee_profiles p ON p.user_id = u.id
+                              LEFT JOIN roles r ON r.id = u.role_id
                               WHERE (%s = 1 OR e.user_id = %s)
                               ORDER BY e.created_at DESC, e.id DESC''',
                            (int(bool(user.get('is_nexg_admin'))), user['id']))
@@ -892,7 +897,7 @@ def get_expense_for_edit(expense_id: int, authorization: str | None = Header(def
         with connection.cursor() as cursor:
             cursor.execute('''SELECT e.id, e.user_id, u.name AS submitted_by, e.category, e.particulars,
                               e.amount, e.expense_type, e.payment_method, e.upi_id, e.account_number,
-                              e.ifsc_code, e.status, e.attachment_name, e.created_at
+                              e.ifsc_code, e.status, e.issue_note, e.attachment_name, e.created_at
                               FROM expenses e JOIN users u ON u.id = e.user_id WHERE e.id = %s''', (expense_id,))
             row = cursor.fetchone()
     if not row:
@@ -928,9 +933,12 @@ def edit_expense(expense_id: int, payload: ExpenseRequest,
             raise HTTPException(status_code=400, detail='Attachment must be at most 5 MB.')
     with db_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute('SELECT id FROM expenses WHERE id = %s', (expense_id,))
-            if not cursor.fetchone():
+            cursor.execute('SELECT status FROM expenses WHERE id = %s FOR UPDATE', (expense_id,))
+            current = cursor.fetchone()
+            if not current:
                 raise HTTPException(status_code=404, detail='Expense not found.')
+            if current['status'] in ('Rejected', 'Reimbursed'):
+                raise HTTPException(status_code=409, detail='Rejected and paid expenses cannot be edited.')
             fields = '''category = %s, particulars = %s, amount = %s, expense_type = %s,
                         payment_method = %s, upi_id = %s, account_number = %s, ifsc_code = %s'''
             values = [payload.category.strip(), payload.particulars.strip(),
@@ -951,13 +959,23 @@ def update_expense_status(expense_id: int, payload: ExpenseStatusRequest, author
     user = _require_permission(authorization, 'expense_tracker')
     if not user.get('is_nexg_admin'):
         raise HTTPException(status_code=403, detail='Only an administrator can update expense status.')
-    if payload.status not in ('Pending', 'Approved', 'Rejected', 'Reimbursed'):
+    if payload.status not in ('Issue Raised', 'Rejected', 'Reimbursed'):
         raise HTTPException(status_code=400, detail='Invalid expense status.')
+    if payload.status == 'Issue Raised' and not payload.issue_note.strip():
+        raise HTTPException(status_code=400, detail='Describe the issue before raising it.')
     with db_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute('UPDATE expenses SET status = %s WHERE id = %s', (payload.status, expense_id))
-            if not cursor.rowcount:
+            cursor.execute('SELECT status FROM expenses WHERE id = %s FOR UPDATE', (expense_id,))
+            current = cursor.fetchone()
+            if not current:
                 raise HTTPException(status_code=404, detail='Expense not found.')
+            if current['status'] in ('Rejected', 'Reimbursed'):
+                raise HTTPException(status_code=409, detail='Rejected and paid expenses cannot be changed.')
+            if payload.status == 'Issue Raised':
+                cursor.execute('UPDATE expenses SET status = %s, issue_note = %s WHERE id = %s',
+                               (payload.status, payload.issue_note.strip(), expense_id))
+            else:
+                cursor.execute('UPDATE expenses SET status = %s WHERE id = %s', (payload.status, expense_id))
     return {'status': payload.status}
 
 

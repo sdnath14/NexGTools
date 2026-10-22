@@ -68,6 +68,7 @@ def initialize_database() -> None:
                     account_number VARCHAR(80),
                     ifsc_code VARCHAR(40),
                     status VARCHAR(20) NOT NULL DEFAULT 'Pending',
+                    issue_note VARCHAR(500),
                     attachment_name VARCHAR(255),
                     attachment_type VARCHAR(100),
                     attachment_data MEDIUMBLOB,
@@ -76,6 +77,9 @@ def initialize_database() -> None:
                     INDEX idx_expenses_user (user_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
+            cursor.execute("SELECT COLUMN_NAME AS column_name FROM information_schema.columns WHERE table_schema = %s AND table_name = 'expenses'", (settings.mysql_database,))
+            if "issue_note" not in {row["column_name"] for row in cursor.fetchall()}:
+                cursor.execute("ALTER TABLE expenses ADD COLUMN issue_note VARCHAR(500) NULL AFTER status")
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS lead_searches (

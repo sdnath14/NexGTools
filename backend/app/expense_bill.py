@@ -106,7 +106,8 @@ def _encode_pdf(pages: list[_Page]) -> bytes:
 def render_expense_bill(rows: list[dict], scope: str, period: str, generated_at: datetime | None = None) -> bytes:
     generated_at = generated_at or datetime.now()
     totals = {status: sum((Decimal(str(row['amount'])) for row in rows if row['status'] == status), Decimal('0'))
-              for status in ('Pending', 'Approved', 'Reimbursed', 'Rejected')}
+              for status in ('Pending', 'Issue Raised', 'Approved', 'Reimbursed', 'Rejected')}
+    totals['Pending'] += totals['Issue Raised']
     grand_total = sum((Decimal(str(row['amount'])) for row in rows), Decimal('0'))
     pages: list[_Page] = []
 
@@ -155,14 +156,15 @@ def render_expense_bill(rows: list[dict], scope: str, period: str, generated_at:
             page, y = new_page(False)
         if index % 2 == 0:
             page.rect(LEFT, y - 7, RIGHT - LEFT, 26, (0.955, 0.974, 0.990))
-        page.rect(LEFT, y - 7, 3, 26, {'Approved': GREEN, 'Pending': YELLOW,
+        page.rect(LEFT, y - 7, 3, 26, {'Approved': GREEN, 'Pending': YELLOW, 'Issue Raised': YELLOW,
                                        'Reimbursed': BLUE, 'Rejected': RED}.get(row['status'], BLUE))
         date = row['created_at']
         if isinstance(date, str):
             date = datetime.fromisoformat(date)
         values = [(48, date.strftime('%d %b %y'), 12), (104, _short(row['submitted_by'], 12), 12),
                   (173, _short(row['particulars'], 22), 22), (300, _short(row['category'], 13), 13),
-                  (377, _short(row['expense_type'], 10), 10), (435, _short(row['status'], 10), 10),
+                  (377, _short(row['expense_type'], 10), 10),
+                  (435, _short({'Issue Raised': 'Issue', 'Reimbursed': 'Paid'}.get(row['status'], row['status']), 10), 10),
                   (496, _money(row['amount']), 14)]
         for x, value, _ in values:
             page.text(x, y + 2, value, 7.5, x == 496)

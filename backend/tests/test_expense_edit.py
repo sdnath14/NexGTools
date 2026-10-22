@@ -31,7 +31,7 @@ class ExpenseEditTests(unittest.TestCase):
 
     def test_admin_edit_updates_fields_without_changing_owner_or_status(self):
         cursor = MagicMock()
-        cursor.fetchone.return_value = {'id': 7}
+        cursor.fetchone.return_value = {'status': 'Issue Raised'}
         connection = MagicMock()
         connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
         with patch.object(main, '_require_permission', return_value={'id': 1, 'is_nexg_admin': True}), \
@@ -54,6 +54,32 @@ class ExpenseEditTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as error:
                 main.edit_expense(999, self.payload, 'token')
         self.assertEqual(error.exception.status_code, 404)
+
+    def test_paid_expense_cannot_be_edited_or_changed(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {'status': 'Reimbursed'}
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_permission', return_value={'id': 1, 'is_nexg_admin': True}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            for action in (lambda: main.edit_expense(7, self.payload, 'token'),
+                           lambda: main.update_expense_status(7, main.ExpenseStatusRequest(status='Rejected'), 'token')):
+                with self.assertRaises(HTTPException) as error:
+                    action()
+                self.assertEqual(error.exception.status_code, 409)
+
+    def test_issue_requires_note_and_saves_it(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {'status': 'Pending'}
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_permission', return_value={'id': 1, 'is_nexg_admin': True}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            with self.assertRaises(HTTPException) as error:
+                main.update_expense_status(7, main.ExpenseStatusRequest(status='Issue Raised'), 'token')
+            self.assertEqual(error.exception.status_code, 400)
+            main.update_expense_status(7, main.ExpenseStatusRequest(status='Issue Raised', issue_note=' Missing invoice '), 'token')
+        self.assertEqual(cursor.execute.call_args_list[-1].args[1], ('Issue Raised', 'Missing invoice', 7))
 
 
 if __name__ == '__main__':

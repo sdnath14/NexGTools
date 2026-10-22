@@ -35,6 +35,13 @@ class ExpenseBillTests(unittest.TestCase):
         self.assertGreater(len(reader.pages), 1)
         self.assertIn('INR 500.00', reader.pages[-1].extract_text())
 
+    def test_raised_issue_counts_as_pending(self):
+        row = {'created_at': datetime(2026, 10, 20), 'submitted_by': 'Asha', 'particulars': 'Office supplies',
+               'category': 'Stationery', 'expense_type': 'Reimbursement', 'status': 'Issue Raised', 'amount': Decimal('325.00')}
+        text = '\n'.join(page.extract_text() for page in PdfReader(BytesIO(render_expense_bill([row], 'Asha', 'October 2026'))).pages)
+        self.assertIn('PENDING', text)
+        self.assertIn('INR 325.00', text)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -124,6 +124,7 @@
 .expense-ledger { overflow: visible; }
 .expense-table-wrap { overflow-x: auto; }
 .expense-table { width: 100%; border-collapse: collapse; text-align: left; white-space: nowrap; font-size: 11px; }
+.expense-table:has(th:nth-child(11)) { min-width: 1160px; }
 .expense-table th { padding: 12px 14px; background: var(--app-subtle, #f6f9fc); color: var(--expense-muted); font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: .05em; }
 .expense-table td { padding: 13px 14px; border-top: 1px solid var(--expense-border); color: #526176; }
 .expense-table tbody tr:hover { background: color-mix(in srgb, #e6f5f3 38%, var(--expense-surface)); }
@@ -131,6 +132,8 @@
 .expense-table td strong { color: var(--expense-text); font-size: 11px; font-weight: 720; }
 .expense-table td small { display: block; margin-top: 3px; color: var(--expense-muted); font-size: 10px; }
 .expense-table td.expense-amount { color: var(--expense-text); font-size: 12px; font-weight: 800; }
+.expense-table td.expense-particulars { max-width: 260px; white-space: normal; }
+.expense-issue-note { max-width: 260px; line-height: 1.35; color: #a65f16 !important; }
 .expense-category { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; background: color-mix(in srgb, currentColor 9%, var(--expense-surface)); font-size: 10px; font-weight: 750; }
 .expense-category::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 .expense-status { display: inline-block; padding: 5px 9px; border-radius: 999px; background: #eef1f5; color: #697788; font-size: 10px; font-weight: 750; }
@@ -138,12 +141,18 @@
 .expense-status.approved { background: #e2f7e9; color: #16864b; }
 .expense-status.reimbursed { background: #e0f0ff; color: #2578bd; }
 .expense-status.rejected { background: #ffe6e6; color: #b64e4e; }
+.expense-status.issue-raised { background: #fff0de; color: #ae651c; }
 .expense-actions { position: relative; }
 .expense-actions > button { width: 28px; height: 27px; border: 1px solid var(--expense-border); border-radius: 7px; background: var(--expense-surface); color: var(--expense-text); font-weight: 800; cursor: pointer; }
 .expense-actions > button:hover { background: #e9f6f1; }
 .expense-action-menu { position: absolute; z-index: 5; top: 31px; right: 0; min-width: 170px; padding: 5px; border: 1px solid var(--expense-border); border-radius: 9px; background: var(--expense-surface); box-shadow: 0 12px 28px #24384c25; }
 .expense-action-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border: 0; border-radius: 5px; background: transparent; color: var(--expense-text); text-align: left; font-size: 11px; cursor: pointer; }
 .expense-action-menu button:hover { background: #e9f6f1; }
+.expense-action-menu .expense-menu-danger { color: #ae3f45; }
+.expense-action-menu .expense-menu-danger:hover { background: #ffeded; }
+.expense-action-menu .expense-menu-paid { color: #0e805d; }
+.expense-action-menu .expense-menu-paid:hover { background: #e3f7ec; }
+.expense-menu-locked { display: block; padding: 8px; color: var(--expense-muted); font-size: 10px; }
 .expense-empty { padding: 36px 15px; color: var(--expense-muted); text-align: center; font-size: 12px; }
 
 .expense-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
@@ -194,6 +203,18 @@
 .expense-form-actions button { flex: 1; }
 .expense-form-actions button[type=button] { border: 1px solid var(--expense-border); border-radius: 8px; background: var(--app-subtle, #f7f9fa); color: var(--expense-text); font-size: 12px; cursor: pointer; }
 .expense-form-actions .expense-primary { background: #147c69; color: #fff; }
+.expense-issue-overlay { position: fixed; inset: 0; z-index: 310; display: grid; place-items: center; padding: 18px; background: #12243b88; }
+.expense-issue-dialog { width: min(430px, 100%); padding: 22px; border: 1px solid var(--expense-border); border-radius: 15px; background: var(--expense-surface); box-shadow: 0 20px 60px #102b4440; }
+.expense-issue-heading { display: flex; align-items: flex-start; justify-content: space-between; }
+.expense-issue-heading h2 { margin: 0; font-size: 20px; }
+.expense-issue-heading button { border: 0; background: transparent; color: var(--expense-muted); cursor: pointer; }
+.expense-issue-dialog p { margin: 11px 0 18px; color: var(--expense-muted); font-size: 12px; line-height: 1.5; }
+.expense-issue-dialog label { display: block; font-size: 12px; font-weight: 700; }
+.expense-issue-dialog textarea { display: block; width: 100%; margin-top: 7px; padding: 11px; border: 1px solid var(--expense-border); border-radius: 8px; background: var(--expense-surface); color: var(--expense-text); font: inherit; font-size: 12px; resize: vertical; }
+.expense-issue-dialog textarea:focus { outline: 2px solid #158b7840; border-color: #158b78; }
+.expense-issue-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.expense-issue-actions button { min-width: 100px; min-height: 36px; }
+.expense-issue-actions button[type=button] { border: 1px solid var(--expense-border); border-radius: 8px; background: var(--app-subtle, #f7f9fa); color: var(--expense-text); cursor: pointer; }
 
 @media (max-width: 1100px) {
   .expense-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
