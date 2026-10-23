@@ -24,7 +24,8 @@ export default function EmployeeDashboard({ user, onLogout }) {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [profileOpen]);
-  const tools = (user.permissions || []).filter((item) => item !== 'dashboard').map((item) => names[item] || item.replaceAll('_', ' '));
+  const accessibleTools = [...new Set([...(user.permissions || []), 'expense_tracker'])];
+  const tools = accessibleTools.filter((item) => item !== 'dashboard').map((item) => names[item] || item.replaceAll('_', ' '));
   return <div className="employee-dashboard">
     <div className="employee-dashboard-top"><div><Link to="/notifications" aria-label="Notifications"><Bell size={18} /></Link><button type="button" className="employee-profile-trigger" aria-label={`View ${user.name}'s profile`} aria-expanded={profileOpen} aria-controls="employee-profile-panel" onClick={() => setProfileOpen(true)}><UserRound size={17} /> {user.name}</button><button type="button" onClick={onLogout}><LogOut size={17} /> Sign out</button></div></div>
     <div className="employee-dashboard-intro"><span className="employee-dashboard-eyebrow">NexG Tools · Employee workspace</span><h2>Welcome, {user.name}</h2><p>Your work and access in one place</p></div>
@@ -40,7 +41,7 @@ export default function EmployeeDashboard({ user, onLogout }) {
         </dl>
       </aside>
     </div>}
-    {!!tools.length && <section className="employee-tool-section"><h2>Tools you can access</h2><div className="employee-tool-links" aria-label="Your tools">{(user.permissions || []).filter((item) => paths[item]).map((item) => <Link key={item} to={paths[item]}><span>{names[item] || item.replaceAll('_', ' ')}</span><ArrowUpRight size={16} /></Link>)}</div></section>}
+    {!!tools.length && <section className="employee-tool-section"><h2>Tools you can access</h2><div className="employee-tool-links" aria-label="Your tools">{accessibleTools.filter((item) => paths[item]).map((item) => <Link key={item} to={paths[item]}><span>{names[item] || item.replaceAll('_', ' ')}</span><ArrowUpRight size={16} /></Link>)}</div></section>}
     <div className="employee-dashboard-actions"><Link to="/my-tasks">My tasks</Link>{tasks.find((task) => task.status !== 'Done') && <Link to={`/my-tasks/${tasks.find((task) => task.status !== 'Done').id}`}>Open current task</Link>}</div>
   </div>;
 }

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowRight, BarChart3, Check, ChevronDown, Clock3, Download, FileText, Pencil, PieChart, Plus, ReceiptText, TrendingUp, UploadCloud, UsersRound, Wallet, X } from 'lucide-react';
+import { ArrowRight, BarChart3, Check, ChevronDown, Clock3, Download, Eye, FileText, Pencil, PieChart, Plus, ReceiptText, TrendingUp, UploadCloud, UsersRound, Wallet, X } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './ExpenseTracker.css';
 
@@ -16,6 +16,11 @@ export default function ExpenseTracker({ user }) {
   const [formOpen, setFormOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
   const [form, setForm] = useState(blank);
+  const [extraItems, setExtraItems] = useState([]);
+  const [activeItem, setActiveItem] = useState(0);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [expandedBatches, setExpandedBatches] = useState([]);
+  const [expandedCards, setExpandedCards] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [viewAll, setViewAll] = useState(false);
@@ -72,8 +77,32 @@ export default function ExpenseTracker({ user }) {
   }), [expenses]);
   const maxMonth = Math.max(...monthData.map((item) => item.total), 1);
   const donut = total ? categoryTotals.map((item, index) => `${item.color} ${categoryTotals.slice(0, index).reduce((sum, entry) => sum + entry.total, 0) / total * 100}% ${categoryTotals.slice(0, index + 1).reduce((sum, entry) => sum + entry.total, 0) / total * 100}%`).join(', ') : '#e9eef3 0% 100%';
+  const expenseGroups = useMemo(() => {
+    const groups = [];
+    const byBatch = new Map();
+    expenses.forEach((item) => {
+      if (!item.batch_id) { groups.push({ id: `expense-${item.id}`, items: [item] }); return; }
+      let group = byBatch.get(item.batch_id);
+      if (!group) { group = { id: item.batch_id, items: [] }; byBatch.set(item.batch_id, group); groups.push(group); }
+      group.items.push(item);
+    });
+    return groups;
+  }, [expenses]);
+  const visibleGroups = viewAll ? expenseGroups : expenseGroups.slice(0, 5);
 
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const updateExtraItem = (index, key, value) => setExtraItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: value } : item));
+  const reviewExpense = () => {
+    setError('');
+    const items = [form, ...extraItems];
+    const incomplete = items.findIndex((item) => !item.particulars.trim() || !/^\d+(?:\.\d{1,2})?$/.test(String(item.amount)) || Number(item.amount) <= 0 || Number(item.amount) > 9999999999);
+    if (incomplete !== -1) { setActiveItem(incomplete); setError(`Enter particulars and a valid amount for item ${incomplete + 1}.`); return; }
+    if (form.payment_method === 'UPI' && !form.upi_id.trim()) { setError('Enter a UPI ID.'); return; }
+    if (form.payment_method === 'NEFT' && (!form.account_number.trim() || !form.ifsc_code.trim())) { setError('Enter the account number and IFSC code.'); return; }
+    if (form.attachment?.size > 5 * 1024 * 1024) { setError('Attachment must be at most 5 MB.'); return; }
+    setActiveItem(null);
+    setReviewOpen(true);
+  };
   const toggleActions = (event, id) => {
     if (activeMenu?.id === id) { setActiveMenu(null); return; }
     const { top, bottom, right } = event.currentTarget.getBoundingClientRect();
@@ -86,6 +115,9 @@ export default function ExpenseTracker({ user }) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not load expense.');
       setForm({ ...blank, ...data.expense, amount: String(data.expense.amount), attachment: null });
+      setExtraItems([]);
+      setActiveItem(0);
+      setReviewOpen(false);
       setEditingExpense(data.expense);
       setFormOpen(true);
     } catch (err) { setError(err.message); }
@@ -105,10 +137,12 @@ export default function ExpenseTracker({ user }) {
           reader.readAsDataURL(form.attachment);
         });
       }
-      const response = await fetch(`${API_BASE_URL}/api/expenses${editingExpense ? `/${editingExpense.id}` : ''}`, { method: editingExpense ? 'PUT' : 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, amount: Number(form.amount), attachment: undefined, attachment_name: form.attachment?.name || '', attachment_type: form.attachment?.type || '', attachment_base64 }) });
+      const payload = { ...form, amount: Number(form.amount), attachment: undefined, attachment_name: form.attachment?.name || '', attachment_type: form.attachment?.type || '', attachment_base64 };
+      if (extraItems.length && !editingExpense) payload.items = [{ particulars: form.particulars, amount: Number(form.amount) }, ...extraItems.map((item) => ({ particulars: item.particulars, amount: Number(item.amount) }))];
+      const response = await fetch(`${API_BASE_URL}/api/expenses${editingExpense ? `/${editingExpense.id}` : extraItems.length ? '/batch' : ''}`, { method: editingExpense ? 'PUT' : 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not save expense.');
-      setForm(blank); setEditingExpense(null); setFormOpen(false); await load();
+      setForm(blank); setExtraItems([]); setActiveItem(0); setReviewOpen(false); setEditingExpense(null); setFormOpen(false); await load();
     } catch (err) { setError(err.message); }
     finally { setSaving(false); }
   };
@@ -166,7 +200,7 @@ export default function ExpenseTracker({ user }) {
         <span className="expense-hero-side-label">Total recorded</span>
         <strong>{loading ? '—' : money(total)}</strong>
         <small>{expenses.length} {expenses.length === 1 ? 'expense' : 'expenses'} on record</small>
-        {!user?.is_nexg_admin && <button className="expense-primary" onClick={() => { setError(''); setEditingExpense(null); setForm(blank); setFormOpen(true); }}><Plus size={17} /> Add New Expense</button>}
+        {!user?.is_nexg_admin && <button className="expense-primary" onClick={() => { setError(''); setEditingExpense(null); setForm(blank); setExtraItems([]); setActiveItem(0); setReviewOpen(false); setFormOpen(true); }}><Plus size={17} /> Add New Expense</button>}
       </div>
     </header>
     {error && <div className="expense-error" role="alert">{error}</div>}
@@ -185,15 +219,17 @@ export default function ExpenseTracker({ user }) {
       </div>
       <div className="expense-table-wrap"><table className="expense-table">
         <thead><tr><th>Sl.</th><th>Date</th>{user?.is_nexg_admin && <><th>User</th><th>Rank</th></>}<th>Category</th><th>Particulars</th><th>Amount</th><th>Type</th><th>Status</th><th>Pay Method</th><th>Action</th></tr></thead>
-        <tbody>{(viewAll ? expenses : expenses.slice(0, 5)).map((item, index) => {
+        <tbody>{visibleGroups.flatMap((group, groupIndex) => (user?.is_nexg_admin && expandedBatches.includes(group.id) ? group.items : group.items.slice(0, 1)).map((item, rowIndex, shownItems) => {
           const finalStatus = ['Rejected', 'Reimbursed'].includes(item.status);
-          return <tr key={item.id}>
-            <td>{index + 1}</td><td>{dateLabel(item.created_at)}</td>
+          const combinedUserRow = !user?.is_nexg_admin && group.items.length > 1;
+          const groupStatus = combinedUserRow && group.items.some((entry) => entry.status !== item.status) ? 'Mixed' : item.status;
+          return <React.Fragment key={item.id}><tr>
+            <td>{user?.is_nexg_admin ? expenses.indexOf(item) + 1 : groupIndex + 1}</td><td>{dateLabel(item.created_at)}</td>
             {user?.is_nexg_admin && <><td><strong>{item.submitted_by}</strong></td><td>{item.rank || 'Employee'}</td></>}
             <td><span className="expense-category" style={{ color: colors[categories.indexOf(item.category)] || colors[5] }}>{item.category}</span></td>
-            <td className="expense-particulars"><strong>{item.particulars}</strong>{item.issue_note && <small className="expense-issue-note">Issue: {item.issue_note}</small>}</td>
-            <td className="expense-amount">{money(item.amount)}</td><td>{item.expense_type}</td>
-            <td><span className={`expense-status ${item.status.toLowerCase().replace(/\s+/g, '-')}`}>{item.status === 'Reimbursed' ? 'Paid' : item.status}</span></td>
+            <td className="expense-particulars">{combinedUserRow ? <div className="expense-particular-list">{group.items.map((entry, index) => <div key={entry.id}><strong>{index + 1}. {entry.particulars}</strong><small>{money(entry.amount)} · {entry.status === 'Reimbursed' ? 'Paid' : entry.status}</small>{entry.issue_note && <small className="expense-issue-note">Issue: {entry.issue_note}</small>}</div>)}</div> : <><strong>{item.particulars}</strong>{item.issue_note && <small className="expense-issue-note">Issue: {item.issue_note}</small>}</>}</td>
+            <td className="expense-amount">{money(combinedUserRow ? group.items.reduce((sum, entry) => sum + Number(entry.amount), 0) : item.amount)}</td><td>{item.expense_type}</td>
+            <td><span className={`expense-status ${groupStatus.toLowerCase().replace(/\s+/g, '-')}`}>{groupStatus === 'Reimbursed' ? 'Paid' : groupStatus}</span></td>
             <td>{item.payment_method || '-'}</td>
             <td>{(user?.is_nexg_admin || item.attachment_name) ? <div className="expense-actions"><button aria-label={`Actions for ${item.particulars}`} aria-expanded={activeMenu?.id === item.id} onClick={(event) => toggleActions(event, item.id)}>...</button>
               {activeMenu?.id === item.id && createPortal(<div ref={actionMenuRef} className="expense-action-menu">
@@ -207,9 +243,26 @@ export default function ExpenseTracker({ user }) {
                 {user?.is_nexg_admin && !item.attachment_name && finalStatus && <span className="expense-menu-locked">Final status - no changes</span>}
               </div>, document.body)}
             </div> : '-'}</td>
-          </tr>;
-        })}</tbody>
+          </tr>{user?.is_nexg_admin && group.items.length > 1 && rowIndex === shownItems.length - 1 && <tr className="expense-batch-row"><td colSpan={11}><button type="button" onClick={() => setExpandedBatches((current) => current.includes(group.id) ? current.filter((id) => id !== group.id) : [...current, group.id])}>{expandedBatches.includes(group.id) ? 'Show less' : `Load more (${group.items.length - 1} more particulars)`}</button></td></tr>}</React.Fragment>;
+        }))}</tbody>
       </table></div>
+      <div className="expense-mobile-list">{visibleGroups.map((group) => {
+        const first = group.items[0];
+        const statuses = [...new Set(group.items.map((item) => item.status))];
+        const groupTotal = group.items.reduce((sum, item) => sum + Number(item.amount), 0);
+        const expanded = expandedCards.includes(group.id);
+        const singleEditable = user?.is_nexg_admin && group.items.length === 1 && !['Rejected', 'Reimbursed'].includes(first.status);
+        return <article className="expense-mobile-card" key={group.id}>
+          <div className="expense-mobile-top"><span className="expense-mobile-id">EXP-{String(first.id).padStart(5, '0')}</span><div className="expense-mobile-badges">{statuses.map((status) => <span key={status} className={`expense-mobile-badge ${status.toLowerCase().replace(/\s+/g, '-')}`}>{status === 'Reimbursed' ? 'Paid' : status}</span>)}</div></div>
+          <h3>{user?.is_nexg_admin ? first.submitted_by : first.category}</h3>
+          <p className="expense-mobile-date">{dateLabel(first.created_at)}{user?.is_nexg_admin && first.rank ? ` · ${first.rank}` : ''}</p>
+          <p className="expense-mobile-meta">{user?.is_nexg_admin && <><span>{first.category}</span> · </>}{first.expense_type} · {first.payment_method}</p>
+          <div className="expense-mobile-summary">{group.items.slice(0, expanded ? group.items.length : 2).map((item) => <div key={item.id}><span>{item.particulars}</span><strong>{money(item.amount)}</strong></div>)}{!expanded && group.items.length > 2 && <small>+{group.items.length - 2} more particulars</small>}</div>
+          <div className="expense-mobile-total"><span>{group.items.length} {group.items.length === 1 ? 'particular' : 'particulars'} · Total</span><strong>{money(groupTotal)}</strong></div>
+          {expanded && <div className="expense-mobile-details"><p>Expense details</p>{group.items.map((item) => <div className="expense-mobile-detail" key={item.id}><div><strong>{item.particulars}</strong><span>{money(item.amount)} · {item.status === 'Reimbursed' ? 'Paid' : item.status}</span>{item.issue_note && <span className="expense-mobile-issue">Issue: {item.issue_note}</span>}</div>{user?.is_nexg_admin && !['Rejected', 'Reimbursed'].includes(item.status) && <div className="expense-mobile-detail-actions"><button type="button" onClick={() => openEditor(item.id)}>Edit</button><button type="button" onClick={() => openIssue(item)}>Raise issue</button><button type="button" onClick={() => setStatus(item.id, 'Reimbursed')}>Mark paid</button><button type="button" className="danger" onClick={() => setStatus(item.id, 'Rejected')}>Reject</button></div>}{item.attachment_name && <button type="button" className="expense-mobile-receipt" onClick={() => download(item)}><Download size={14} /> Download receipt</button>}</div>)}</div>}
+          <div className="expense-mobile-actions"><button type="button" aria-label={`${expanded ? 'Hide' : 'View'} details for expense ${first.id}`} aria-expanded={expanded} onClick={() => setExpandedCards((current) => current.includes(group.id) ? current.filter((id) => id !== group.id) : [...current, group.id])}><Eye size={20} /></button>{singleEditable && <><button type="button" aria-label={`Edit expense ${first.id}`} onClick={() => openEditor(first.id)}><Pencil size={19} /></button><button type="button" className="danger" aria-label={`Reject expense ${first.id}`} onClick={() => setStatus(first.id, 'Rejected')}><X size={21} /></button></>}</div>
+        </article>;
+      })}</div>
       {!loading && !expenses.length && <div className="expense-empty">{user?.is_nexg_admin ? 'User expenses will appear here once recorded.' : 'No expenses yet. Add your first expense to start tracking.'}</div>}
     </section>
     <div className="expense-charts"><section className="expense-panel expense-chart-card"><div className="expense-chart-heading"><span className="expense-chart-heading-icon"><PieChart size={18} /></span><div><span className="expense-section-kicker">BREAKDOWN</span><h2>By category</h2></div></div><div className="expense-category-chart"><div className="expense-donut" style={{ background: `conic-gradient(${donut})` }}><div><strong>{money(total)}</strong><small>Total spent</small></div></div><div className="expense-legend">{categoryTotals.map((item) => <div key={item.category}><span className="expense-legend-dot" style={{ background: item.color }} /> <span>{item.category}</span><strong>{total ? Math.round(item.total / total * 100) : 0}%</strong></div>)}</div></div></section><section className="expense-panel expense-chart-card"><div className="expense-chart-heading"><span className="expense-chart-heading-icon green"><TrendingUp size={18} /></span><div><span className="expense-section-kicker">OVERVIEW</span><h2>Monthly trend</h2></div><span className="expense-chart-period">Last 6 months</span></div><div className="expense-month-chart">{monthData.map((item) => <div className="expense-month" key={item.label}><div className="expense-bar-track"><span title={`${item.label}: ${money(item.total)}`} style={{ height: `${item.total ? Math.max(5, item.total / maxMonth * 100) : 2}%` }} /></div><small>{item.label}</small></div>)}</div></section></div>
@@ -222,6 +275,34 @@ export default function ExpenseTracker({ user }) {
         <div className="expense-issue-actions"><button type="button" onClick={() => setIssueExpense(null)}>Cancel</button><button className="expense-primary" type="submit">Save issue</button></div>
       </form>
     </div>}
-    {formOpen && (!user?.is_nexg_admin || editingExpense) && <div className="expense-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setFormOpen(false); }}><aside className="expense-drawer" role="dialog" aria-modal="true" aria-labelledby="expense-form-title"><div className="expense-drawer-head"><h2 id="expense-form-title">{editingExpense ? `Edit ${editingExpense.submitted_by || "Employee"} Expense` : "Add New Expense"}</h2><button aria-label="Close expense form" onClick={() => setFormOpen(false)}><X size={19} /></button></div>{error && <div className="expense-error" role="alert">{error}</div>}<form onSubmit={submit}><label>Category <em>*</em><span className="expense-select"><select value={form.category} onChange={(event) => update('category', event.target.value)}>{categories.map((category) => <option key={category}>{category}</option>)}</select><ChevronDown size={16} /></span></label><label>Particulars <em>*</em><input required maxLength={500} value={form.particulars} onChange={(event) => update('particulars', event.target.value)} placeholder="What was this expense for?" /></label><label>Expense Amount (₹) <em>*</em><input required type="number" min="0.01" step="0.01" value={form.amount} onChange={(event) => update('amount', event.target.value)} placeholder="0.00" /></label><label>Advance / Reimbursement <em>*</em><span className="expense-select"><select value={form.expense_type} onChange={(event) => update('expense_type', event.target.value)}><option>Reimbursement</option><option>Advance</option></select><ChevronDown size={16} /></span></label><fieldset><legend>Payment Method <em>*</em></legend><label><input type="radio" name="payment" checked={form.payment_method === 'UPI'} onChange={() => update('payment_method', 'UPI')} /> UPI</label><label><input type="radio" name="payment" checked={form.payment_method === 'NEFT'} onChange={() => update('payment_method', 'NEFT')} /> NEFT</label></fieldset>{form.payment_method === 'UPI' ? <label>UPI ID <em>*</em><input required value={form.upi_id} onChange={(event) => update('upi_id', event.target.value)} placeholder="name@bank" /></label> : <><label>Account Number <em>*</em><input required value={form.account_number} onChange={(event) => update('account_number', event.target.value)} placeholder="Enter account number" /></label><label>IFSC Code <em>*</em><input required value={form.ifsc_code} onChange={(event) => update('ifsc_code', event.target.value)} placeholder="Enter IFSC code" /></label></>}<label>Attachment (Optional)<span className="expense-upload"><UploadCloud size={19} /><span>{form.attachment ? form.attachment.name : editingExpense?.attachment_name || 'Upload bill / receipt'}</span><small>PDF, JPG, PNG (Max 5MB)</small><input type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" onChange={(event) => update('attachment', event.target.files?.[0] || null)} /></span></label><div className="expense-form-actions"><button type="button" onClick={() => setFormOpen(false)}>Cancel</button><button className="expense-primary" disabled={saving}>{saving ? 'Saving...' : editingExpense ? 'Save Changes' : 'Save Expense'}</button></div></form></aside></div>}
+    {formOpen && (!user?.is_nexg_admin || editingExpense) && <div className="expense-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setFormOpen(false); }}>
+      <aside className="expense-drawer" role="dialog" aria-modal="true" aria-labelledby="expense-form-title">
+        <div className="expense-drawer-head"><h2 id="expense-form-title">{editingExpense ? `Edit ${editingExpense.submitted_by || 'Employee'} Expense` : reviewOpen ? 'Review Expense Bill' : 'Add New Expense'}</h2><button type="button" aria-label="Close expense form" onClick={() => setFormOpen(false)}><X size={19} /></button></div>
+        {error && <div className="expense-error" role="alert">{error}</div>}
+        <form onSubmit={submit}>
+          {reviewOpen && !editingExpense ? <>
+            <section className="expense-bill-preview" aria-label="Expense bill details">
+              <div className="expense-bill-preview-head"><span>EXPENSE BILL</span><strong>{money([form, ...extraItems].reduce((sum, item) => sum + Number(item.amount || 0), 0))}</strong><small>{[form, ...extraItems].length} {extraItems.length ? 'expenses' : 'expense'} | {new Date().toLocaleDateString('en-IN')}</small></div>
+              <dl className="expense-bill-preview-facts"><div><dt>Submitted by</dt><dd>{user?.name}</dd></div><div><dt>Category</dt><dd>{form.category}</dd></div><div><dt>Type</dt><dd>{form.expense_type}</dd></div><div><dt>Payment method</dt><dd>{form.payment_method}</dd></div><div><dt>{form.payment_method === 'UPI' ? 'UPI ID' : 'Account number'}</dt><dd>{form.payment_method === 'UPI' ? form.upi_id : form.account_number}</dd></div>{form.payment_method === 'NEFT' && <div><dt>IFSC code</dt><dd>{form.ifsc_code}</dd></div>}{form.attachment && <div><dt>Receipt</dt><dd>{form.attachment.name}</dd></div>}</dl>
+              <div className="expense-bill-preview-items"><h3>Particulars</h3>{[form, ...extraItems].map((item, index) => <div key={index}><span><small>{index + 1}.</small> {item.particulars}</span><strong>{money(item.amount)}</strong></div>)}</div>
+              <div className="expense-bill-preview-total"><span>Total</span><strong>{money([form, ...extraItems].reduce((sum, item) => sum + Number(item.amount || 0), 0))}</strong></div>
+            </section>
+            <div className="expense-form-actions"><button type="button" onClick={() => { setReviewOpen(false); setActiveItem(extraItems.length); }}>Back to edit</button><button className="expense-primary" disabled={saving}>{saving ? 'Saving...' : 'Save Expenses'}</button></div>
+          </> : <>
+            <label>Category <em>*</em><span className="expense-select"><select value={form.category} onChange={(event) => update('category', event.target.value)}>{categories.map((category) => <option key={category}>{category}</option>)}</select><ChevronDown size={16} /></span></label>
+            <div className="expense-items-list">{[form, ...extraItems].map((item, index) => <section className={`expense-item-fields ${activeItem === index ? 'is-open' : ''}`} key={index}>
+              <div className="expense-item-heading"><button type="button" className="expense-item-toggle" aria-expanded={activeItem === index} onClick={() => setActiveItem(index)}><span>{item.particulars || `Particular ${index + 1}`}<small>{activeItem === index ? `Item ${index + 1}` : item.amount ? money(item.amount) : 'Needs details'}</small></span><ChevronDown size={16} /></button>{index > 0 && <button type="button" className="expense-item-remove" aria-label={`Remove particular ${index + 1}`} onClick={() => { setExtraItems((current) => current.filter((_, itemIndex) => itemIndex !== index - 1)); setActiveItem(0); }}><X size={16} /></button>}</div>
+              {activeItem === index && <div className="expense-item-inputs"><label>Particulars <em>*</em><input required maxLength={500} value={item.particulars} onChange={(event) => index === 0 ? update('particulars', event.target.value) : updateExtraItem(index - 1, 'particulars', event.target.value)} placeholder="What was this expense for?" /></label><label>Expense Amount (INR) <em>*</em><input required type="number" min="0.01" step="0.01" value={item.amount} onChange={(event) => index === 0 ? update('amount', event.target.value) : updateExtraItem(index - 1, 'amount', event.target.value)} placeholder="0.00" /></label></div>}
+            </section>)}</div>
+            {!editingExpense && extraItems.length < 19 && <button type="button" className="expense-add-particular" onClick={() => { setExtraItems((current) => [...current, { particulars: '', amount: '' }]); setActiveItem(extraItems.length + 1); }}><Plus size={16} /> Add another particular</button>}
+            <label>Advance / Reimbursement <em>*</em><span className="expense-select"><select value={form.expense_type} onChange={(event) => update('expense_type', event.target.value)}><option>Reimbursement</option><option>Advance</option></select><ChevronDown size={16} /></span></label>
+            <fieldset><legend>Payment Method <em>*</em></legend><label><input type="radio" name="payment" checked={form.payment_method === 'UPI'} onChange={() => update('payment_method', 'UPI')} /> UPI</label><label><input type="radio" name="payment" checked={form.payment_method === 'NEFT'} onChange={() => update('payment_method', 'NEFT')} /> NEFT</label></fieldset>
+            {form.payment_method === 'UPI' ? <label>UPI ID <em>*</em><input required value={form.upi_id} onChange={(event) => update('upi_id', event.target.value)} placeholder="name@bank" /></label> : <><label>Account Number <em>*</em><input required value={form.account_number} onChange={(event) => update('account_number', event.target.value)} placeholder="Enter account number" /></label><label>IFSC Code <em>*</em><input required value={form.ifsc_code} onChange={(event) => update('ifsc_code', event.target.value)} placeholder="Enter IFSC code" /></label></>}
+            <label>Attachment (Optional)<span className="expense-upload"><UploadCloud size={19} /><span>{form.attachment ? form.attachment.name : editingExpense?.attachment_name || 'Upload bill / receipt'}</span><small>PDF, JPG, PNG (Max 5MB)</small><input type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" onChange={(event) => update('attachment', event.target.files?.[0] || null)} /></span></label>
+            <div className="expense-form-actions"><button type="button" onClick={() => setFormOpen(false)}>Cancel</button>{editingExpense ? <button className="expense-primary" disabled={saving}>{saving ? 'Saving...' : 'Save Changes'}</button> : <button type="button" className="expense-primary" onClick={reviewExpense}>Review &amp; Save</button>}</div>
+          </>}
+        </form>
+      </aside>
+    </div>}
   </div>;
 }

@@ -180,7 +180,7 @@ function App() {
               <Route path="/data-library" element={hasPermission('data_library') ? <DataLibrary /> : <Navigate to="/" replace />} />
               <Route path="/data-analytics" element={hasPermission('data_analytics') ? <DataAnalytics /> : <Navigate to="/" replace />} />
               <Route path="/used-oil-india" element={hasPermission('used_oil_india') ? <UsedOilIndia /> : <Navigate to="/" replace />} />
-              <Route path="/expense-tracker" element={hasPermission('expense_tracker') ? <ExpenseTracker user={user} /> : <Navigate to="/" replace />} />
+              <Route path="/expense-tracker" element={<ExpenseTracker user={user} />} />
               <Route path="/settings" element={hasPermission('settings') ? <SettingsPage appearance={appearance} onAppearanceChange={updateAppearance} /> : <Navigate to="/" replace />} />
               <Route path="/employee-db" element={user.is_nexg_admin ? <EmployeeDB onAdminUnlocked={setIsAdmin} /> : <Navigate to="/" replace />} />
               <Route path="/admin" element={<AdminPage onAdminUnlocked={setIsAdmin} />} />

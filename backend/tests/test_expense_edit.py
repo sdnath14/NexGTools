@@ -14,7 +14,7 @@ class ExpenseEditTests(unittest.TestCase):
             expense_type='Reimbursement', payment_method='UPI', upi_id='team@bank')
 
     def test_only_admin_can_read_and_edit(self):
-        with patch.object(main, '_require_permission', return_value={'id': 2, 'is_nexg_admin': False}):
+        with patch.object(main, '_require_user', return_value={'id': 2, 'is_nexg_admin': False}):
             for action in (lambda: main.get_expense_for_edit(7, 'token'),
                            lambda: main.edit_expense(7, self.payload, 'token'),
                            lambda: main.update_expense_status(7, main.ExpenseStatusRequest(status='Approved'), 'token')):
@@ -27,24 +27,57 @@ class ExpenseEditTests(unittest.TestCase):
         cursor.lastrowid = 23
         connection = MagicMock()
         connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
-        with patch.object(main, '_require_permission', return_value={'id': 8, 'is_nexg_admin': False}), \
+        with patch.object(main, '_require_user', return_value={'id': 8, 'is_nexg_admin': False, 'permissions': []}), \
              patch.object(main, 'db_connection', return_value=connection):
             self.assertEqual(main.create_expense(self.payload, 'token'), {'id': 23})
         sql, values = cursor.execute.call_args.args
         self.assertIn('INSERT INTO expenses', sql)
         self.assertEqual(values[0], 8)
         self.assertEqual(values[3], Decimal('215.50'))
-        with patch.object(main, '_require_permission', return_value={'id': 1, 'is_nexg_admin': True}):
+        with patch.object(main, '_require_user', return_value={'id': 1, 'is_nexg_admin': True}):
             with self.assertRaises(HTTPException) as error:
                 main.create_expense(self.payload, 'token')
             self.assertEqual(error.exception.status_code, 403)
+
+    def test_batch_saves_separate_expenses_with_one_group_id(self):
+        payload = main.ExpenseBatchRequest(
+            category='Food', expense_type='Reimbursement', payment_method='UPI', upi_id='team@bank',
+            items=[{'particulars': 'Lunch', 'amount': '215.50'},
+                   {'particulars': 'Tea', 'amount': '40.00'}])
+        cursor = MagicMock()
+        cursor.lastrowid = 23
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_user', return_value={'id': 8, 'is_nexg_admin': False, 'permissions': []}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            result = main.create_expense_batch(payload, 'token')
+        self.assertEqual(result['ids'], [23, 23])
+        self.assertEqual(cursor.execute.call_count, 2)
+        first = cursor.execute.call_args_list[0].args[1]
+        second = cursor.execute.call_args_list[1].args[1]
+        self.assertEqual((first[2], first[3]), ('Lunch', Decimal('215.50')))
+        self.assertEqual((second[2], second[3]), ('Tea', Decimal('40.00')))
+        self.assertEqual(first[-1], second[-1])
+        self.assertEqual(first[-1], result['batch_id'])
+
+    def test_batch_rejects_blank_particular_without_writing(self):
+        payload = main.ExpenseBatchRequest(
+            category='Food', expense_type='Reimbursement', payment_method='UPI', upi_id='team@bank',
+            items=[{'particulars': 'Lunch', 'amount': '215.50'},
+                   {'particulars': ' ', 'amount': '40.00'}])
+        with patch.object(main, '_require_user', return_value={'id': 8, 'is_nexg_admin': False}), \
+             patch.object(main, 'db_connection') as connection:
+            with self.assertRaises(HTTPException) as error:
+                main.create_expense_batch(payload, 'token')
+        self.assertEqual(error.exception.status_code, 400)
+        connection.assert_not_called()
 
     def test_admin_edit_updates_fields_without_changing_owner_or_status(self):
         cursor = MagicMock()
         cursor.fetchone.return_value = {'status': 'Issue Raised'}
         connection = MagicMock()
         connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
-        with patch.object(main, '_require_permission', return_value={'id': 1, 'is_nexg_admin': True}), \
+        with patch.object(main, '_require_user', return_value={'id': 1, 'is_nexg_admin': True}), \
              patch.object(main, 'db_connection', return_value=connection):
             self.assertEqual(main.edit_expense(7, self.payload, 'token'), {'id': 7})
         sql, values = cursor.execute.call_args_list[-1].args
@@ -59,7 +92,7 @@ class ExpenseEditTests(unittest.TestCase):
         cursor.fetchone.return_value = None
         connection = MagicMock()
         connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
-        with patch.object(main, '_require_permission', return_value={'id': 1, 'is_nexg_admin': True}), \
+        with patch.object(main, '_require_user', return_value={'id': 1, 'is_nexg_admin': True}), \
              patch.object(main, 'db_connection', return_value=connection):
             with self.assertRaises(HTTPException) as error:
                 main.edit_expense(999, self.payload, 'token')
@@ -70,7 +103,7 @@ class ExpenseEditTests(unittest.TestCase):
         cursor.fetchone.return_value = {'status': 'Reimbursed'}
         connection = MagicMock()
         connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
-        with patch.object(main, '_require_permission', return_value={'id': 1, 'is_nexg_admin': True}), \
+        with patch.object(main, '_require_user', return_value={'id': 1, 'is_nexg_admin': True}), \
              patch.object(main, 'db_connection', return_value=connection):
             for action in (lambda: main.edit_expense(7, self.payload, 'token'),
                            lambda: main.update_expense_status(7, main.ExpenseStatusRequest(status='Rejected'), 'token')):
@@ -83,7 +116,7 @@ class ExpenseEditTests(unittest.TestCase):
         cursor.fetchone.return_value = {'status': 'Pending'}
         connection = MagicMock()
         connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
-        with patch.object(main, '_require_permission', return_value={'id': 1, 'is_nexg_admin': True}), \
+        with patch.object(main, '_require_user', return_value={'id': 1, 'is_nexg_admin': True}), \
              patch.object(main, 'db_connection', return_value=connection):
             with self.assertRaises(HTTPException) as error:
                 main.update_expense_status(7, main.ExpenseStatusRequest(status='Issue Raised'), 'token')

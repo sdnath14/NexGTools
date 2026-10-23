@@ -72,14 +72,19 @@ def initialize_database() -> None:
                     attachment_name VARCHAR(255),
                     attachment_type VARCHAR(100),
                     attachment_data MEDIUMBLOB,
+                    batch_id CHAR(36) NULL,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     INDEX idx_expenses_created (created_at),
-                    INDEX idx_expenses_user (user_id)
+                    INDEX idx_expenses_user (user_id),
+                    INDEX idx_expenses_batch (batch_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
             cursor.execute("SELECT COLUMN_NAME AS column_name FROM information_schema.columns WHERE table_schema = %s AND table_name = 'expenses'", (settings.mysql_database,))
             if "issue_note" not in {row["column_name"] for row in cursor.fetchall()}:
                 cursor.execute("ALTER TABLE expenses ADD COLUMN issue_note VARCHAR(500) NULL AFTER status")
+            cursor.execute("SELECT COLUMN_NAME AS column_name FROM information_schema.columns WHERE table_schema = %s AND table_name = 'expenses'", (settings.mysql_database,))
+            if "batch_id" not in {row["column_name"] for row in cursor.fetchall()}:
+                cursor.execute("ALTER TABLE expenses ADD COLUMN batch_id CHAR(36) NULL AFTER attachment_data, ADD INDEX idx_expenses_batch (batch_id)")
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS lead_searches (

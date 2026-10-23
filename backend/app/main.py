@@ -626,6 +626,24 @@ class ExpenseRequest(BaseModel):
     attachment_base64: str = Field(default='')
 
 
+class ExpenseLine(BaseModel):
+    particulars: str = Field(min_length=1, max_length=500)
+    amount: Decimal = Field(gt=0, le=9999999999)
+
+
+class ExpenseBatchRequest(BaseModel):
+    category: str = Field(min_length=1, max_length=80)
+    expense_type: str
+    payment_method: str
+    upi_id: str = Field(default='', max_length=255)
+    account_number: str = Field(default='', max_length=80)
+    ifsc_code: str = Field(default='', max_length=40)
+    attachment_name: str = Field(default='', max_length=255)
+    attachment_type: str = Field(default='')
+    attachment_base64: str = Field(default='')
+    items: list[ExpenseLine] = Field(min_length=2, max_length=20)
+
+
 class ExpenseStatusRequest(BaseModel):
     status: str
     issue_note: str = Field(default='', max_length=500)
@@ -826,13 +844,13 @@ def _expense_row(row: dict[str, Any]) -> dict[str, Any]:
 
 @app.get('/api/expenses')
 def list_expenses(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_permission(authorization, 'expense_tracker')
+    user = _require_user(authorization)
     with db_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute('''SELECT e.id, e.user_id, u.name AS submitted_by,
                               COALESCE(NULLIF(p.job_title, ''), NULLIF(NULLIF(r.name, 'Member'), ''), 'Employee') AS `rank`,
                               e.category, e.particulars, e.amount, e.expense_type, e.payment_method,
-                              e.status, e.issue_note, e.attachment_name, e.created_at
+                              e.status, e.issue_note, e.attachment_name, e.batch_id, e.created_at
                               FROM expenses e JOIN users u ON u.id = e.user_id
                               LEFT JOIN employee_profiles p ON p.user_id = u.id
                               LEFT JOIN roles r ON r.id = u.role_id
@@ -845,7 +863,7 @@ def list_expenses(authorization: str | None = Header(default=None)) -> dict[str,
 @app.get('/api/expenses/bill')
 def expense_bill(month: str = '', user_id: int | None = Query(default=None, ge=1),
                  authorization: str | None = Header(default=None)):
-    user = _require_permission(authorization, 'expense_tracker')
+    user = _require_user(authorization)
     if user_id is not None and not user.get('is_nexg_admin') and user_id != user['id']:
         raise HTTPException(status_code=403, detail='You can only generate your own expense bill.')
     owner_id = user_id if user.get('is_nexg_admin') else user['id']
@@ -882,13 +900,9 @@ def expense_bill(month: str = '', user_id: int | None = Query(default=None, ge=1
                              headers={'Content-Disposition': f'attachment; filename="{filename}"'})
 
 
-@app.post('/api/expenses')
-def create_expense(payload: ExpenseRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_permission(authorization, 'expense_tracker')
-    if user.get('is_nexg_admin'):
-        raise HTTPException(status_code=403, detail='Administrators can review expenses but cannot submit them.')
-    if not payload.category.strip() or not payload.particulars.strip():
-        raise HTTPException(status_code=400, detail='Category and particulars are required.')
+def _validate_expense_submission(payload: ExpenseRequest | ExpenseBatchRequest) -> bytes | None:
+    if not payload.category.strip():
+        raise HTTPException(status_code=400, detail='Category is required.')
     if payload.expense_type not in ('Advance', 'Reimbursement') or payload.payment_method not in ('UPI', 'NEFT'):
         raise HTTPException(status_code=400, detail='Choose a valid expense type and payment method.')
     if payload.payment_method == 'UPI' and not payload.upi_id.strip():
@@ -907,24 +921,60 @@ def create_expense(payload: ExpenseRequest, authorization: str | None = Header(d
             raise HTTPException(status_code=400, detail='Invalid attachment.')
         if len(attachment) > 5 * 1024 * 1024:
             raise HTTPException(status_code=400, detail='Attachment must be at most 5 MB.')
+    return attachment
+
+
+def _insert_expense(cursor, user_id: int, payload: ExpenseRequest | ExpenseBatchRequest,
+                    particulars: str, amount: Decimal, attachment: bytes | None,
+                    batch_id: str | None = None) -> int:
+    cursor.execute('''INSERT INTO expenses (user_id, category, particulars, amount, expense_type,
+                      payment_method, upi_id, account_number, ifsc_code, attachment_name,
+                      attachment_type, attachment_data, batch_id)
+                      VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''',
+                   (user_id, payload.category.strip(), particulars.strip(),
+                    amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                    payload.expense_type, payload.payment_method,
+                    payload.upi_id.strip() if payload.payment_method == 'UPI' else '',
+                    payload.account_number.strip() if payload.payment_method == 'NEFT' else '',
+                    payload.ifsc_code.strip().upper() if payload.payment_method == 'NEFT' else '',
+                    payload.attachment_name if attachment else None,
+                    payload.attachment_type if attachment else None, attachment, batch_id))
+    return cursor.lastrowid
+
+
+@app.post('/api/expenses')
+def create_expense(payload: ExpenseRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    if user.get('is_nexg_admin'):
+        raise HTTPException(status_code=403, detail='Administrators can review expenses but cannot submit them.')
+    if not payload.particulars.strip():
+        raise HTTPException(status_code=400, detail='Particulars are required.')
+    attachment = _validate_expense_submission(payload)
     with db_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute('''INSERT INTO expenses (user_id, category, particulars, amount, expense_type,
-                              payment_method, upi_id, account_number, ifsc_code, attachment_name,
-                              attachment_type, attachment_data) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''',
-                           (user['id'], payload.category.strip(), payload.particulars.strip(),
-                            payload.amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
-                            payload.expense_type, payload.payment_method, payload.upi_id.strip() if payload.payment_method == 'UPI' else '',
-                            payload.account_number.strip() if payload.payment_method == 'NEFT' else '',
-                            payload.ifsc_code.strip().upper() if payload.payment_method == 'NEFT' else '',
-                            payload.attachment_name if attachment else None, payload.attachment_type if attachment else None, attachment))
-            expense_id = cursor.lastrowid
+            expense_id = _insert_expense(cursor, user['id'], payload, payload.particulars, payload.amount, attachment)
     return {'id': expense_id}
+
+
+@app.post('/api/expenses/batch')
+def create_expense_batch(payload: ExpenseBatchRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    if user.get('is_nexg_admin'):
+        raise HTTPException(status_code=403, detail='Administrators can review expenses but cannot submit them.')
+    if any(not item.particulars.strip() for item in payload.items):
+        raise HTTPException(status_code=400, detail='Particulars are required for every expense.')
+    attachment = _validate_expense_submission(payload)
+    batch_id = str(uuid.uuid4())
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            expense_ids = [_insert_expense(cursor, user['id'], payload, item.particulars, item.amount,
+                                           attachment, batch_id) for item in payload.items]
+    return {'ids': expense_ids, 'batch_id': batch_id}
 
 
 @app.get('/api/expenses/{expense_id}')
 def get_expense_for_edit(expense_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_permission(authorization, 'expense_tracker')
+    user = _require_user(authorization)
     if not user.get('is_nexg_admin'):
         raise HTTPException(status_code=403, detail='Only an administrator can edit expenses.')
     with db_connection() as connection:
@@ -942,7 +992,7 @@ def get_expense_for_edit(expense_id: int, authorization: str | None = Header(def
 @app.put('/api/expenses/{expense_id}')
 def edit_expense(expense_id: int, payload: ExpenseRequest,
                  authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    user = _require_permission(authorization, 'expense_tracker')
+    user = _require_user(authorization)
     if not user.get('is_nexg_admin'):
         raise HTTPException(status_code=403, detail='Only an administrator can edit expenses.')
     if not payload.category.strip() or not payload.particulars.strip():
@@ -990,7 +1040,7 @@ def edit_expense(expense_id: int, payload: ExpenseRequest,
 
 @app.patch('/api/expenses/{expense_id}/status')
 def update_expense_status(expense_id: int, payload: ExpenseStatusRequest, authorization: str | None = Header(default=None)) -> dict[str, str]:
-    user = _require_permission(authorization, 'expense_tracker')
+    user = _require_user(authorization)
     if not user.get('is_nexg_admin'):
         raise HTTPException(status_code=403, detail='Only an administrator can update expense status.')
     if payload.status not in ('Issue Raised', 'Rejected', 'Reimbursed'):
@@ -1015,7 +1065,7 @@ def update_expense_status(expense_id: int, payload: ExpenseStatusRequest, author
 
 @app.get('/api/expenses/{expense_id}/attachment')
 def expense_attachment(expense_id: int, authorization: str | None = Header(default=None)):
-    user = _require_permission(authorization, 'expense_tracker')
+    user = _require_user(authorization)
     with db_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute('''SELECT attachment_name, attachment_type, attachment_data FROM expenses
