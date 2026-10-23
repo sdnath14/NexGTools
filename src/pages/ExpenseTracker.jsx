@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowRight, BarChart3, Check, ChevronDown, Clock3, Download, Eye, FileText, Pencil, PieChart, Plus, ReceiptText, TrendingUp, UploadCloud, UsersRound, Wallet, X } from 'lucide-react';
+import { BarChart3, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Clock3, Download, Eye, FileText, Pencil, PieChart, Plus, ReceiptText, Search, SlidersHorizontal, TrendingUp, UploadCloud, UsersRound, Wallet, X } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './ExpenseTracker.css';
 
@@ -9,6 +9,8 @@ const colors = ['#4b9cff', '#ffac3e', '#da72b7', '#9672ee', '#29a574', '#a7b2bf'
 const blank = { category: 'Travel', particulars: '', amount: '', expense_type: 'Reimbursement', payment_method: 'UPI', upi_id: '', account_number: '', ifsc_code: '', attachment: null };
 const money = (value) => `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 const dateLabel = (value) => new Date(value).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+const statusOptions = ['All', 'Pending', 'Approved', 'Rejected', 'Reimbursed', 'Issue Raised'];
+const pageSize = 8;
 
 export default function ExpenseTracker({ user }) {
   const [expenses, setExpenses] = useState([]);
@@ -23,7 +25,13 @@ export default function ExpenseTracker({ user }) {
   const [expandedCards, setExpandedCards] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [viewAll, setViewAll] = useState(false);
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('All');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [sortBy, setSortBy] = useState('date');
+  const [sortAscending, setSortAscending] = useState(false);
+  const [page, setPage] = useState(1);
   const [activeMenu, setActiveMenu] = useState(null);
   const actionMenuRef = useRef(null);
   const [issueExpense, setIssueExpense] = useState(null);
@@ -88,7 +96,36 @@ export default function ExpenseTracker({ user }) {
     });
     return groups;
   }, [expenses]);
-  const visibleGroups = viewAll ? expenseGroups : expenseGroups.slice(0, 5);
+  const scopedGroups = useMemo(() => expenseGroups.filter((group) => {
+    const first = group.items[0];
+    const query = searchTerm.trim().toLowerCase();
+    return (!billMonth || first.created_at?.startsWith(billMonth))
+      && (!billUser || !user?.is_nexg_admin || String(first.user_id) === billUser)
+      && (categoryFilter === 'All' || first.category === categoryFilter)
+      && (!query || group.items.some((item) => [item.category, item.particulars, item.submitted_by, item.expense_type].some((value) => String(value || '').toLowerCase().includes(query))));
+  }), [expenseGroups, billMonth, billUser, user?.is_nexg_admin, categoryFilter, searchTerm]);
+  const statusCounts = useMemo(() => Object.fromEntries(statusOptions.map((status) => [status, status === 'All' ? scopedGroups.length : scopedGroups.filter((group) => group.items.some((item) => item.status === status)).length])), [scopedGroups]);
+  const filteredGroups = useMemo(() => scopedGroups.filter((group) => statusFilter === 'All' || group.items.some((item) => item.status === statusFilter)).sort((a, b) => {
+    const value = (group) => {
+      const first = group.items[0];
+      if (sortBy === 'date') return new Date(first.created_at).getTime();
+      if (sortBy === 'amount') return group.items.reduce((sum, item) => sum + Number(item.amount), 0);
+      if (sortBy === 'particulars') return first.particulars.toLowerCase();
+      if (sortBy === 'status') return first.status.toLowerCase();
+      if (sortBy === 'type') return first.expense_type.toLowerCase();
+      if (sortBy === 'payment') return first.payment_method.toLowerCase();
+      return String(first.category || '').toLowerCase();
+    };
+    const left = value(a);
+    const right = value(b);
+    const comparison = typeof left === 'number' ? left - right : left.localeCompare(right);
+    return (sortAscending ? comparison : -comparison) || b.items[0].id - a.items[0].id;
+  }), [scopedGroups, statusFilter, sortBy, sortAscending]);
+  const pageCount = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
+  const visibleGroups = filteredGroups.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => { setPage(1); }, [statusFilter, searchTerm, categoryFilter, billMonth, billUser, sortBy, sortAscending]);
+  const sortTable = (field) => { setSortAscending((current) => sortBy === field ? !current : true); setSortBy(field); };
+  const monthRangeLabel = billMonth ? (() => { const [year, month] = billMonth.split('-').map(Number); const start = new Date(year, month - 1, 1); const end = new Date(year, month, 0); return `${dateLabel(start)} – ${dateLabel(end)}`; })() : 'All dates';
 
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const updateExtraItem = (index, key, value) => setExtraItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: value } : item));
@@ -207,30 +244,26 @@ export default function ExpenseTracker({ user }) {
     <section className="expense-stats" aria-label="Expense overview">
       {[{ label: 'Total Expenses', value: money(total), note: 'All recorded expenses', icon: Wallet, tone: 'green' }, { label: 'Pending Claims', value: pending, note: 'Awaiting approval', icon: Clock3, tone: 'orange' }, { label: 'Reimbursed', value: money(reimbursed), note: 'Paid claims', icon: FileText, tone: 'blue' }, { label: 'Total Entries', value: expenses.length, note: 'All time', icon: BarChart3, tone: 'purple' }].map((stat) => <article className={`expense-stat ${stat.tone}`} key={stat.label}><span className="expense-stat-icon"><stat.icon size={20} /></span><div><small>{stat.label}</small><strong>{loading ? '—' : stat.value}</strong><span>{stat.note}</span></div></article>)}
     </section>
-    <section className="expense-bill-controls" aria-label="Generate expense bill">
-      <div className="expense-bill-icon"><FileText size={21} /></div>
-      <div className="expense-bill-copy"><strong>Generate an expense bill</strong><span>Download a branded PDF with itemized entries and calculated totals.</span></div>
-      <div className="expense-bill-fields"><label>Period <input aria-label="Bill month, blank for all dates" type="month" value={billMonth} onChange={(event) => setBillMonth(event.target.value)} /></label>{user?.is_nexg_admin && <label>User <select aria-label="Bill user" value={billUser} onChange={(event) => setBillUser(event.target.value)}><option value="">All users</option>{billUsers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>}<button onClick={downloadBill} disabled={billBusy}><Download size={16} /> {billBusy ? 'Generating…' : 'Generate Bill'}</button></div>
-    </section>
     <section className="expense-panel expense-ledger">
-      <div className="expense-panel-head">
-        <div><span className="expense-section-kicker">ACTIVITY</span><h2>{user?.is_nexg_admin ? 'Admin Expense View' : 'Your Expenses'}</h2><p>{user?.is_nexg_admin ? 'Review claims and resolve payments from one place' : 'Your recorded claims and payment status'}</p></div>
-        <button onClick={() => setViewAll((value) => !value)}>{viewAll ? 'Show recent' : 'View all'} <ArrowRight size={15} /></button>
+      <div className="expense-ledger-title">
+        <div className="expense-ledger-heading"><span className="expense-ledger-icon"><Wallet size={24} /></span><div><h2>{user?.is_nexg_admin ? 'Admin Expense View' : 'Your Expenses'}</h2><p>{user?.is_nexg_admin ? 'Review claims and resolve payments from one place' : 'Your recorded claims and payment status'}</p></div></div>
+        <div className="expense-ledger-controls">{user?.is_nexg_admin && <select aria-label="Bill user" value={billUser} onChange={(event) => setBillUser(event.target.value)}><option value="">All users</option>{billUsers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>}<label className="expense-period"><CalendarDays size={18} /><span>{monthRangeLabel}</span><ChevronDown size={16} /><input aria-label="Expense month, blank for all dates" type="month" value={billMonth} onChange={(event) => setBillMonth(event.target.value)} /></label>{billMonth && <button className="expense-clear-period" type="button" onClick={() => setBillMonth('')} aria-label="Show all dates"><X size={16} /></button>}<button className="expense-generate" type="button" onClick={downloadBill} disabled={billBusy}><Download size={18} /> {billBusy ? 'Generating...' : 'Generate Bill'}</button></div>
       </div>
+      <div className="expense-ledger-body"><div className="expense-ledger-toolbar"><div className="expense-filter-tabs" aria-label="Filter by status">{statusOptions.filter((status) => ['All', 'Pending', 'Approved', 'Rejected'].includes(status) || statusCounts[status] > 0 || statusFilter === status).map((status) => <button key={status} type="button" className={statusFilter === status ? 'active' : ''} onClick={() => setStatusFilter(status)}>{status !== 'All' && <span className={`expense-filter-dot ${status.toLowerCase().replace(/\s+/g, '-')}`} />}{status === 'Reimbursed' ? 'Paid' : status} ({statusCounts[status]})</button>)}</div><div className="expense-search-controls"><label className="expense-search"><Search size={19} /><input type="search" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search by category, particulars..." aria-label="Search expenses" /></label><div className="expense-category-filter"><button type="button" className={categoryFilter !== 'All' ? 'is-filtered' : ''} aria-label="Filter by category" aria-expanded={filterOpen} onClick={() => setFilterOpen((current) => !current)}><SlidersHorizontal size={19} /></button>{filterOpen && <div className="expense-category-popover"><label>Category<select value={categoryFilter} onChange={(event) => { setCategoryFilter(event.target.value); setFilterOpen(false); }}><option>All</option>{categories.map((category) => <option key={category}>{category}</option>)}</select></label></div>}</div></div></div>
       <div className="expense-table-wrap"><table className="expense-table">
-        <thead><tr><th>Sl.</th><th>Date</th>{user?.is_nexg_admin && <><th>User</th><th>Rank</th></>}<th>Category</th><th>Particulars</th><th>Amount</th><th>Type</th><th>Status</th><th>Pay Method</th><th>Action</th></tr></thead>
+        <thead><tr><th>#</th><th><button type="button" onClick={() => sortTable('date')}>Date <ChevronsUpDown size={13} /></button></th>{user?.is_nexg_admin && <th>User</th>}<th><button type="button" onClick={() => sortTable('category')}>Category <ChevronsUpDown size={13} /></button></th><th><button type="button" onClick={() => sortTable('particulars')}>Particulars <ChevronsUpDown size={13} /></button></th><th><button type="button" onClick={() => sortTable('amount')}>Amount <ChevronsUpDown size={13} /></button></th><th><button type="button" onClick={() => sortTable('type')}>Type <ChevronsUpDown size={13} /></button></th><th><button type="button" onClick={() => sortTable('status')}>Status <ChevronsUpDown size={13} /></button></th><th><button type="button" onClick={() => sortTable('payment')}>Payment Method <ChevronsUpDown size={13} /></button></th><th>Action</th></tr></thead>
         <tbody>{visibleGroups.flatMap((group, groupIndex) => (user?.is_nexg_admin && expandedBatches.includes(group.id) ? group.items : group.items.slice(0, 1)).map((item, rowIndex, shownItems) => {
           const finalStatus = ['Rejected', 'Reimbursed'].includes(item.status);
           const combinedUserRow = !user?.is_nexg_admin && group.items.length > 1;
           const groupStatus = combinedUserRow && group.items.some((entry) => entry.status !== item.status) ? 'Mixed' : item.status;
           return <React.Fragment key={item.id}><tr>
-            <td>{user?.is_nexg_admin ? expenses.indexOf(item) + 1 : groupIndex + 1}</td><td>{dateLabel(item.created_at)}</td>
-            {user?.is_nexg_admin && <><td><strong>{item.submitted_by}</strong></td><td>{item.rank || 'Employee'}</td></>}
+            <td><span className="expense-row-number">{user?.is_nexg_admin ? expenses.indexOf(item) + 1 : (page - 1) * pageSize + groupIndex + 1}</span></td><td><span className="expense-date-cell"><CalendarDays size={18} /><span><strong>{dateLabel(item.created_at)}</strong><small>{new Date(item.created_at).toLocaleDateString('en-IN', { weekday: 'short' })}</small></span></span></td>
+            {user?.is_nexg_admin && <td className="expense-user-cell"><strong>{item.submitted_by}</strong><small>{item.rank || 'Employee'}</small></td>}
             <td><span className="expense-category" style={{ color: colors[categories.indexOf(item.category)] || colors[5] }}>{item.category}</span></td>
-            <td className="expense-particulars">{combinedUserRow ? <div className="expense-particular-list">{group.items.map((entry, index) => <div key={entry.id}><strong>{index + 1}. {entry.particulars}</strong><small>{money(entry.amount)} · {entry.status === 'Reimbursed' ? 'Paid' : entry.status}</small>{entry.issue_note && <small className="expense-issue-note">Issue: {entry.issue_note}</small>}</div>)}</div> : <><strong>{item.particulars}</strong>{item.issue_note && <small className="expense-issue-note">Issue: {item.issue_note}</small>}</>}</td>
-            <td className="expense-amount">{money(combinedUserRow ? group.items.reduce((sum, entry) => sum + Number(entry.amount), 0) : item.amount)}</td><td>{item.expense_type}</td>
+            <td className="expense-particulars">{combinedUserRow ? <div className="expense-particular-list">{group.items.map((entry, index) => <div key={entry.id}><strong>{index + 1}. {entry.particulars}</strong><small>{money(entry.amount)} · {entry.status === 'Reimbursed' ? 'Paid' : entry.status}</small>{entry.issue_note && <small className="expense-issue-note">Issue: {entry.issue_note}</small>}</div>)}</div> : <div className="expense-particular-list"><div><strong>{item.particulars}</strong>{item.issue_note && <small className="expense-issue-note">Issue: {item.issue_note}</small>}</div></div>}</td>
+            <td className="expense-amount"><strong>{money(combinedUserRow ? group.items.reduce((sum, entry) => sum + Number(entry.amount), 0) : item.amount)}</strong>{combinedUserRow && <small>({group.items.length} items)</small>}</td><td><span className={`expense-type ${item.expense_type.toLowerCase()}`}>{item.expense_type}</span></td>
             <td><span className={`expense-status ${groupStatus.toLowerCase().replace(/\s+/g, '-')}`}>{groupStatus === 'Reimbursed' ? 'Paid' : groupStatus}</span></td>
-            <td>{item.payment_method || '-'}</td>
+            <td><span className="expense-payment">{item.payment_method || '-'}</span></td>
             <td>{(user?.is_nexg_admin || item.attachment_name) ? <div className="expense-actions"><button aria-label={`Actions for ${item.particulars}`} aria-expanded={activeMenu?.id === item.id} onClick={(event) => toggleActions(event, item.id)}>...</button>
               {activeMenu?.id === item.id && createPortal(<div ref={actionMenuRef} className="expense-action-menu">
                 {user?.is_nexg_admin && !finalStatus && <>
@@ -243,7 +276,7 @@ export default function ExpenseTracker({ user }) {
                 {user?.is_nexg_admin && !item.attachment_name && finalStatus && <span className="expense-menu-locked">Final status - no changes</span>}
               </div>, document.body)}
             </div> : '-'}</td>
-          </tr>{user?.is_nexg_admin && group.items.length > 1 && rowIndex === shownItems.length - 1 && <tr className="expense-batch-row"><td colSpan={11}><button type="button" onClick={() => setExpandedBatches((current) => current.includes(group.id) ? current.filter((id) => id !== group.id) : [...current, group.id])}>{expandedBatches.includes(group.id) ? 'Show less' : `Load more (${group.items.length - 1} more particulars)`}</button></td></tr>}</React.Fragment>;
+          </tr>{user?.is_nexg_admin && group.items.length > 1 && rowIndex === shownItems.length - 1 && <tr className="expense-batch-row"><td colSpan={10}><button type="button" onClick={() => setExpandedBatches((current) => current.includes(group.id) ? current.filter((id) => id !== group.id) : [...current, group.id])}>{expandedBatches.includes(group.id) ? 'Show less' : `Load more (${group.items.length - 1} more particulars)`}</button></td></tr>}</React.Fragment>;
         }))}</tbody>
       </table></div>
       <div className="expense-mobile-list">{visibleGroups.map((group) => {
@@ -263,7 +296,9 @@ export default function ExpenseTracker({ user }) {
           <div className="expense-mobile-actions"><button type="button" aria-label={`${expanded ? 'Hide' : 'View'} details for expense ${first.id}`} aria-expanded={expanded} onClick={() => setExpandedCards((current) => current.includes(group.id) ? current.filter((id) => id !== group.id) : [...current, group.id])}><Eye size={20} /></button>{singleEditable && <><button type="button" aria-label={`Edit expense ${first.id}`} onClick={() => openEditor(first.id)}><Pencil size={19} /></button><button type="button" className="danger" aria-label={`Reject expense ${first.id}`} onClick={() => setStatus(first.id, 'Rejected')}><X size={21} /></button></>}</div>
         </article>;
       })}</div>
-      {!loading && !expenses.length && <div className="expense-empty">{user?.is_nexg_admin ? 'User expenses will appear here once recorded.' : 'No expenses yet. Add your first expense to start tracking.'}</div>}
+      {!loading && !filteredGroups.length && <div className="expense-empty">{expenses.length ? 'No expenses match these filters.' : user?.is_nexg_admin ? 'User expenses will appear here once recorded.' : 'No expenses yet. Add your first expense to start tracking.'}</div>}
+      <div className="expense-ledger-footer"><span>Showing {filteredGroups.length ? (page - 1) * pageSize + 1 : 0}-{Math.min(page * pageSize, filteredGroups.length)} of {filteredGroups.length} records</span><div className="expense-pagination"><button type="button" aria-label="Previous page" disabled={page === 1} onClick={() => setPage((current) => current - 1)}><ChevronLeft size={17} /></button><span>{page}</span><button type="button" aria-label="Next page" disabled={page >= pageCount} onClick={() => setPage((current) => current + 1)}><ChevronRight size={17} /></button></div></div>
+      </div>
     </section>
     <div className="expense-charts"><section className="expense-panel expense-chart-card"><div className="expense-chart-heading"><span className="expense-chart-heading-icon"><PieChart size={18} /></span><div><span className="expense-section-kicker">BREAKDOWN</span><h2>By category</h2></div></div><div className="expense-category-chart"><div className="expense-donut" style={{ background: `conic-gradient(${donut})` }}><div><strong>{money(total)}</strong><small>Total spent</small></div></div><div className="expense-legend">{categoryTotals.map((item) => <div key={item.category}><span className="expense-legend-dot" style={{ background: item.color }} /> <span>{item.category}</span><strong>{total ? Math.round(item.total / total * 100) : 0}%</strong></div>)}</div></div></section><section className="expense-panel expense-chart-card"><div className="expense-chart-heading"><span className="expense-chart-heading-icon green"><TrendingUp size={18} /></span><div><span className="expense-section-kicker">OVERVIEW</span><h2>Monthly trend</h2></div><span className="expense-chart-period">Last 6 months</span></div><div className="expense-month-chart">{monthData.map((item) => <div className="expense-month" key={item.label}><div className="expense-bar-track"><span title={`${item.label}: ${money(item.total)}`} style={{ height: `${item.total ? Math.max(5, item.total / maxMonth * 100) : 2}%` }} /></div><small>{item.label}</small></div>)}</div></section></div>
     {issueExpense && <div className="expense-issue-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setIssueExpense(null); }}>
