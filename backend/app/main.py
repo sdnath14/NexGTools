@@ -1047,6 +1047,8 @@ def update_expense_status(expense_id: int, payload: ExpenseStatusRequest, author
         raise HTTPException(status_code=400, detail='Invalid expense status.')
     if payload.status == 'Issue Raised' and not payload.issue_note.strip():
         raise HTTPException(status_code=400, detail='Describe the issue before raising it.')
+    if payload.status == 'Rejected' and not payload.issue_note.strip():
+        raise HTTPException(status_code=400, detail='Explain why this expense is rejected.')
     with db_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute('SELECT status FROM expenses WHERE id = %s FOR UPDATE', (expense_id,))
@@ -1055,7 +1057,7 @@ def update_expense_status(expense_id: int, payload: ExpenseStatusRequest, author
                 raise HTTPException(status_code=404, detail='Expense not found.')
             if current['status'] in ('Rejected', 'Reimbursed'):
                 raise HTTPException(status_code=409, detail='Rejected and paid expenses cannot be changed.')
-            if payload.status == 'Issue Raised':
+            if payload.status in ('Issue Raised', 'Rejected'):
                 cursor.execute('UPDATE expenses SET status = %s, issue_note = %s WHERE id = %s',
                                (payload.status, payload.issue_note.strip(), expense_id))
             else:

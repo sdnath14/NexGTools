@@ -106,10 +106,24 @@ class ExpenseEditTests(unittest.TestCase):
         with patch.object(main, '_require_user', return_value={'id': 1, 'is_nexg_admin': True}), \
              patch.object(main, 'db_connection', return_value=connection):
             for action in (lambda: main.edit_expense(7, self.payload, 'token'),
-                           lambda: main.update_expense_status(7, main.ExpenseStatusRequest(status='Rejected'), 'token')):
+                           lambda: main.update_expense_status(7, main.ExpenseStatusRequest(status='Rejected', issue_note='Invalid receipt'), 'token')):
                 with self.assertRaises(HTTPException) as error:
                     action()
                 self.assertEqual(error.exception.status_code, 409)
+
+    def test_rejection_requires_reason_and_saves_it(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {'status': 'Pending'}
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_user', return_value={'id': 1, 'is_nexg_admin': True}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            with self.assertRaises(HTTPException) as error:
+                main.update_expense_status(7, main.ExpenseStatusRequest(status='Rejected', issue_note='  '), 'token')
+            self.assertEqual(error.exception.status_code, 400)
+            cursor.execute.assert_not_called()
+            main.update_expense_status(7, main.ExpenseStatusRequest(status='Rejected', issue_note=' Duplicate claim '), 'token')
+        self.assertEqual(cursor.execute.call_args_list[-1].args[1], ('Rejected', 'Duplicate claim', 7))
 
     def test_issue_requires_note_and_saves_it(self):
         cursor = MagicMock()

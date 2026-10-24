@@ -99,6 +99,8 @@ function App() {
     const loadUser = async () => {
       const token = localStorage.getItem(AUTH_TOKEN_KEY);
       if (!token) {
+        setUser(null);
+        setIsAdmin(false);
         setAuthChecked(true);
         return;
       }
@@ -110,6 +112,7 @@ function App() {
         if (!response.ok) throw new Error('Session expired.');
         setUser(data.user);
         const adminToken = localStorage.getItem(ADMIN_TOKEN_KEY);
+        if (!adminToken) setIsAdmin(false);
         if (adminToken) {
           const adminResponse = await fetch(`${API_BASE_URL}/api/admin/me`, {
             headers: {
@@ -130,6 +133,15 @@ function App() {
       }
     };
     loadUser();
+    const syncLogin = (event) => {
+      if (event.type !== 'storage' || event.key === null || [AUTH_TOKEN_KEY, ADMIN_TOKEN_KEY].includes(event.key)) loadUser();
+    };
+    window.addEventListener('storage', syncLogin);
+    window.addEventListener('focus', syncLogin);
+    return () => {
+      window.removeEventListener('storage', syncLogin);
+      window.removeEventListener('focus', syncLogin);
+    };
   }, []);
 
   const logout = async () => {

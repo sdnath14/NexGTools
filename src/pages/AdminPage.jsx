@@ -52,8 +52,22 @@ const AdminPage = ({ onAdminUnlocked }) => {
     ...adminHeaders(),
   });
 
+  const adminRequest = async (...args) => {
+    const response = await fetch(...args);
+    if (response.status === 403) {
+      const data = await response.clone().json().catch(() => ({}));
+      if (data.detail === 'Admin access required.') {
+        localStorage.removeItem(ADMIN_TOKEN_KEY);
+        setIsAdmin(false);
+        onAdminUnlocked?.(false);
+        throw new Error('Admin access expired. Enter your admin password to unlock Admin Control again.');
+      }
+    }
+    return response;
+  };
+
   const loadOverview = async () => {
-    const response = await fetch(`${API_BASE_URL}/api/admin/overview`, {
+    const response = await adminRequest(`${API_BASE_URL}/api/admin/overview`, {
       headers: requestHeaders(),
     });
     const data = await response.json();
@@ -66,7 +80,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
 
   const loadTable = async (tableName) => {
     if (!tableName) return;
-    const response = await fetch(`${API_BASE_URL}/api/admin/tables/${tableName}`, {
+    const response = await adminRequest(`${API_BASE_URL}/api/admin/tables/${tableName}`, {
       headers: requestHeaders(),
     });
     const data = await response.json();
@@ -78,8 +92,8 @@ const AdminPage = ({ onAdminUnlocked }) => {
 
   const loadAccessControl = async () => {
     const [rolesResponse, usersResponse] = await Promise.all([
-      fetch(`${API_BASE_URL}/api/admin/roles`, { headers: requestHeaders() }),
-      fetch(`${API_BASE_URL}/api/admin/users-with-roles`, { headers: requestHeaders() }),
+      adminRequest(`${API_BASE_URL}/api/admin/roles`, { headers: requestHeaders() }),
+      adminRequest(`${API_BASE_URL}/api/admin/users-with-roles`, { headers: requestHeaders() }),
     ]);
     const rolesData = await rolesResponse.json();
     const usersData = await usersResponse.json();
@@ -95,7 +109,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
         return;
       }
       try {
-        const response = await fetch(`${API_BASE_URL}/api/admin/me`, {
+        const response = await adminRequest(`${API_BASE_URL}/api/admin/me`, {
           headers: {
             ...authHeaders(),
             ...adminHeaders(),
@@ -129,7 +143,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
     setBusy(true);
     setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/login`, {
+      const response = await adminRequest(`${API_BASE_URL}/api/admin/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -167,7 +181,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
     setBusy(true);
     setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/tables/${activeTable}/${editingId}`, {
+      const response = await adminRequest(`${API_BASE_URL}/api/admin/tables/${activeTable}/${editingId}`, {
         method: 'PUT',
         headers: requestHeaders(),
         body: JSON.stringify({ values: draftValues }),
@@ -192,7 +206,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
     setDeletingId(record.id);
     setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/tables/${activeTable}/${record.id}`, {
+      const response = await adminRequest(`${API_BASE_URL}/api/admin/tables/${activeTable}/${record.id}`, {
         method: 'DELETE',
         headers: requestHeaders(),
       });
@@ -229,7 +243,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
     setBusy(true);
     setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/users`, {
+      const response = await adminRequest(`${API_BASE_URL}/api/admin/users`, {
         method: 'POST', headers: requestHeaders(), body: JSON.stringify(newUser),
       });
       const data = await response.json();
@@ -248,7 +262,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
   const createRole = async (event) => {
     event.preventDefault(); setBusy(true); setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/roles`, { method: 'POST', headers: requestHeaders(), body: JSON.stringify(newRole) });
+      const response = await adminRequest(`${API_BASE_URL}/api/admin/roles`, { method: 'POST', headers: requestHeaders(), body: JSON.stringify(newRole) });
       const data = await response.json(); if (!response.ok) throw new Error(data.detail || 'Could not create role.');
       setNewRole({ name: '', permissions: [] }); await loadAccessControl();
     } catch (err) { setError(err.message || 'Could not create role.'); } finally { setBusy(false); }
@@ -259,7 +273,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
     if (!editingRole) return;
     setBusy(true); setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/roles/${editingRole.id}`, {
+      const response = await adminRequest(`${API_BASE_URL}/api/admin/roles/${editingRole.id}`, {
         method: 'PUT', headers: requestHeaders(), body: JSON.stringify({ name: editingRole.name, permissions: editingRole.permissions }),
       });
       const data = await response.json();
@@ -273,7 +287,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
     if (!window.confirm(`Delete the “${role.name}” role? This cannot be undone.`)) return;
     setBusy(true); setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/roles/${role.id}`, {
+      const response = await adminRequest(`${API_BASE_URL}/api/admin/roles/${role.id}`, {
         method: 'DELETE', headers: requestHeaders(),
       });
       const data = await response.json();
@@ -286,7 +300,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
   const saveEmployee = async (event) => {
     event.preventDefault(); setBusy(true); setError(''); setSuccess('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/users/${editingEmployee}/employee-profile`, {
+      const response = await adminRequest(`${API_BASE_URL}/api/admin/users/${editingEmployee}/employee-profile`, {
         method: 'PUT', headers: requestHeaders(), body: JSON.stringify(employeeDraft),
       });
       const data = await response.json();
@@ -298,7 +312,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
   const assignQuickTask = async (event) => {
     event.preventDefault(); setBusy(true); setError(''); setSuccess('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/work-assignments/tasks`, {
+      const response = await adminRequest(`${API_BASE_URL}/api/work-assignments/tasks`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ employee_id: Number(taskDraft.employee_id), title: taskDraft.title,
           notes: taskDraft.notes, due_date: taskDraft.due_date, priority: taskDraft.priority,
@@ -314,7 +328,7 @@ const AdminPage = ({ onAdminUnlocked }) => {
   const assignRole = async (userId, roleId) => {
     setBusy(true); setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/role`, { method: 'PUT', headers: requestHeaders(), body: JSON.stringify({ role_id: Number(roleId) }) });
+      const response = await adminRequest(`${API_BASE_URL}/api/admin/users/${userId}/role`, { method: 'PUT', headers: requestHeaders(), body: JSON.stringify({ role_id: Number(roleId) }) });
       const data = await response.json(); if (!response.ok) throw new Error(data.detail || 'Could not assign role.');
       await loadAccessControl();
     } catch (err) { setError(err.message || 'Could not assign role.'); } finally { setBusy(false); }

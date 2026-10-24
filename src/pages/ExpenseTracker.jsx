@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { BarChart3, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Clock3, Download, Eye, FileText, Pencil, PieChart, Plus, ReceiptText, Search, SlidersHorizontal, TrendingUp, UploadCloud, UsersRound, Wallet, X } from 'lucide-react';
+import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Download, Eye, FileText, Pencil, PieChart, Plus, Search, SlidersHorizontal, TrendingUp, UploadCloud, UsersRound, Wallet, X } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './ExpenseTracker.css';
+import { expenseSummary } from '../expenseSummary';
 
 const categories = ['Travel', 'Food', 'Stationery', 'Office Supplies', 'Client Meeting', 'Other'];
-const colors = ['#4b9cff', '#ffac3e', '#da72b7', '#9672ee', '#29a574', '#a7b2bf'];
+const colors = ['#b92c28', '#dfa62d', '#514d45', '#9d7852', '#59705a', '#b6afa2'];
 const blank = { category: 'Travel', particulars: '', amount: '', expense_type: 'Reimbursement', payment_method: 'UPI', upi_id: '', account_number: '', ifsc_code: '', attachment: null };
 const money = (value) => `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 const dateLabel = (value) => new Date(value).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -17,6 +18,7 @@ export default function ExpenseTracker({ user }) {
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
+  const [details, setDetails] = useState(null);
   const [form, setForm] = useState(blank);
   const [extraItems, setExtraItems] = useState([]);
   const [activeItem, setActiveItem] = useState(0);
@@ -36,6 +38,7 @@ export default function ExpenseTracker({ user }) {
   const actionMenuRef = useRef(null);
   const [issueExpense, setIssueExpense] = useState(null);
   const [issueNote, setIssueNote] = useState('');
+  const [noteAction, setNoteAction] = useState('Issue Raised');
   const [billMonth, setBillMonth] = useState('');
   const [billUser, setBillUser] = useState('');
   const [billBusy, setBillBusy] = useState(false);
@@ -50,7 +53,13 @@ export default function ExpenseTracker({ user }) {
     } catch (err) { setError(err.message); }
     finally { setLoading(false); }
   }, []);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    const refresh = () => { if (!document.hidden) load(); };
+    const timer = window.setInterval(refresh, 30000);
+    window.addEventListener('focus', refresh);
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', refresh); };
+  }, [load]);
   useLayoutEffect(() => {
     const menu = actionMenuRef.current;
     if (!activeMenu || !menu) return;
@@ -75,9 +84,8 @@ export default function ExpenseTracker({ user }) {
     };
   }, [activeMenu]);
 
+  const summary = useMemo(() => expenseSummary(expenses), [expenses]);
   const total = expenses.reduce((sum, item) => sum + Number(item.amount), 0);
-  const pending = expenses.filter((item) => ['Pending', 'Issue Raised'].includes(item.status)).length;
-  const reimbursed = expenses.filter((item) => item.status === 'Reimbursed').reduce((sum, item) => sum + Number(item.amount), 0);
   const categoryTotals = useMemo(() => categories.map((category, index) => ({ category, color: colors[index], total: expenses.filter((item) => item.category === category).reduce((sum, item) => sum + Number(item.amount), 0) })), [expenses]);
   const monthData = useMemo(() => Array.from({ length: 6 }, (_, index) => {
     const month = new Date(); month.setDate(1); month.setMonth(month.getMonth() - 5 + index);
@@ -145,6 +153,26 @@ export default function ExpenseTracker({ user }) {
     const { top, bottom, right } = event.currentTarget.getBoundingClientRect();
     setActiveMenu({ id, top, bottom, right });
   };
+  const viewDetails = async (group) => {
+    setActiveMenu(null);
+    setError('');
+    setDetails({ loading: true, items: [] });
+    try {
+      const items = await Promise.all(group.items.map(async (item) => {
+        const response = await fetch(`${API_BASE_URL}/api/expenses/${item.id}`, { headers: authHeaders() });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'Could not load expense details.');
+        return data.expense;
+      }));
+      setDetails((current) => current ? { loading: false, items } : null);
+    } catch (err) { setDetails(null); setError(err.message); }
+  };
+  useEffect(() => {
+    if (!details) return undefined;
+    const close = (event) => { if (event.key === 'Escape') setDetails(null); };
+    document.addEventListener('keydown', close);
+    return () => document.removeEventListener('keydown', close);
+  }, [details]);
   const openEditor = async (id) => {
     setActiveMenu(null); setError('');
     try {
@@ -164,6 +192,15 @@ export default function ExpenseTracker({ user }) {
     if (editingExpense ? !user?.is_nexg_admin : user?.is_nexg_admin) return;
     setSaving(true); setError('');
     try {
+      const sessionResponse = await fetch(`${API_BASE_URL}/api/auth/me`, { headers: authHeaders() });
+      const session = await sessionResponse.json();
+      if (!sessionResponse.ok) throw new Error('Your login expired. Sign in again before saving.');
+      if (String(session.user.id) !== String(user.id)) {
+        throw new Error('Your login changed in another tab. Refresh this page and sign in with your employee account before saving.');
+      }
+      if (!editingExpense && session.user.is_nexg_admin) {
+        throw new Error('You are signed in as an administrator. Sign in with your employee account to submit expenses.');
+      }
       let attachment_base64 = '';
       if (form.attachment) {
         if (form.attachment.size > 5 * 1024 * 1024) throw new Error('Attachment must be at most 5 MB.');
@@ -193,8 +230,9 @@ export default function ExpenseTracker({ user }) {
       await load();
     } catch (err) { setError(err.message); }
   };
-  const openIssue = (item) => {
-    setActiveMenu(null); setError(''); setIssueExpense(item); setIssueNote(item.issue_note || '');
+  const openIssue = (item, action = 'Issue Raised') => {
+    setNoteAction(action);
+    setActiveMenu(null); setError(''); setIssueExpense(item); setIssueNote(action === 'Rejected' ? '' : item.issue_note || '');
   };
   const download = async (item) => {
     try {
@@ -228,22 +266,25 @@ export default function ExpenseTracker({ user }) {
     <header className="expense-hero">
       <div className="expense-hero-copy">
         <p className="expense-eyebrow"><span /> NEXG PETROLUBE / FINANCE</p>
-        <h1>Expense Tracker<span>.</span></h1>
-        <p>Every claim, payment and reimbursement in one clear view.</p>
+        <h1>Expense Tracker</h1>
+        <p>Claims, advances and payments</p>
         <div className="expense-hero-context"><UsersRound size={15} /> {user?.is_nexg_admin ? 'All employee expenses' : 'Your personal expenses'}</div>
       </div>
       <div className="expense-hero-side">
-        <span className="expense-hero-side-icon"><ReceiptText size={22} /></span>
         <span className="expense-hero-side-label">Total recorded</span>
         <strong>{loading ? '—' : money(total)}</strong>
-        <small>{expenses.length} {expenses.length === 1 ? 'expense' : 'expenses'} on record</small>
-        {!user?.is_nexg_admin && <button className="expense-primary" onClick={() => { setError(''); setEditingExpense(null); setForm(blank); setExtraItems([]); setActiveItem(0); setReviewOpen(false); setFormOpen(true); }}><Plus size={17} /> Add New Expense</button>}
+        {!user?.is_nexg_admin && <button className="expense-primary" onClick={() => { setError(''); setEditingExpense(null); setForm(blank); setExtraItems([]); setActiveItem(0); setReviewOpen(false); setFormOpen(true); }}><Plus size={17} /> Add expense</button>}
       </div>
+      <dl className="expense-overview" aria-label="Expense overview">
+        {[
+          ['Entries', summary.entries], ['Unpaid', money(summary.unpaid)],
+          ['Reimbursement due', money(summary.reimbursementDue)], ['Advance unpaid', money(summary.advanceDue)],
+          ['Reimbursement paid', money(summary.reimbursed)], ['Advance taken', money(summary.advanceTaken)],
+          ['Rejected', money(summary.rejected)], ['Issues raised', summary.issues],
+        ].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{loading ? '—' : value}</dd></div>)}
+      </dl>
     </header>
     {error && <div className="expense-error" role="alert">{error}</div>}
-    <section className="expense-stats" aria-label="Expense overview">
-      {[{ label: 'Total Expenses', value: money(total), note: 'All recorded expenses', icon: Wallet, tone: 'green' }, { label: 'Pending Claims', value: pending, note: 'Awaiting approval', icon: Clock3, tone: 'orange' }, { label: 'Reimbursed', value: money(reimbursed), note: 'Paid claims', icon: FileText, tone: 'blue' }, { label: 'Total Entries', value: expenses.length, note: 'All time', icon: BarChart3, tone: 'purple' }].map((stat) => <article className={`expense-stat ${stat.tone}`} key={stat.label}><span className="expense-stat-icon"><stat.icon size={20} /></span><div><small>{stat.label}</small><strong>{loading ? '—' : stat.value}</strong><span>{stat.note}</span></div></article>)}
-    </section>
     <section className="expense-panel expense-ledger">
       <div className="expense-ledger-title">
         <div className="expense-ledger-heading"><span className="expense-ledger-icon"><Wallet size={24} /></span><div><h2>{user?.is_nexg_admin ? 'Admin Expense View' : 'Your Expenses'}</h2><p>{user?.is_nexg_admin ? 'Review claims and resolve payments from one place' : 'Your recorded claims and payment status'}</p></div></div>
@@ -260,16 +301,17 @@ export default function ExpenseTracker({ user }) {
             <td><span className="expense-row-number">{user?.is_nexg_admin ? expenses.indexOf(item) + 1 : (page - 1) * pageSize + groupIndex + 1}</span></td><td><span className="expense-date-cell"><CalendarDays size={18} /><span><strong>{dateLabel(item.created_at)}</strong><small>{new Date(item.created_at).toLocaleDateString('en-IN', { weekday: 'short' })}</small></span></span></td>
             {user?.is_nexg_admin && <td className="expense-user-cell"><strong>{item.submitted_by}</strong><small>{item.rank || 'Employee'}</small></td>}
             <td><span className="expense-category" style={{ color: colors[categories.indexOf(item.category)] || colors[5] }}>{item.category}</span></td>
-            <td className="expense-particulars">{combinedUserRow ? <div className="expense-particular-list">{group.items.map((entry, index) => <div key={entry.id}><strong>{index + 1}. {entry.particulars}</strong><small>{money(entry.amount)} · {entry.status === 'Reimbursed' ? 'Paid' : entry.status}</small>{entry.issue_note && <small className="expense-issue-note">Issue: {entry.issue_note}</small>}</div>)}</div> : <div className="expense-particular-list"><div><strong>{item.particulars}</strong>{item.issue_note && <small className="expense-issue-note">Issue: {item.issue_note}</small>}</div></div>}</td>
+            <td className="expense-particulars">{combinedUserRow ? <div className="expense-particular-list">{group.items.map((entry, index) => <div key={entry.id}><strong>{index + 1}. {entry.particulars}</strong><small>{money(entry.amount)} · {entry.status === 'Reimbursed' ? 'Paid' : entry.status}</small>{entry.issue_note && <small className="expense-issue-note">{entry.status === 'Rejected' ? 'Rejection reason' : 'Issue'}: {entry.issue_note}</small>}</div>)}</div> : <div className="expense-particular-list"><div><strong>{item.particulars}</strong>{item.issue_note && <small className="expense-issue-note">{item.status === 'Rejected' ? 'Rejection reason' : 'Issue'}: {item.issue_note}</small>}</div></div>}</td>
             <td className="expense-amount"><strong>{money(combinedUserRow ? group.items.reduce((sum, entry) => sum + Number(entry.amount), 0) : item.amount)}</strong>{combinedUserRow && <small>({group.items.length} items)</small>}</td><td><span className={`expense-type ${item.expense_type.toLowerCase()}`}>{item.expense_type}</span></td>
             <td><span className={`expense-status ${groupStatus.toLowerCase().replace(/\s+/g, '-')}`}>{groupStatus === 'Reimbursed' ? 'Paid' : groupStatus}</span></td>
             <td><span className="expense-payment">{item.payment_method || '-'}</span></td>
             <td>{(user?.is_nexg_admin || item.attachment_name) ? <div className="expense-actions"><button aria-label={`Actions for ${item.particulars}`} aria-expanded={activeMenu?.id === item.id} onClick={(event) => toggleActions(event, item.id)}>...</button>
               {activeMenu?.id === item.id && createPortal(<div ref={actionMenuRef} className="expense-action-menu">
+                {user?.is_nexg_admin && <button onClick={() => viewDetails(group)}><Eye size={14} /> View details</button>}
                 {user?.is_nexg_admin && !finalStatus && <>
                   <button onClick={() => openEditor(item.id)}><Pencil size={14} /> Edit expense</button>
                   <button onClick={() => openIssue(item)}><FileText size={14} /> {item.status === 'Issue Raised' ? 'Edit issue' : 'Raise issue'}</button>
-                  <button className="expense-menu-danger" onClick={() => setStatus(item.id, 'Rejected')}><X size={14} /> Reject</button>
+                  <button className="expense-menu-danger" onClick={() => openIssue(item, 'Rejected')}><X size={14} /> Reject</button>
                   <button className="expense-menu-paid" onClick={() => setStatus(item.id, 'Reimbursed')}><Check size={14} /> Mark Paid</button>
                 </>}
                 {item.attachment_name && <button onClick={() => { setActiveMenu(null); download(item); }}><Download size={14} /> Download receipt</button>}
@@ -291,9 +333,10 @@ export default function ExpenseTracker({ user }) {
           <p className="expense-mobile-date">{dateLabel(first.created_at)}{user?.is_nexg_admin && first.rank ? ` · ${first.rank}` : ''}</p>
           <p className="expense-mobile-meta">{user?.is_nexg_admin && <><span>{first.category}</span> · </>}{first.expense_type} · {first.payment_method}</p>
           <div className="expense-mobile-summary">{group.items.slice(0, expanded ? group.items.length : 2).map((item) => <div key={item.id}><span>{item.particulars}</span><strong>{money(item.amount)}</strong></div>)}{!expanded && group.items.length > 2 && <small>+{group.items.length - 2} more particulars</small>}</div>
+          {!expanded && group.items.filter((item) => item.issue_note).map((item) => <p className="expense-mobile-issue" key={`note-${item.id}`}><strong>{item.particulars}</strong> · {item.status === 'Rejected' ? 'Rejection reason' : 'Issue'}: {item.issue_note}</p>)}
           <div className="expense-mobile-total"><span>{group.items.length} {group.items.length === 1 ? 'particular' : 'particulars'} · Total</span><strong>{money(groupTotal)}</strong></div>
-          {expanded && <div className="expense-mobile-details"><p>Expense details</p>{group.items.map((item) => <div className="expense-mobile-detail" key={item.id}><div><strong>{item.particulars}</strong><span>{money(item.amount)} · {item.status === 'Reimbursed' ? 'Paid' : item.status}</span>{item.issue_note && <span className="expense-mobile-issue">Issue: {item.issue_note}</span>}</div>{user?.is_nexg_admin && !['Rejected', 'Reimbursed'].includes(item.status) && <div className="expense-mobile-detail-actions"><button type="button" onClick={() => openEditor(item.id)}>Edit</button><button type="button" onClick={() => openIssue(item)}>Raise issue</button><button type="button" onClick={() => setStatus(item.id, 'Reimbursed')}>Mark paid</button><button type="button" className="danger" onClick={() => setStatus(item.id, 'Rejected')}>Reject</button></div>}{item.attachment_name && <button type="button" className="expense-mobile-receipt" onClick={() => download(item)}><Download size={14} /> Download receipt</button>}</div>)}</div>}
-          <div className="expense-mobile-actions"><button type="button" aria-label={`${expanded ? 'Hide' : 'View'} details for expense ${first.id}`} aria-expanded={expanded} onClick={() => setExpandedCards((current) => current.includes(group.id) ? current.filter((id) => id !== group.id) : [...current, group.id])}><Eye size={20} /></button>{singleEditable && <><button type="button" aria-label={`Edit expense ${first.id}`} onClick={() => openEditor(first.id)}><Pencil size={19} /></button><button type="button" className="danger" aria-label={`Reject expense ${first.id}`} onClick={() => setStatus(first.id, 'Rejected')}><X size={21} /></button></>}</div>
+          {expanded && <div className="expense-mobile-details"><p>Expense details</p>{group.items.map((item) => <div className="expense-mobile-detail" key={item.id}><div><strong>{item.particulars}</strong><span>{money(item.amount)} · {item.status === 'Reimbursed' ? 'Paid' : item.status}</span>{item.issue_note && <span className="expense-mobile-issue">{item.status === 'Rejected' ? 'Rejection reason' : 'Issue'}: {item.issue_note}</span>}</div>{user?.is_nexg_admin && !['Rejected', 'Reimbursed'].includes(item.status) && <div className="expense-mobile-detail-actions"><button type="button" onClick={() => openEditor(item.id)}>Edit</button><button type="button" onClick={() => openIssue(item)}>Raise issue</button><button type="button" onClick={() => setStatus(item.id, 'Reimbursed')}>Mark paid</button><button type="button" className="danger" onClick={() => openIssue(item, 'Rejected')}>Reject</button></div>}{item.attachment_name && <button type="button" className="expense-mobile-receipt" onClick={() => download(item)}><Download size={14} /> Download receipt</button>}</div>)}</div>}
+          <div className="expense-mobile-actions">{user?.is_nexg_admin && <button type="button" aria-label={`View full details for expense ${first.id}`} onClick={() => viewDetails(group)}><FileText size={20} /> View details</button>}<button type="button" aria-label={`${expanded ? 'Hide' : 'View'} details for expense ${first.id}`} aria-expanded={expanded} onClick={() => setExpandedCards((current) => current.includes(group.id) ? current.filter((id) => id !== group.id) : [...current, group.id])}><Eye size={20} /></button>{singleEditable && <><button type="button" aria-label={`Edit expense ${first.id}`} onClick={() => openEditor(first.id)}><Pencil size={19} /></button><button type="button" className="danger" aria-label={`Reject expense ${first.id}`} onClick={() => openIssue(first, 'Rejected')}><X size={21} /></button></>}</div>
         </article>;
       })}</div>
       {!loading && !filteredGroups.length && <div className="expense-empty">{expenses.length ? 'No expenses match these filters.' : user?.is_nexg_admin ? 'User expenses will appear here once recorded.' : 'No expenses yet. Add your first expense to start tracking.'}</div>}
@@ -301,13 +344,33 @@ export default function ExpenseTracker({ user }) {
       </div>
     </section>
     <div className="expense-charts"><section className="expense-panel expense-chart-card"><div className="expense-chart-heading"><span className="expense-chart-heading-icon"><PieChart size={18} /></span><div><span className="expense-section-kicker">BREAKDOWN</span><h2>By category</h2></div></div><div className="expense-category-chart"><div className="expense-donut" style={{ background: `conic-gradient(${donut})` }}><div><strong>{money(total)}</strong><small>Total spent</small></div></div><div className="expense-legend">{categoryTotals.map((item) => <div key={item.category}><span className="expense-legend-dot" style={{ background: item.color }} /> <span>{item.category}</span><strong>{total ? Math.round(item.total / total * 100) : 0}%</strong></div>)}</div></div></section><section className="expense-panel expense-chart-card"><div className="expense-chart-heading"><span className="expense-chart-heading-icon green"><TrendingUp size={18} /></span><div><span className="expense-section-kicker">OVERVIEW</span><h2>Monthly trend</h2></div><span className="expense-chart-period">Last 6 months</span></div><div className="expense-month-chart">{monthData.map((item) => <div className="expense-month" key={item.label}><div className="expense-bar-track"><span title={`${item.label}: ${money(item.total)}`} style={{ height: `${item.total ? Math.max(5, item.total / maxMonth * 100) : 2}%` }} /></div><small>{item.label}</small></div>)}</div></section></div>
+    {details && <div className="expense-issue-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetails(null); }}>
+      <section className="expense-issue-dialog expense-details-dialog" role="dialog" aria-modal="true" aria-labelledby="expense-details-title" aria-busy={details.loading}>
+        <div className="expense-issue-heading"><h2 id="expense-details-title">Expense details</h2><button type="button" autoFocus aria-label="Close expense details" onClick={() => setDetails(null)}><X size={20} /></button></div>
+        {details.loading ? <p role="status">Loading expense details…</p> : <>
+          <p>{details.items.length} {details.items.length === 1 ? 'entry' : 'entries'} · Total {money(details.items.reduce((sum, item) => sum + Number(item.amount), 0))}</p>
+          {details.items.map((item) => <article className="expense-details-item" key={item.id}>
+            <h3>EXP-{String(item.id).padStart(5, '0')} · {item.particulars}</h3>
+            <dl>{[
+              ['Submitted by', item.submitted_by], ['Date', dateLabel(item.created_at)],
+              ['Category', item.category], ['Amount', money(item.amount)], ['Type', item.expense_type],
+              ['Status', item.status === 'Reimbursed' ? 'Paid' : item.status], ['Payment method', item.payment_method],
+              ...(item.payment_method === 'UPI' ? [['UPI ID', item.upi_id]] : [['Account number', item.account_number], ['IFSC code', item.ifsc_code]]),
+              [item.status === 'Rejected' ? 'Rejection reason' : 'Issue note', item.issue_note || (item.status === 'Rejected' ? 'No reason recorded' : 'No issue raised')],
+              ['Receipt', item.attachment_name || 'No receipt attached'],
+            ].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || '—'}</dd></div>)}</dl>
+            {item.attachment_name && <button type="button" className="expense-generate" onClick={() => download(item)}><Download size={16} /> Download receipt</button>}
+          </article>)}
+        </>}
+      </section>
+    </div>}
     {issueExpense && <div className="expense-issue-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setIssueExpense(null); }}>
-      <form className="expense-issue-dialog" onSubmit={(event) => { event.preventDefault(); setStatus(issueExpense.id, 'Issue Raised', issueNote); }}>
-        <div className="expense-issue-heading"><div><span className="expense-section-kicker">ADMIN ACTION</span><h2>{issueExpense.status === 'Issue Raised' ? 'Edit issue' : 'Raise an issue'}</h2></div><button type="button" aria-label="Close issue form" onClick={() => setIssueExpense(null)}><X size={18} /></button></div>
-        <p>Explain what needs attention for {issueExpense.submitted_by}'s expense. This note is visible to the user.</p>
+      <form className="expense-issue-dialog" onSubmit={(event) => { event.preventDefault(); setStatus(issueExpense.id, noteAction, issueNote); }}>
+        <div className="expense-issue-heading"><div><span className="expense-section-kicker">ADMIN ACTION</span><h2>{noteAction === 'Rejected' ? 'Reject expense' : issueExpense.status === 'Issue Raised' ? 'Edit issue' : 'Raise an issue'}</h2></div><button type="button" aria-label="Close issue form" onClick={() => setIssueExpense(null)}><X size={18} /></button></div>
+        <p>{noteAction === 'Rejected' ? 'Explain why this expense is rejected.' : `Explain what needs attention for ${issueExpense.submitted_by}'s expense.`} This reason is visible to the user.</p>
         {error && <div className="expense-error" role="alert">{error}</div>}
-        <label>Issue details<textarea required maxLength={500} rows={4} value={issueNote} onChange={(event) => setIssueNote(event.target.value)} placeholder="Describe the missing or incorrect details" /></label>
-        <div className="expense-issue-actions"><button type="button" onClick={() => setIssueExpense(null)}>Cancel</button><button className="expense-primary" type="submit">Save issue</button></div>
+        <label>{noteAction === 'Rejected' ? 'Rejection reason' : 'Issue details'}<textarea required maxLength={500} rows={4} value={issueNote} onChange={(event) => setIssueNote(event.target.value)} placeholder="Describe the missing or incorrect details" /></label>
+        <div className="expense-issue-actions"><button type="button" onClick={() => setIssueExpense(null)}>Cancel</button><button className="expense-primary" type="submit">{noteAction === 'Rejected' ? 'Reject expense' : 'Save issue'}</button></div>
       </form>
     </div>}
     {formOpen && (!user?.is_nexg_admin || editingExpense) && <div className="expense-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setFormOpen(false); }}>
