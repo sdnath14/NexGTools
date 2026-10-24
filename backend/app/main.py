@@ -975,14 +975,14 @@ def create_expense_batch(payload: ExpenseBatchRequest, authorization: str | None
 @app.get('/api/expenses/{expense_id}')
 def get_expense_for_edit(expense_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     user = _require_user(authorization)
-    if not user.get('is_nexg_admin'):
-        raise HTTPException(status_code=403, detail='Only an administrator can edit expenses.')
     with db_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute('''SELECT e.id, e.user_id, u.name AS submitted_by, e.category, e.particulars,
                               e.amount, e.expense_type, e.payment_method, e.upi_id, e.account_number,
-                              e.ifsc_code, e.status, e.issue_note, e.attachment_name, e.created_at
-                              FROM expenses e JOIN users u ON u.id = e.user_id WHERE e.id = %s''', (expense_id,))
+                              e.ifsc_code, e.status, e.issue_note, e.attachment_name, e.attachment_type, e.created_at
+                              FROM expenses e JOIN users u ON u.id = e.user_id
+                              WHERE e.id = %s AND (%s = 1 OR e.user_id = %s)''',
+                           (expense_id, int(bool(user.get('is_nexg_admin'))), user['id']))
             row = cursor.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail='Expense not found.')

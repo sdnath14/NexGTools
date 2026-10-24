@@ -261,6 +261,9 @@
 .expense-details-item dl > div { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); gap: 12px; padding: 7px 0; font-size: 13px; }
 .expense-details-item dt { color: var(--expense-muted); }
 .expense-details-item dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.expense-attachment-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.expense-attachment img { display: block; width: 100%; max-height: 480px; object-fit: contain; margin-top: 12px; border: 1px solid var(--expense-border); border-radius: 6px; }
+.expense-attachment iframe { display: block; width: 100%; height: 480px; margin-top: 12px; border: 1px solid var(--expense-border); border-radius: 6px; }
 .expense-issue-heading { display: flex; align-items: flex-start; justify-content: space-between; }
 .expense-issue-heading h2 { margin: 0; font-size: 20px; }
 .expense-issue-heading button { border: 0; background: transparent; color: var(--expense-muted); cursor: pointer; }

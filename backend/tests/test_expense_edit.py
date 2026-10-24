@@ -13,14 +13,38 @@ class ExpenseEditTests(unittest.TestCase):
             category='Food', particulars='Team lunch', amount=Decimal('215.50'),
             expense_type='Reimbursement', payment_method='UPI', upi_id='team@bank')
 
-    def test_only_admin_can_read_and_edit(self):
+    def test_only_admin_can_edit_or_change_status(self):
         with patch.object(main, '_require_user', return_value={'id': 2, 'is_nexg_admin': False}):
-            for action in (lambda: main.get_expense_for_edit(7, 'token'),
-                           lambda: main.edit_expense(7, self.payload, 'token'),
+            for action in (lambda: main.edit_expense(7, self.payload, 'token'),
                            lambda: main.update_expense_status(7, main.ExpenseStatusRequest(status='Approved'), 'token')):
                 with self.assertRaises(HTTPException) as error:
                     action()
                 self.assertEqual(error.exception.status_code, 403)
+
+    def test_employee_details_are_scoped_to_owner_and_include_particulars_and_receipt(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {'id': 7, 'particulars': 'Team lunch', 'attachment_name': 'receipt.png', 'attachment_type': 'image/png'}
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_user', return_value={'id': 2, 'is_nexg_admin': False}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            result = main.get_expense_for_edit(7, 'token')
+        sql, params = cursor.execute.call_args.args
+        self.assertIn('e.user_id = %s', sql)
+        self.assertEqual(params, (7, 0, 2))
+        self.assertEqual(result['expense']['particulars'], 'Team lunch')
+        self.assertEqual(result['expense']['attachment_name'], 'receipt.png')
+
+    def test_other_employees_expense_details_return_not_found(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = None
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_user', return_value={'id': 2, 'is_nexg_admin': False}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            with self.assertRaises(HTTPException) as error:
+                main.get_expense_for_edit(7, 'token')
+        self.assertEqual(error.exception.status_code, 404)
 
     def test_user_can_add_own_expense_but_admin_cannot(self):
         cursor = MagicMock()
