@@ -85,6 +85,11 @@ def initialize_database() -> None:
             cursor.execute("SELECT COLUMN_NAME AS column_name FROM information_schema.columns WHERE table_schema = %s AND table_name = 'expenses'", (settings.mysql_database,))
             if "batch_id" not in {row["column_name"] for row in cursor.fetchall()}:
                 cursor.execute("ALTER TABLE expenses ADD COLUMN batch_id CHAR(36) NULL AFTER attachment_data, ADD INDEX idx_expenses_batch (batch_id)")
+            cursor.execute("SELECT COLUMN_NAME AS column_name FROM information_schema.columns WHERE table_schema = %s AND table_name = 'expenses'", (settings.mysql_database,))
+            expense_columns = {row["column_name"] for row in cursor.fetchall()}
+            for column in ("client_name", "location"):
+                if column not in expense_columns:
+                    cursor.execute(f"ALTER TABLE expenses ADD COLUMN {column} VARCHAR(255) NOT NULL DEFAULT ''")
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS lead_searches (

@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Download, Eye, FileText, Pencil, PieChart, Plus, Search, SlidersHorizontal, TrendingUp, UploadCloud, UsersRound, Wallet, X } from 'lucide-react';
+import { ArrowLeft, HandCoins, MapPin, ReceiptText, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Download, Eye, FileText, Pencil, PieChart, Plus, Search, SlidersHorizontal, TrendingUp, UploadCloud, UsersRound, Wallet, X } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './ExpenseTracker.css';
 import { expenseSummary } from '../expenseSummary';
 
 const categories = ['Travel', 'Food', 'Stationery', 'Office Supplies', 'Client Meeting', 'Other'];
 const colors = ['#b92c28', '#dfa62d', '#514d45', '#9d7852', '#59705a', '#b6afa2'];
-const blank = { category: 'Travel', particulars: '', amount: '', expense_type: 'Reimbursement', payment_method: 'UPI', upi_id: '', account_number: '', ifsc_code: '', attachment: null };
+const blank = { client_name: '', location: '', category: 'Travel', particulars: '', amount: '', expense_type: 'Reimbursement', payment_method: 'UPI', upi_id: '', account_number: '', ifsc_code: '', attachment: null };
 const money = (value) => `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 const dateLabel = (value) => new Date(value).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 const statusOptions = ['All', 'Pending', 'Approved', 'Rejected', 'Reimbursed', 'Issue Raised'];
@@ -49,6 +49,8 @@ export default function ExpenseTracker({ user }) {
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [savedMessage, setSavedMessage] = useState('');
   const [editingExpense, setEditingExpense] = useState(null);
   const [details, setDetails] = useState(null);
   const [form, setForm] = useState(blank);
@@ -222,6 +224,7 @@ export default function ExpenseTracker({ user }) {
   const submit = async (event) => {
     event.preventDefault();
     if (editingExpense ? !user?.is_nexg_admin : user?.is_nexg_admin) return;
+    if (form.expense_type === 'Advance' && (!form.client_name.trim() || !form.location.trim())) { setError('Enter the client name and location.'); return; }
     setSaving(true); setError('');
     try {
       const sessionResponse = await fetch(`${API_BASE_URL}/api/auth/me`, { headers: authHeaders() });
@@ -243,12 +246,12 @@ export default function ExpenseTracker({ user }) {
           reader.readAsDataURL(form.attachment);
         });
       }
-      const payload = { ...form, amount: Number(form.amount), attachment: undefined, attachment_name: form.attachment?.name || '', attachment_type: form.attachment?.type || '', attachment_base64 };
+      const payload = { ...form, particulars: form.expense_type === 'Advance' ? `Advance for ${form.client_name.trim()} · ${form.location.trim()}`.slice(0, 500) : form.particulars, amount: Number(form.amount), attachment: undefined, attachment_name: form.attachment?.name || '', attachment_type: form.attachment?.type || '', attachment_base64 };
       if (extraItems.length && !editingExpense) payload.items = [{ particulars: form.particulars, amount: Number(form.amount) }, ...extraItems.map((item) => ({ particulars: item.particulars, amount: Number(item.amount) }))];
       const response = await fetch(`${API_BASE_URL}/api/expenses${editingExpense ? `/${editingExpense.id}` : extraItems.length ? '/batch' : ''}`, { method: editingExpense ? 'PUT' : 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not save expense.');
-      setForm(blank); setExtraItems([]); setActiveItem(0); setReviewOpen(false); setEditingExpense(null); setFormOpen(false); await load();
+      setSavedMessage(`${form.expense_type} request saved.`); setForm(blank); setExtraItems([]); setActiveItem(0); setReviewOpen(false); setEditingExpense(null); setFormOpen(false); await load();
     } catch (err) { setError(err.message); }
     finally { setSaving(false); }
   };
@@ -294,7 +297,29 @@ export default function ExpenseTracker({ user }) {
   };
   const billUsers = [...new Map(expenses.map((item) => [item.user_id, item.submitted_by])).entries()];
 
-  return <div className="expense-page">
+  const startRequest = (type) => {
+    setError(''); setSavedMessage(''); setEditingExpense(null); setForm({ ...blank, expense_type: type, category: type === 'Advance' ? 'Client Meeting' : 'Travel' });
+    setExtraItems([]); setActiveItem(0); setReviewOpen(false); setHistoryOpen(false); setFormOpen(true);
+  };
+  useEffect(() => {
+    if (!formOpen) return;
+    const close = (event) => { if (event.key === 'Escape' && !saving) { setFormOpen(false); setError(''); } };
+    document.addEventListener('keydown', close);
+    return () => document.removeEventListener('keydown', close);
+  }, [formOpen, saving]);
+
+  return <div className={`expense-page ${!user?.is_nexg_admin ? 'expense-request-page' : ''}`}>
+    {!user?.is_nexg_admin && !formOpen && !historyOpen && <section className="request-home" aria-labelledby="requests-title">
+      <header className="request-home-header"><h1 id="requests-title">Requests</h1><button type="button" onClick={() => { setError(''); setHistoryOpen(true); }}>Request history <ChevronRight size={15} /></button></header>
+      {savedMessage && <div className="request-success" role="status"><Check size={18} />{savedMessage}</div>}
+      {error && <div className="expense-error" role="alert">{error}</div>}
+      <div className="request-choices">
+        <button className="request-choice reimbursement" type="button" onClick={() => startRequest('Reimbursement')}><ReceiptText size={38} strokeWidth={1.35} /><span>Reimbursement</span></button>
+        <button className="request-choice advance" type="button" onClick={() => startRequest('Advance')}><HandCoins size={40} strokeWidth={1.35} /><span>Advance</span></button>
+      </div>
+    </section>}
+    {(user?.is_nexg_admin || (historyOpen && !formOpen)) && <>
+    {!user?.is_nexg_admin && <button className="request-back" type="button" onClick={() => { setHistoryOpen(false); setError(''); }}><ArrowLeft size={20} /> Requests</button>}
     <header className="expense-hero">
       <div className="expense-hero-copy">
         <p className="expense-eyebrow"><span /> NEXG PETROLUBE / FINANCE</p>
@@ -305,7 +330,7 @@ export default function ExpenseTracker({ user }) {
       <div className="expense-hero-side">
         <span className="expense-hero-side-label">Total recorded</span>
         <strong>{loading ? '—' : money(total)}</strong>
-        {!user?.is_nexg_admin && <button className="expense-primary" onClick={() => { setError(''); setEditingExpense(null); setForm(blank); setExtraItems([]); setActiveItem(0); setReviewOpen(false); setFormOpen(true); }}><Plus size={17} /> Add expense</button>}
+        {!user?.is_nexg_admin && <button className="expense-primary" onClick={() => { setHistoryOpen(false); setSavedMessage(''); }}><Plus size={17} /> New request</button>}
       </div>
       <dl className="expense-overview" aria-label="Expense overview">
         {[
@@ -376,6 +401,7 @@ export default function ExpenseTracker({ user }) {
       </div>
     </section>
     <div className="expense-charts"><section className="expense-panel expense-chart-card"><div className="expense-chart-heading"><span className="expense-chart-heading-icon"><PieChart size={18} /></span><div><span className="expense-section-kicker">BREAKDOWN</span><h2>By category</h2></div></div><div className="expense-category-chart"><div className="expense-donut" style={{ background: `conic-gradient(${donut})` }}><div><strong>{money(total)}</strong><small>Total spent</small></div></div><div className="expense-legend">{categoryTotals.map((item) => <div key={item.category}><span className="expense-legend-dot" style={{ background: item.color }} /> <span>{item.category}</span><strong>{total ? Math.round(item.total / total * 100) : 0}%</strong></div>)}</div></div></section><section className="expense-panel expense-chart-card"><div className="expense-chart-heading"><span className="expense-chart-heading-icon green"><TrendingUp size={18} /></span><div><span className="expense-section-kicker">OVERVIEW</span><h2>Monthly trend</h2></div><span className="expense-chart-period">Last 6 months</span></div><div className="expense-month-chart">{monthData.map((item) => <div className="expense-month" key={item.label}><div className="expense-bar-track"><span title={`${item.label}: ${money(item.total)}`} style={{ height: `${item.total ? Math.max(5, item.total / maxMonth * 100) : 2}%` }} /></div><small>{item.label}</small></div>)}</div></section></div>
+    </>}
     {details && <div className="expense-issue-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetails(null); }}>
       <section className="expense-issue-dialog expense-details-dialog" role="dialog" aria-modal="true" aria-labelledby="expense-details-title" aria-busy={details.loading}>
         <div className="expense-issue-heading"><h2 id="expense-details-title">Expense details</h2><button type="button" autoFocus aria-label="Close expense details" onClick={() => setDetails(null)}><X size={20} /></button></div>
@@ -385,6 +411,7 @@ export default function ExpenseTracker({ user }) {
             <h3>EXP-{String(item.id).padStart(5, '0')} · {item.particulars}</h3>
             <dl>{[
               ['Submitted by', item.submitted_by], ['Date', dateLabel(item.created_at)],
+              ...(item.expense_type === 'Advance' ? [['Client name', item.client_name], ['Location', item.location]] : []),
               ['Particulars', item.particulars], ['Category', item.category], ['Amount', money(item.amount)], ['Type', item.expense_type],
               ['Status', item.status === 'Reimbursed' ? 'Paid' : item.status], ['Payment method', item.payment_method],
               ...(item.payment_method === 'UPI' ? [['UPI ID', item.upi_id]] : [['Account number', item.account_number], ['IFSC code', item.ifsc_code]]),
@@ -405,12 +432,22 @@ export default function ExpenseTracker({ user }) {
         <div className="expense-issue-actions"><button type="button" onClick={() => setIssueExpense(null)}>Cancel</button><button className="expense-primary" type="submit">{noteAction === 'Rejected' ? 'Reject expense' : 'Save issue'}</button></div>
       </form>
     </div>}
-    {formOpen && (!user?.is_nexg_admin || editingExpense) && <div className="expense-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setFormOpen(false); }}>
-      <aside className="expense-drawer" role="dialog" aria-modal="true" aria-labelledby="expense-form-title">
-        <div className="expense-drawer-head"><h2 id="expense-form-title">{editingExpense ? `Edit ${editingExpense.submitted_by || 'Employee'} Expense` : reviewOpen ? 'Review Expense Bill' : 'Add New Expense'}</h2><button type="button" aria-label="Close expense form" onClick={() => setFormOpen(false)}><X size={19} /></button></div>
+    {formOpen && (!user?.is_nexg_admin || editingExpense) && <div className={`expense-overlay ${!user?.is_nexg_admin ? 'request-form-page' : ''}`} onMouseDown={(event) => { if (event.target === event.currentTarget) setFormOpen(false); }}>
+      <aside className="expense-drawer" role={user?.is_nexg_admin ? 'dialog' : undefined} aria-modal={user?.is_nexg_admin ? true : undefined} aria-labelledby="expense-form-title">
+        <div className="expense-drawer-head"><button className="request-back" type="button" disabled={saving} aria-label="Back to requests" onClick={() => { setFormOpen(false); setError(''); }}><ArrowLeft size={22} /></button><h2 id="expense-form-title">{editingExpense ? `Edit ${form.expense_type}` : reviewOpen ? 'Review reimbursement' : form.expense_type}</h2></div>
         {error && <div className="expense-error" role="alert">{error}</div>}
         <form onSubmit={submit}>
-          {reviewOpen && !editingExpense ? <>
+          {form.expense_type === 'Advance' ? <>
+            <label>Client Name<input required maxLength={255} value={form.client_name} onChange={(event) => update('client_name', event.target.value)} placeholder="Enter client name" /></label>
+            <label>Location<span className="request-location"><input required maxLength={255} value={form.location} onChange={(event) => update('location', event.target.value)} placeholder="Location" /><MapPin size={18} /></span></label>
+            <label>Amount<span className="request-amount"><span>₹</span><input required aria-label="Amount in rupees" type="number" min="0.01" max="9999999999" step="0.01" value={form.amount} onChange={(event) => update('amount', event.target.value)} placeholder="0.00" /></span></label>
+            <fieldset className="request-payment"><legend>Payment Method</legend>
+              <div className="request-payment-row"><label><input type="radio" name="advance-payment" checked={form.payment_method === 'UPI'} onChange={() => update('payment_method', 'UPI')} /> UPI</label><input aria-label="VPA / UPI ID" required={form.payment_method === 'UPI'} disabled={form.payment_method !== 'UPI'} value={form.upi_id} onChange={(event) => update('upi_id', event.target.value)} placeholder="VPA/UPI ID" /></div>
+              <div className="request-payment-row"><label><input type="radio" name="advance-payment" checked={form.payment_method === 'NEFT'} onChange={() => update('payment_method', 'NEFT')} /> NEFT</label><input aria-label="Bank account number" required={form.payment_method === 'NEFT'} disabled={form.payment_method !== 'NEFT'} value={form.account_number} onChange={(event) => update('account_number', event.target.value)} placeholder="Bank account number" /></div>
+              {form.payment_method === 'NEFT' && <label className="request-ifsc">IFSC Code<input required maxLength={40} value={form.ifsc_code} onChange={(event) => update('ifsc_code', event.target.value.toUpperCase())} placeholder="Enter IFSC code" /></label>}
+            </fieldset>
+            <div className="expense-form-actions"><button className="expense-primary" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button></div>
+          </> : reviewOpen && !editingExpense ? <>
             <section className="expense-bill-preview" aria-label="Expense bill details">
               <div className="expense-bill-preview-head"><span>EXPENSE BILL</span><strong>{money([form, ...extraItems].reduce((sum, item) => sum + Number(item.amount || 0), 0))}</strong><small>{[form, ...extraItems].length} {extraItems.length ? 'expenses' : 'expense'} | {new Date().toLocaleDateString('en-IN')}</small></div>
               <dl className="expense-bill-preview-facts"><div><dt>Submitted by</dt><dd>{user?.name}</dd></div><div><dt>Category</dt><dd>{form.category}</dd></div><div><dt>Type</dt><dd>{form.expense_type}</dd></div><div><dt>Payment method</dt><dd>{form.payment_method}</dd></div><div><dt>{form.payment_method === 'UPI' ? 'UPI ID' : 'Account number'}</dt><dd>{form.payment_method === 'UPI' ? form.upi_id : form.account_number}</dd></div>{form.payment_method === 'NEFT' && <div><dt>IFSC code</dt><dd>{form.ifsc_code}</dd></div>}{form.attachment && <div><dt>Receipt</dt><dd>{form.attachment.name}</dd></div>}</dl>
@@ -425,7 +462,6 @@ export default function ExpenseTracker({ user }) {
               {activeItem === index && <div className="expense-item-inputs"><label>Particulars <em>*</em><input required maxLength={500} value={item.particulars} onChange={(event) => index === 0 ? update('particulars', event.target.value) : updateExtraItem(index - 1, 'particulars', event.target.value)} placeholder="What was this expense for?" /></label><label>Expense Amount (INR) <em>*</em><input required type="number" min="0.01" step="0.01" value={item.amount} onChange={(event) => index === 0 ? update('amount', event.target.value) : updateExtraItem(index - 1, 'amount', event.target.value)} placeholder="0.00" /></label></div>}
             </section>)}</div>
             {!editingExpense && extraItems.length < 19 && <button type="button" className="expense-add-particular" onClick={() => { setExtraItems((current) => [...current, { particulars: '', amount: '' }]); setActiveItem(extraItems.length + 1); }}><Plus size={16} /> Add another particular</button>}
-            <label>Advance / Reimbursement <em>*</em><span className="expense-select"><select value={form.expense_type} onChange={(event) => update('expense_type', event.target.value)}><option>Reimbursement</option><option>Advance</option></select><ChevronDown size={16} /></span></label>
             <fieldset><legend>Payment Method <em>*</em></legend><label><input type="radio" name="payment" checked={form.payment_method === 'UPI'} onChange={() => update('payment_method', 'UPI')} /> UPI</label><label><input type="radio" name="payment" checked={form.payment_method === 'NEFT'} onChange={() => update('payment_method', 'NEFT')} /> NEFT</label></fieldset>
             {form.payment_method === 'UPI' ? <label>UPI ID <em>*</em><input required value={form.upi_id} onChange={(event) => update('upi_id', event.target.value)} placeholder="name@bank" /></label> : <><label>Account Number <em>*</em><input required value={form.account_number} onChange={(event) => update('account_number', event.target.value)} placeholder="Enter account number" /></label><label>IFSC Code <em>*</em><input required value={form.ifsc_code} onChange={(event) => update('ifsc_code', event.target.value)} placeholder="Enter IFSC code" /></label></>}
             <label>Attachment (Optional)<span className="expense-upload"><UploadCloud size={19} /><span>{form.attachment ? form.attachment.name : editingExpense?.attachment_name || 'Upload bill / receipt'}</span><small>PDF, JPG, PNG (Max 5MB)</small><input type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" onChange={(event) => update('attachment', event.target.files?.[0] || null)} /></span></label>

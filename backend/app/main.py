@@ -613,6 +613,8 @@ class RoleRequest(BaseModel):
 
 
 class ExpenseRequest(BaseModel):
+    client_name: str = Field(default='', max_length=255)
+    location: str = Field(default='', max_length=255)
     category: str = Field(min_length=1, max_length=80)
     particulars: str = Field(min_length=1, max_length=500)
     amount: Decimal = Field(gt=0, le=9999999999)
@@ -909,6 +911,8 @@ def _validate_expense_submission(payload: ExpenseRequest | ExpenseBatchRequest) 
         raise HTTPException(status_code=400, detail='UPI ID is required.')
     if payload.payment_method == 'NEFT' and (not payload.account_number.strip() or not payload.ifsc_code.strip()):
         raise HTTPException(status_code=400, detail='Account number and IFSC code are required.')
+    if payload.expense_type == 'Advance' and (not getattr(payload, 'client_name', '').strip() or not getattr(payload, 'location', '').strip()):
+        raise HTTPException(status_code=400, detail='Client name and location are required for advances.')
     attachment = None
     if payload.attachment_base64:
         if payload.attachment_type not in ('application/pdf', 'image/jpeg', 'image/png') or not payload.attachment_name:
@@ -929,8 +933,8 @@ def _insert_expense(cursor, user_id: int, payload: ExpenseRequest | ExpenseBatch
                     batch_id: str | None = None) -> int:
     cursor.execute('''INSERT INTO expenses (user_id, category, particulars, amount, expense_type,
                       payment_method, upi_id, account_number, ifsc_code, attachment_name,
-                      attachment_type, attachment_data, batch_id)
-                      VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''',
+                      attachment_type, attachment_data, client_name, location, batch_id)
+                      VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''',
                    (user_id, payload.category.strip(), particulars.strip(),
                     amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
                     payload.expense_type, payload.payment_method,
@@ -938,7 +942,9 @@ def _insert_expense(cursor, user_id: int, payload: ExpenseRequest | ExpenseBatch
                     payload.account_number.strip() if payload.payment_method == 'NEFT' else '',
                     payload.ifsc_code.strip().upper() if payload.payment_method == 'NEFT' else '',
                     payload.attachment_name if attachment else None,
-                    payload.attachment_type if attachment else None, attachment, batch_id))
+                    payload.attachment_type if attachment else None, attachment,
+                    getattr(payload, 'client_name', '').strip() if payload.expense_type == 'Advance' else '',
+                    getattr(payload, 'location', '').strip() if payload.expense_type == 'Advance' else '', batch_id))
     return cursor.lastrowid
 
 
@@ -979,7 +985,7 @@ def get_expense_for_edit(expense_id: int, authorization: str | None = Header(def
         with connection.cursor() as cursor:
             cursor.execute('''SELECT e.id, e.user_id, u.name AS submitted_by, e.category, e.particulars,
                               e.amount, e.expense_type, e.payment_method, e.upi_id, e.account_number,
-                              e.ifsc_code, e.status, e.issue_note, e.attachment_name, e.attachment_type, e.created_at
+                              e.ifsc_code, e.client_name, e.location, e.status, e.issue_note, e.attachment_name, e.attachment_type, e.created_at
                               FROM expenses e JOIN users u ON u.id = e.user_id
                               WHERE e.id = %s AND (%s = 1 OR e.user_id = %s)''',
                            (expense_id, int(bool(user.get('is_nexg_admin'))), user['id']))
@@ -1003,6 +1009,8 @@ def edit_expense(expense_id: int, payload: ExpenseRequest,
         raise HTTPException(status_code=400, detail='UPI ID is required.')
     if payload.payment_method == 'NEFT' and (not payload.account_number.strip() or not payload.ifsc_code.strip()):
         raise HTTPException(status_code=400, detail='Account number and IFSC code are required.')
+    if payload.expense_type == 'Advance' and (not getattr(payload, 'client_name', '').strip() or not getattr(payload, 'location', '').strip()):
+        raise HTTPException(status_code=400, detail='Client name and location are required for advances.')
     attachment = None
     if payload.attachment_base64:
         if payload.attachment_type not in ('application/pdf', 'image/jpeg', 'image/png') or not payload.attachment_name:
@@ -1024,13 +1032,15 @@ def edit_expense(expense_id: int, payload: ExpenseRequest,
             if current['status'] in ('Rejected', 'Reimbursed'):
                 raise HTTPException(status_code=409, detail='Rejected and paid expenses cannot be edited.')
             fields = '''category = %s, particulars = %s, amount = %s, expense_type = %s,
-                        payment_method = %s, upi_id = %s, account_number = %s, ifsc_code = %s'''
+                        payment_method = %s, upi_id = %s, account_number = %s, ifsc_code = %s, client_name = %s, location = %s'''
             values = [payload.category.strip(), payload.particulars.strip(),
                       payload.amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
                       payload.expense_type, payload.payment_method,
                       payload.upi_id.strip() if payload.payment_method == 'UPI' else '',
                       payload.account_number.strip() if payload.payment_method == 'NEFT' else '',
-                      payload.ifsc_code.strip().upper() if payload.payment_method == 'NEFT' else '']
+                      payload.ifsc_code.strip().upper() if payload.payment_method == 'NEFT' else '',
+                      payload.client_name.strip() if payload.expense_type == 'Advance' else '',
+                      payload.location.strip() if payload.expense_type == 'Advance' else '']
             if attachment is not None:
                 fields += ', attachment_name = %s, attachment_type = %s, attachment_data = %s'
                 values.extend((payload.attachment_name, payload.attachment_type, attachment))

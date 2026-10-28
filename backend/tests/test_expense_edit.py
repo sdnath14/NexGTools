@@ -63,6 +63,36 @@ class ExpenseEditTests(unittest.TestCase):
                 main.create_expense(self.payload, 'token')
             self.assertEqual(error.exception.status_code, 403)
 
+    def test_advance_requires_client_and_location_before_writing(self):
+        for fields in ({}, {'client_name': 'Acme'}, {'client_name': 'Acme', 'location': ' '}):
+            payload = self.payload.model_copy(update={'expense_type': 'Advance', **fields})
+            with self.subTest(fields=fields), \
+                 patch.object(main, '_require_user', return_value={'id': 8, 'is_nexg_admin': False}), \
+                 patch.object(main, 'db_connection') as connection:
+                with self.assertRaises(HTTPException) as error:
+                    main.create_expense(payload, 'token')
+                self.assertEqual(error.exception.status_code, 400)
+                connection.assert_not_called()
+
+    def test_advance_saves_client_location_and_selected_bank_details(self):
+        payload = self.payload.model_copy(update={
+            'expense_type': 'Advance', 'client_name': ' Acme ', 'location': ' Kolkata ',
+            'payment_method': 'NEFT', 'account_number': '123456789', 'ifsc_code': ' bank0001234 '})
+        cursor = MagicMock()
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_user', return_value={'id': 8, 'is_nexg_admin': False}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            main.create_expense(payload, 'token')
+        sql, values = cursor.execute.call_args.args
+        columns = sql.split('(', 1)[1].split(')', 1)[0].replace(' ', '').replace('\n', '').split(',')
+        saved = dict(zip(columns, values))
+        self.assertEqual(saved['client_name'], 'Acme')
+        self.assertEqual(saved['location'], 'Kolkata')
+        self.assertEqual(saved['upi_id'], '')
+        self.assertEqual(saved['account_number'], '123456789')
+        self.assertEqual(saved['ifsc_code'], 'BANK0001234')
+
     def test_batch_saves_separate_expenses_with_one_group_id(self):
         payload = main.ExpenseBatchRequest(
             category='Food', expense_type='Reimbursement', payment_method='UPI', upi_id='team@bank',
