@@ -77,6 +77,7 @@ class ExpenseEditTests(unittest.TestCase):
     def test_advance_saves_client_location_and_selected_bank_details(self):
         payload = self.payload.model_copy(update={
             'expense_type': 'Advance', 'client_name': ' Acme ', 'location': ' Kolkata ',
+            'particulars': ' Client site visit ',
             'payment_method': 'NEFT', 'account_number': '123456789', 'ifsc_code': ' bank0001234 '})
         cursor = MagicMock()
         connection = MagicMock()
@@ -87,6 +88,7 @@ class ExpenseEditTests(unittest.TestCase):
         sql, values = cursor.execute.call_args.args
         columns = sql.split('(', 1)[1].split(')', 1)[0].replace(' ', '').replace('\n', '').split(',')
         saved = dict(zip(columns, values))
+        self.assertEqual(saved['particulars'], 'Client site visit')
         self.assertEqual(saved['client_name'], 'Acme')
         self.assertEqual(saved['location'], 'Kolkata')
         self.assertEqual(saved['upi_id'], '')

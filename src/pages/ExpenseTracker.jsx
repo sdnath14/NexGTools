@@ -224,7 +224,7 @@ export default function ExpenseTracker({ user }) {
   const submit = async (event) => {
     event.preventDefault();
     if (editingExpense ? !user?.is_nexg_admin : user?.is_nexg_admin) return;
-    if (form.expense_type === 'Advance' && (!form.client_name.trim() || !form.location.trim())) { setError('Enter the client name and location.'); return; }
+    if (form.expense_type === 'Advance' && (!form.client_name.trim() || !form.particulars.trim() || !form.location.trim())) { setError('Enter the client name, purpose and location.'); return; }
     setSaving(true); setError('');
     try {
       const sessionResponse = await fetch(`${API_BASE_URL}/api/auth/me`, { headers: authHeaders() });
@@ -246,7 +246,7 @@ export default function ExpenseTracker({ user }) {
           reader.readAsDataURL(form.attachment);
         });
       }
-      const payload = { ...form, particulars: form.expense_type === 'Advance' ? `Advance for ${form.client_name.trim()} · ${form.location.trim()}`.slice(0, 500) : form.particulars, amount: Number(form.amount), attachment: undefined, attachment_name: form.attachment?.name || '', attachment_type: form.attachment?.type || '', attachment_base64 };
+      const payload = { ...form, particulars: form.particulars.trim(), amount: Number(form.amount), attachment: undefined, attachment_name: form.attachment?.name || '', attachment_type: form.attachment?.type || '', attachment_base64 };
       if (extraItems.length && !editingExpense) payload.items = [{ particulars: form.particulars, amount: Number(form.amount) }, ...extraItems.map((item) => ({ particulars: item.particulars, amount: Number(item.amount) }))];
       const response = await fetch(`${API_BASE_URL}/api/expenses${editingExpense ? `/${editingExpense.id}` : extraItems.length ? '/batch' : ''}`, { method: editingExpense ? 'PUT' : 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await response.json();
@@ -412,7 +412,7 @@ export default function ExpenseTracker({ user }) {
             <dl>{[
               ['Submitted by', item.submitted_by], ['Date', dateLabel(item.created_at)],
               ...(item.expense_type === 'Advance' ? [['Client name', item.client_name], ['Location', item.location]] : []),
-              ['Particulars', item.particulars], ['Category', item.category], ['Amount', money(item.amount)], ['Type', item.expense_type],
+              [item.expense_type === 'Advance' ? 'Purpose' : 'Particulars', item.particulars], ['Category', item.category], ['Amount', money(item.amount)], ['Type', item.expense_type],
               ['Status', item.status === 'Reimbursed' ? 'Paid' : item.status], ['Payment method', item.payment_method],
               ...(item.payment_method === 'UPI' ? [['UPI ID', item.upi_id]] : [['Account number', item.account_number], ['IFSC code', item.ifsc_code]]),
               [item.status === 'Rejected' ? 'Rejection reason' : 'Issue note', item.issue_note || (item.status === 'Rejected' ? 'No reason recorded' : 'No issue raised')],
@@ -439,6 +439,7 @@ export default function ExpenseTracker({ user }) {
         <form onSubmit={submit}>
           {form.expense_type === 'Advance' ? <>
             <label>Client Name<input required maxLength={255} value={form.client_name} onChange={(event) => update('client_name', event.target.value)} placeholder="Enter client name" /></label>
+            <label>Purpose<input required maxLength={500} value={form.particulars} onChange={(event) => update('particulars', event.target.value)} placeholder="What is this advance for?" /></label>
             <label>Location<span className="request-location"><input required maxLength={255} value={form.location} onChange={(event) => update('location', event.target.value)} placeholder="Location" /><MapPin size={18} /></span></label>
             <label>Amount<span className="request-amount"><span>₹</span><input required aria-label="Amount in rupees" type="number" min="0.01" max="9999999999" step="0.01" value={form.amount} onChange={(event) => update('amount', event.target.value)} placeholder="0.00" /></span></label>
             <fieldset className="request-payment"><legend>Payment Method</legend>
