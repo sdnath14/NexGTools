@@ -5,8 +5,8 @@ import { API_BASE_URL, authHeaders } from '../auth';
 import './ExpenseTracker.css';
 import { expenseSummary } from '../expenseSummary';
 
-const categories = ['Travel', 'Food', 'Stationery', 'Office Supplies', 'Client Meeting', 'Other'];
-const colors = ['#b92c28', '#dfa62d', '#514d45', '#9d7852', '#59705a', '#b6afa2'];
+const categories = ['Travel', 'Food', 'Stationery', 'Office Supplies', 'Business Development', 'Loading/Unloading', 'Other'];
+const colors = ['#b92c28', '#dfa62d', '#514d45', '#9d7852', '#59705a', '#557ca2', '#8766a0', '#b6afa2'];
 const blank = { client_name: '', location: '', category: 'Travel', particulars: '', amount: '', expense_type: 'Reimbursement', payment_method: 'UPI', upi_id: '', account_number: '', ifsc_code: '', attachment: null };
 const money = (value) => `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 const dateLabel = (value) => new Date(value).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -54,6 +54,7 @@ export default function ExpenseTracker({ user }) {
   const [editingExpense, setEditingExpense] = useState(null);
   const [details, setDetails] = useState(null);
   const [form, setForm] = useState(blank);
+  const [advanceReason, setAdvanceReason] = useState('client');
   const [extraItems, setExtraItems] = useState([]);
   const [activeItem, setActiveItem] = useState(0);
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -120,7 +121,8 @@ export default function ExpenseTracker({ user }) {
 
   const summary = useMemo(() => expenseSummary(expenses), [expenses]);
   const total = expenses.reduce((sum, item) => sum + Number(item.amount), 0);
-  const categoryTotals = useMemo(() => categories.map((category, index) => ({ category, color: colors[index], total: expenses.filter((item) => item.category === category).reduce((sum, item) => sum + Number(item.amount), 0) })), [expenses]);
+  const reportCategories = useMemo(() => [...new Set([...categories, ...expenses.map((item) => item.category).filter(Boolean)])], [expenses]);
+  const categoryTotals = useMemo(() => reportCategories.map((category, index) => ({ category, color: colors[index % colors.length], total: expenses.filter((item) => item.category === category).reduce((sum, item) => sum + Number(item.amount), 0) })), [expenses, reportCategories]);
   const monthData = useMemo(() => Array.from({ length: 6 }, (_, index) => {
     const month = new Date(); month.setDate(1); month.setMonth(month.getMonth() - 5 + index);
     return { label: month.toLocaleDateString('en-IN', { month: 'short' }), total: expenses.filter((item) => { const date = new Date(item.created_at); return date.getFullYear() === month.getFullYear() && date.getMonth() === month.getMonth(); }).reduce((sum, item) => sum + Number(item.amount), 0) };
@@ -214,6 +216,7 @@ export default function ExpenseTracker({ user }) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not load expense.');
       setForm({ ...blank, ...data.expense, amount: String(data.expense.amount), attachment: null });
+      setAdvanceReason(data.expense.client_name ? 'client' : 'purpose');
       setExtraItems([]);
       setActiveItem(0);
       setReviewOpen(false);
@@ -224,7 +227,7 @@ export default function ExpenseTracker({ user }) {
   const submit = async (event) => {
     event.preventDefault();
     if (editingExpense ? !user?.is_nexg_admin : user?.is_nexg_admin) return;
-    if (form.expense_type === 'Advance' && (!form.client_name.trim() || !form.particulars.trim() || !form.location.trim())) { setError('Enter the client name, purpose and location.'); return; }
+    if (form.expense_type === 'Advance' && (!form.particulars.trim() || !form.location.trim() || (advanceReason === 'client' && !form.client_name.trim()))) { setError(advanceReason === 'client' ? 'Enter the client name, job and location.' : 'Enter the purpose and location.'); return; }
     setSaving(true); setError('');
     try {
       const sessionResponse = await fetch(`${API_BASE_URL}/api/auth/me`, { headers: authHeaders() });
@@ -298,7 +301,7 @@ export default function ExpenseTracker({ user }) {
   const billUsers = [...new Map(expenses.map((item) => [item.user_id, item.submitted_by])).entries()];
 
   const startRequest = (type) => {
-    setError(''); setSavedMessage(''); setEditingExpense(null); setForm({ ...blank, expense_type: type, category: type === 'Advance' ? 'Client Meeting' : 'Travel' });
+    setError(''); setSavedMessage(''); setEditingExpense(null); setAdvanceReason('client'); setForm({ ...blank, expense_type: type, category: type === 'Advance' ? 'Other' : 'Travel' });
     setExtraItems([]); setActiveItem(0); setReviewOpen(false); setHistoryOpen(false); setFormOpen(true);
   };
   useEffect(() => {
@@ -347,7 +350,7 @@ export default function ExpenseTracker({ user }) {
         <div className="expense-ledger-heading"><span className="expense-ledger-icon"><Wallet size={24} /></span><div><h2>{user?.is_nexg_admin ? 'Admin Expense View' : 'Your Expenses'}</h2><p>{user?.is_nexg_admin ? 'Review claims and resolve payments from one place' : 'Your recorded claims and payment status'}</p></div></div>
         <div className="expense-ledger-controls">{user?.is_nexg_admin && <select aria-label="Bill user" value={billUser} onChange={(event) => setBillUser(event.target.value)}><option value="">All users</option>{billUsers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>}<label className="expense-period"><CalendarDays size={18} /><span>{monthRangeLabel}</span><ChevronDown size={16} /><input aria-label="Expense month, blank for all dates" type="month" value={billMonth} onChange={(event) => setBillMonth(event.target.value)} /></label>{billMonth && <button className="expense-clear-period" type="button" onClick={() => setBillMonth('')} aria-label="Show all dates"><X size={16} /></button>}<button className="expense-generate" type="button" onClick={downloadBill} disabled={billBusy}><Download size={18} /> {billBusy ? 'Generating...' : 'Generate Bill'}</button></div>
       </div>
-      <div className="expense-ledger-body"><div className="expense-ledger-toolbar"><div className="expense-filter-tabs" aria-label="Filter by status">{statusOptions.filter((status) => ['All', 'Pending', 'Approved', 'Rejected'].includes(status) || statusCounts[status] > 0 || statusFilter === status).map((status) => <button key={status} type="button" className={statusFilter === status ? 'active' : ''} onClick={() => setStatusFilter(status)}>{status !== 'All' && <span className={`expense-filter-dot ${status.toLowerCase().replace(/\s+/g, '-')}`} />}{status === 'Reimbursed' ? 'Paid' : status} ({statusCounts[status]})</button>)}</div><div className="expense-search-controls"><label className="expense-search"><Search size={19} /><input type="search" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search by category, particulars..." aria-label="Search expenses" /></label><div className="expense-category-filter"><button type="button" className={categoryFilter !== 'All' ? 'is-filtered' : ''} aria-label="Filter by category" aria-expanded={filterOpen} onClick={() => setFilterOpen((current) => !current)}><SlidersHorizontal size={19} /></button>{filterOpen && <div className="expense-category-popover"><label>Category<select value={categoryFilter} onChange={(event) => { setCategoryFilter(event.target.value); setFilterOpen(false); }}><option>All</option>{categories.map((category) => <option key={category}>{category}</option>)}</select></label></div>}</div></div></div>
+      <div className="expense-ledger-body"><div className="expense-ledger-toolbar"><div className="expense-filter-tabs" aria-label="Filter by status">{statusOptions.filter((status) => ['All', 'Pending', 'Approved', 'Rejected'].includes(status) || statusCounts[status] > 0 || statusFilter === status).map((status) => <button key={status} type="button" className={statusFilter === status ? 'active' : ''} onClick={() => setStatusFilter(status)}>{status !== 'All' && <span className={`expense-filter-dot ${status.toLowerCase().replace(/\s+/g, '-')}`} />}{status === 'Reimbursed' ? 'Paid' : status} ({statusCounts[status]})</button>)}</div><div className="expense-search-controls"><label className="expense-search"><Search size={19} /><input type="search" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search by category, particulars..." aria-label="Search expenses" /></label><div className="expense-category-filter"><button type="button" className={categoryFilter !== 'All' ? 'is-filtered' : ''} aria-label="Filter by category" aria-expanded={filterOpen} onClick={() => setFilterOpen((current) => !current)}><SlidersHorizontal size={19} /></button>{filterOpen && <div className="expense-category-popover"><label>Category<select value={categoryFilter} onChange={(event) => { setCategoryFilter(event.target.value); setFilterOpen(false); }}><option>All</option>{reportCategories.map((category) => <option key={category}>{category}</option>)}</select></label></div>}</div></div></div>
       <div className="expense-table-wrap"><table className="expense-table">
         <thead><tr><th>#</th><th><button type="button" onClick={() => sortTable('date')}>Date <ChevronsUpDown size={13} /></button></th>{user?.is_nexg_admin && <th>User</th>}<th><button type="button" onClick={() => sortTable('category')}>Category <ChevronsUpDown size={13} /></button></th><th><button type="button" onClick={() => sortTable('particulars')}>Particulars <ChevronsUpDown size={13} /></button></th><th><button type="button" onClick={() => sortTable('amount')}>Amount <ChevronsUpDown size={13} /></button></th><th><button type="button" onClick={() => sortTable('type')}>Type <ChevronsUpDown size={13} /></button></th><th><button type="button" onClick={() => sortTable('status')}>Status <ChevronsUpDown size={13} /></button></th><th><button type="button" onClick={() => sortTable('payment')}>Payment Method <ChevronsUpDown size={13} /></button></th><th>Action</th></tr></thead>
         <tbody>{visibleGroups.flatMap((group, groupIndex) => (user?.is_nexg_admin && expandedBatches.includes(group.id) ? group.items : group.items.slice(0, 1)).map((item, rowIndex, shownItems) => {
@@ -357,7 +360,7 @@ export default function ExpenseTracker({ user }) {
           return <React.Fragment key={item.id}><tr>
             <td><span className="expense-row-number">{user?.is_nexg_admin ? expenses.indexOf(item) + 1 : (page - 1) * pageSize + groupIndex + 1}</span></td><td><span className="expense-date-cell"><CalendarDays size={18} /><span><strong>{dateLabel(item.created_at)}</strong><small>{new Date(item.created_at).toLocaleDateString('en-IN', { weekday: 'short' })}</small></span></span></td>
             {user?.is_nexg_admin && <td className="expense-user-cell"><strong>{item.submitted_by}</strong><small>{item.rank || 'Employee'}</small></td>}
-            <td><span className="expense-category" style={{ color: colors[categories.indexOf(item.category)] || colors[5] }}>{item.category}</span></td>
+            <td><span className="expense-category" style={{ color: colors[reportCategories.indexOf(item.category) % colors.length] || colors[5] }}>{item.category}</span></td>
             <td className="expense-particulars">{combinedUserRow ? <div className="expense-particular-list">{group.items.map((entry, index) => <div key={entry.id}><strong>{index + 1}. {entry.particulars}</strong><small>{money(entry.amount)} · {entry.status === 'Reimbursed' ? 'Paid' : entry.status}</small>{entry.issue_note && <small className="expense-issue-note">{entry.status === 'Rejected' ? 'Rejection reason' : 'Issue'}: {entry.issue_note}</small>}</div>)}</div> : <div className="expense-particular-list"><div><strong>{item.particulars}</strong>{item.issue_note && <small className="expense-issue-note">{item.status === 'Rejected' ? 'Rejection reason' : 'Issue'}: {item.issue_note}</small>}</div></div>}</td>
             <td className="expense-amount"><strong>{money(combinedUserRow ? group.items.reduce((sum, entry) => sum + Number(entry.amount), 0) : item.amount)}</strong>{combinedUserRow && <small>({group.items.length} items)</small>}</td><td><span className={`expense-type ${item.expense_type.toLowerCase()}`}>{item.expense_type}</span></td>
             <td><span className={`expense-status ${groupStatus.toLowerCase().replace(/\s+/g, '-')}`}>{groupStatus === 'Reimbursed' ? 'Paid' : groupStatus}</span></td>
@@ -411,8 +414,8 @@ export default function ExpenseTracker({ user }) {
             <h3>EXP-{String(item.id).padStart(5, '0')} · {item.particulars}</h3>
             <dl>{[
               ['Submitted by', item.submitted_by], ['Date', dateLabel(item.created_at)],
-              ...(item.expense_type === 'Advance' ? [['Client name', item.client_name], ['Location', item.location]] : []),
-              [item.expense_type === 'Advance' ? 'Purpose' : 'Particulars', item.particulars], ['Category', item.category], ['Amount', money(item.amount)], ['Type', item.expense_type],
+              ...(item.expense_type === 'Advance' ? [...(item.client_name ? [['Client name', item.client_name]] : []), ['Location', item.location]] : []),
+              [item.expense_type === 'Advance' ? (item.client_name ? 'Job' : 'Purpose') : 'Particulars', item.particulars], ['Category', item.category], ['Amount', money(item.amount)], ['Type', item.expense_type],
               ['Status', item.status === 'Reimbursed' ? 'Paid' : item.status], ['Payment method', item.payment_method],
               ...(item.payment_method === 'UPI' ? [['UPI ID', item.upi_id]] : [['Account number', item.account_number], ['IFSC code', item.ifsc_code]]),
               [item.status === 'Rejected' ? 'Rejection reason' : 'Issue note', item.issue_note || (item.status === 'Rejected' ? 'No reason recorded' : 'No issue raised')],
@@ -438,8 +441,8 @@ export default function ExpenseTracker({ user }) {
         {error && <div className="expense-error" role="alert">{error}</div>}
         <form onSubmit={submit}>
           {form.expense_type === 'Advance' ? <>
-            <label>Client Name<input required maxLength={255} value={form.client_name} onChange={(event) => update('client_name', event.target.value)} placeholder="Enter client name" /></label>
-            <label>Purpose<input required maxLength={500} value={form.particulars} onChange={(event) => update('particulars', event.target.value)} placeholder="What is this advance for?" /></label>
+            <fieldset className="request-reason"><legend>Advance for <em>*</em></legend><label><input type="radio" name="advance-reason" checked={advanceReason === 'client'} onChange={() => { setAdvanceReason('client'); setForm((current) => ({ ...current, particulars: '' })); }} /> Client Name</label><label><input type="radio" name="advance-reason" checked={advanceReason === 'purpose'} onChange={() => { setAdvanceReason('purpose'); setForm((current) => ({ ...current, client_name: '', particulars: '' })); }} /> Purpose</label></fieldset>
+            {advanceReason === 'client' ? <><label>Client Name<input required maxLength={255} value={form.client_name} onChange={(event) => update('client_name', event.target.value)} placeholder="Enter client name" /></label><label>Job<input required maxLength={500} value={form.particulars} onChange={(event) => update('particulars', event.target.value)} placeholder="Enter job" /></label></> : <label>Purpose<input required maxLength={500} value={form.particulars} onChange={(event) => update('particulars', event.target.value)} placeholder="What is this advance for?" /></label>}
             <label>Location<span className="request-location"><input required maxLength={255} value={form.location} onChange={(event) => update('location', event.target.value)} placeholder="Location" /><MapPin size={18} /></span></label>
             <label>Amount<span className="request-amount"><span>₹</span><input required aria-label="Amount in rupees" type="number" min="0.01" max="9999999999" step="0.01" value={form.amount} onChange={(event) => update('amount', event.target.value)} placeholder="0.00" /></span></label>
             <fieldset className="request-payment"><legend>Payment Method</legend>
@@ -457,7 +460,7 @@ export default function ExpenseTracker({ user }) {
             </section>
             <div className="expense-form-actions"><button type="button" onClick={() => { setReviewOpen(false); setActiveItem(extraItems.length); }}>Back to edit</button><button className="expense-primary" disabled={saving}>{saving ? 'Saving...' : 'Save Expenses'}</button></div>
           </> : <>
-            <label>Category <em>*</em><span className="expense-select"><select value={form.category} onChange={(event) => update('category', event.target.value)}>{categories.map((category) => <option key={category}>{category}</option>)}</select><ChevronDown size={16} /></span></label>
+            <label>Category <em>*</em><span className="expense-select"><select value={form.category} onChange={(event) => update('category', event.target.value)}>{editingExpense && !categories.includes(form.category) && <option>{form.category}</option>}{categories.map((category) => <option key={category}>{category}</option>)}</select><ChevronDown size={16} /></span></label>
             <div className="expense-items-list">{[form, ...extraItems].map((item, index) => <section className={`expense-item-fields ${activeItem === index ? 'is-open' : ''}`} key={index}>
               <div className="expense-item-heading"><button type="button" className="expense-item-toggle" aria-expanded={activeItem === index} onClick={() => setActiveItem(index)}><span>{item.particulars || `Particular ${index + 1}`}<small>{activeItem === index ? `Item ${index + 1}` : item.amount ? money(item.amount) : 'Needs details'}</small></span><ChevronDown size={16} /></button>{index > 0 && <button type="button" className="expense-item-remove" aria-label={`Remove particular ${index + 1}`} onClick={() => { setExtraItems((current) => current.filter((_, itemIndex) => itemIndex !== index - 1)); setActiveItem(0); }}><X size={16} /></button>}</div>
               {activeItem === index && <div className="expense-item-inputs"><label>Particulars <em>*</em><input required maxLength={500} value={item.particulars} onChange={(event) => index === 0 ? update('particulars', event.target.value) : updateExtraItem(index - 1, 'particulars', event.target.value)} placeholder="What was this expense for?" /></label><label>Expense Amount (INR) <em>*</em><input required type="number" min="0.01" step="0.01" value={item.amount} onChange={(event) => index === 0 ? update('amount', event.target.value) : updateExtraItem(index - 1, 'amount', event.target.value)} placeholder="0.00" /></label></div>}

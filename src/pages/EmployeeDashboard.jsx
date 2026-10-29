@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowUpRight, Bell, LogOut, UserRound, X } from 'lucide-react';
+import { ArrowUpRight, BarChart3, Bell, ClipboardList, Database, FileSpreadsheet, LogOut, Search, Send, Settings, UserRound, Wallet, X } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './EmployeeWorkspace.css';
 
 const names = { lead_search: 'Lead Search', business_search: 'Business Search', outreach: 'Business Outreach', work_assignments: 'Work Assignments', data_library: 'Data Library', data_analytics: 'Analytics', used_oil_india: 'Used Oil India', expense_tracker: 'Expense Tracker', exports: 'Exports', settings: 'Settings' };
 const paths = { lead_search: '/lead-search', business_search: '/business-search', outreach: '/business-outreach', work_assignments: '/work-assignments', data_library: '/data-library', data_analytics: '/data-analytics', used_oil_india: '/used-oil-india', expense_tracker: '/expense-tracker', exports: '/lead-search/csv', settings: '/settings', lead_search_history: '/lead-search/csv' };
+const toolIcons = { lead_search: Search, business_search: Search, outreach: Send, work_assignments: ClipboardList, data_library: Database, data_analytics: BarChart3, used_oil_india: Database, expense_tracker: Wallet, exports: FileSpreadsheet, lead_search_history: FileSpreadsheet, settings: Settings };
 
 export default function EmployeeDashboard({ user, onLogout }) {
   const [tasks, setTasks] = useState([]);
@@ -41,7 +42,7 @@ export default function EmployeeDashboard({ user, onLogout }) {
         </dl>
       </aside>
     </div>}
-    {!!tools.length && <section className="employee-tool-section"><h2>Tools you can access</h2><div className="employee-tool-links" aria-label="Your tools">{accessibleTools.filter((item) => paths[item]).map((item) => <Link key={item} to={paths[item]}><span>{names[item] || item.replaceAll('_', ' ')}</span><ArrowUpRight size={16} /></Link>)}</div></section>}
+    {!!tools.length && <section className="employee-tool-section"><h2>Tools you can access</h2><div className="employee-tool-links" aria-label="Your tools">{accessibleTools.filter((item) => paths[item]).map((item) => { const Icon = toolIcons[item] || ArrowUpRight; return <Link key={item} to={paths[item]}><span className="employee-tool-icon"><Icon size={24} /></span><span>{names[item] || item.replaceAll('_', ' ')}</span><ArrowUpRight className="employee-tool-arrow" size={16} /></Link>; })}</div></section>}
     <div className="employee-dashboard-actions"><Link to="/my-tasks">My tasks</Link>{tasks.find((task) => task.status !== 'Done') && <Link to={`/my-tasks/${tasks.find((task) => task.status !== 'Done').id}`}>Open current task</Link>}</div>
   </div>;
 }

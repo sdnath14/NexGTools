@@ -1,6 +1,6 @@
 {
   "appId": "com.nexgpetrolube.tools",
-  "appName": "NexgTools",
+  "appName": "NexG Tools",
   "webDir": "dist",
   "server": {
     "androidScheme": "https"

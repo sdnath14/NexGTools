@@ -911,8 +911,8 @@ def _validate_expense_submission(payload: ExpenseRequest | ExpenseBatchRequest) 
         raise HTTPException(status_code=400, detail='UPI ID is required.')
     if payload.payment_method == 'NEFT' and (not payload.account_number.strip() or not payload.ifsc_code.strip()):
         raise HTTPException(status_code=400, detail='Account number and IFSC code are required.')
-    if payload.expense_type == 'Advance' and (not getattr(payload, 'client_name', '').strip() or not getattr(payload, 'location', '').strip()):
-        raise HTTPException(status_code=400, detail='Client name and location are required for advances.')
+    if payload.expense_type == 'Advance' and not getattr(payload, 'location', '').strip():
+        raise HTTPException(status_code=400, detail='Location is required for advances.')
     attachment = None
     if payload.attachment_base64:
         if payload.attachment_type not in ('application/pdf', 'image/jpeg', 'image/png') or not payload.attachment_name:
@@ -1009,8 +1009,8 @@ def edit_expense(expense_id: int, payload: ExpenseRequest,
         raise HTTPException(status_code=400, detail='UPI ID is required.')
     if payload.payment_method == 'NEFT' and (not payload.account_number.strip() or not payload.ifsc_code.strip()):
         raise HTTPException(status_code=400, detail='Account number and IFSC code are required.')
-    if payload.expense_type == 'Advance' and (not getattr(payload, 'client_name', '').strip() or not getattr(payload, 'location', '').strip()):
-        raise HTTPException(status_code=400, detail='Client name and location are required for advances.')
+    if payload.expense_type == 'Advance' and not getattr(payload, 'location', '').strip():
+        raise HTTPException(status_code=400, detail='Location is required for advances.')
     attachment = None
     if payload.attachment_base64:
         if payload.attachment_type not in ('application/pdf', 'image/jpeg', 'image/png') or not payload.attachment_name:

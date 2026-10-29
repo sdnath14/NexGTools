@@ -1,9 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
-import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
 import MobileNav from './components/MobileNav';
-import Dashboard from './pages/Dashboard';
+import AdminDirectory from './pages/AdminDirectory';
 import LeadSearch from './pages/LeadSearch';
 import BusinessSearch from './pages/BusinessSearch';
 import CsvHistory from './pages/CsvHistory';
@@ -48,37 +47,30 @@ function PushNotificationBridge({ user }) {
   return null;
 }
 
-function WorkspaceLayout({ user, sidebarCollapsed, setSidebarCollapsed, isMobile, mobileMenuOpen, setMobileMenuOpen, closeMobileMenu, logout, children }) {
+function WorkspaceLayout({ user, mobileMenuOpen, setMobileMenuOpen, logout, children }) {
   const { pathname } = useLocation();
   const employee = !user.is_nexg_admin;
-  const employeeScreen = employee && (pathname === '/' || pathname === '/my-tasks' || pathname.startsWith('/my-tasks/') || pathname === '/notifications');
-  return <div className={`app-layout ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} ${employee ? 'employee-layout' : ''} ${employeeScreen ? 'employee-screen' : 'employee-tool-screen'}`}>
+  if (!employee) return <div className="app-layout admin-home-layout">
     <PushNotificationBridge user={user} />
-    {!employee && <Sidebar user={user} collapsed={!isMobile && sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} permissions={user.permissions || []} isNexgAdmin={user.is_nexg_admin} isMobile={isMobile} mobileOpen={mobileMenuOpen} onClose={closeMobileMenu} />}
+    <AdminDirectory user={user} onLogout={logout} toolPage={pathname !== '/'}>{children}</AdminDirectory>
+  </div>;
+  const employeeScreen = employee && (pathname === '/' || pathname === '/my-tasks' || pathname.startsWith('/my-tasks/') || pathname === '/notifications');
+  return <div className={`app-layout employee-layout ${employeeScreen ? 'employee-screen' : 'employee-tool-screen'}`}>
+    <PushNotificationBridge user={user} />
     <div className="app-main">
       {!employeeScreen && <Topbar user={user} onLogout={logout} mobileMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />}
       <main className="app-content">{children}</main>
     </div>
-    {!employee && <MobileNav user={user} mobileMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />}
+    <MobileNav user={user} mobileMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />
   </div>;
 }
 
 function App() {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 768px)').matches);
-  const closeMobileMenu = useCallback(() => setMobileMenuOpen(false), []);
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [appearance, setAppearance] = useState(loadAppearance);
-
-  useEffect(() => {
-    const media = window.matchMedia('(max-width: 768px)');
-    const update = () => { setIsMobile(media.matches); setMobileMenuOpen(false); };
-    media.addEventListener('change', update);
-    return () => media.removeEventListener('change', update);
-  }, []);
 
   useEffect(() => {
     applyAppearance(appearance);
@@ -173,9 +165,9 @@ function App() {
   return (
     <Router>
       <NotificationProvider key={user.id}>
-      <WorkspaceLayout user={user} sidebarCollapsed={sidebarCollapsed} setSidebarCollapsed={setSidebarCollapsed} isMobile={isMobile} mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} closeMobileMenu={closeMobileMenu} logout={logout}>
+      <WorkspaceLayout user={user} mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} logout={logout}>
             <Routes>
-              <Route path="/" element={user.is_nexg_admin ? <Dashboard user={user} /> : <EmployeeDashboard user={user} onLogout={logout} />} />
+              <Route path="/" element={user.is_nexg_admin ? null : <EmployeeDashboard user={user} onLogout={logout} />} />
               <Route path="/lead-search" element={hasPermission('lead_search') ? <LeadSearch /> : <Navigate to="/" replace />} />
               <Route path="/lead-search/history" element={hasPermission('lead_search_history') || hasPermission('exports') ? <Navigate to="/lead-search/csv?view=searches" replace /> : <Navigate to="/" replace />} />
               <Route path="/lead-search/csv" element={hasPermission('exports') || hasPermission('lead_search_history') ? <CsvHistory type="lead_search" canViewExports={hasPermission('exports')} canViewSearchHistory={hasPermission('lead_search_history')} /> : <Navigate to="/" replace />} />

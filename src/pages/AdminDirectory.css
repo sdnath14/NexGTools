@@ -1,0 +1,113 @@
+.admin-home-layout { --app-accent: #0877ad; --app-accent-hover: #075c87; --app-accent-soft: #eaf4fb; --app-accent-ring: #0877ad22; --app-bg: #f3f6f9; --app-surface: #fff; --app-subtle: #f3f7fa; --app-border: #d4dfe9; --app-text: #15283e; --app-muted: #5f758b; margin: 0; min-height: 100dvh; border-radius: 0; box-shadow: none; background: #f3f6f9; }
+.admin-home-layout .app-main, .admin-home-layout.sidebar-is-collapsed .app-main { width: 100%; min-height: 100dvh; margin: 0; border-radius: 0; }
+.admin-home-layout .app-content { padding: 0; overflow: visible; background: #f3f6f9; border-radius: 0; }
+.admin-home-layout .app-content > .admin-directory { width: 100%; max-width: none; margin: 0; }
+.admin-directory { flex: 1; width: 100%; min-width: 0; min-height: 100dvh; color: #15283e; background: #f3f6f9; }
+.directory-topbar { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 58px; padding: 8px 24px; background: #075780; color: #fff; }
+.directory-brand { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 0; border: 0; background: transparent; color: #fff; white-space: nowrap; cursor: pointer; }
+.directory-brand-mark { display: grid; place-items: center; width: 30px; height: 30px; overflow: hidden; border-radius: 4px; background: #fff; }
+.directory-brand-mark .nexg-brand-mark { width: 28px; height: 20px; }
+.directory-brand-name { font-size: 16px; font-weight: 750; letter-spacing: -.2px; }
+.directory-brand-name small { font-size: 13px; font-weight: 400; opacity: .8; }
+.directory-topbar-actions { display: flex; align-items: center; gap: 15px; }
+.directory-search { display: flex; align-items: center; gap: 8px; width: min(280px, 26vw); height: 36px; padding: 0 10px; border: 1px solid #ffffff2d; border-radius: 4px; background: #064f77; color: #a7c9dd; }
+.directory-search:focus-within { border-color: #b9dcf1; box-shadow: 0 0 0 2px #ffffff30; }
+.directory-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: #fff; font-size: 13px; }
+.directory-search input::placeholder { color: #c5dce9; }
+.directory-search button { display: grid; place-items: center; flex: 0 0 22px; height: 22px; padding: 0; border: 0; background: transparent; color: #d3e7f0; cursor: pointer; }
+.directory-notifications { position: relative; display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #ecf6fb; cursor: pointer; }
+.directory-notifications:hover, .directory-profile-trigger:hover { background: #ffffff1e; }
+.directory-notifications i { position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border: 1px solid #075780; border-radius: 50%; background: #ff5c67; }
+.directory-profile { position: relative; }
+.directory-profile-trigger { display: flex; align-items: center; gap: 5px; padding: 3px; border: 0; border-radius: 5px; background: transparent; color: #fff; cursor: pointer; }
+.directory-profile-trigger span { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid #ffffff2e; border-radius: 4px; background: #137db5; font-size: 11px; font-weight: 750; }
+.directory-profile-menu { position: absolute; top: calc(100% + 10px); right: 0; width: 220px; padding: 12px; border: 1px solid #d1dce8; border-radius: 7px; background: #fff; color: #1b2e44; box-shadow: 0 12px 28px #122b4540; }
+.directory-profile-menu strong, .directory-profile-menu small { display: block; overflow-wrap: anywhere; }
+.directory-profile-menu strong { font-size: 13px; }
+.directory-profile-menu small { margin: 2px 0 10px; color: #687d94; font-size: 11px; }
+.directory-profile-menu button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px 7px; border: 0; border-radius: 4px; background: transparent; color: #25445f; text-align: left; font-size: 12px; cursor: pointer; }
+.directory-profile-menu button:hover { background: #edf5fa; }
+.directory-frame { display: grid; grid-template-columns: 258px minmax(0, 1fr); min-height: calc(100dvh - 58px); }
+.directory-categories { display: flex; flex-direction: column; align-items: stretch; gap: 1px; padding: 20px 0; border-right: 1px solid #d6dfe8; background: #fff; }
+.directory-categories p { margin: 0 20px 11px; color: #678099; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.directory-categories button { display: flex; align-items: center; gap: 12px; min-height: 43px; padding: 8px 20px; border: 0; border-left: 3px solid transparent; background: transparent; color: #405974; text-align: left; font-size: 13px; cursor: pointer; }
+.directory-categories button svg { color: #7d96b0; stroke-width: 1.7; }
+.directory-categories button span { flex: 1; }
+.directory-categories button small { color: #8599ad; font-size: 11px; }
+.directory-categories button:hover { background: #f3f8fc; }
+.directory-categories button.active { border-left-color: #0877ad; background: #eaf4fb; color: #075780; font-weight: 700; }
+.directory-categories button.active svg { color: #0877ad; }
+.directory-main { width: 100%; min-width: 0; padding: 34px clamp(22px, 4.8vw, 78px) 64px; }
+.directory-main-tool { padding: 22px clamp(18px, 3vw, 42px) 56px; }
+.admin-home-layout .directory-tool-content { min-width: 0; padding: 0; overflow: visible; background: transparent; }
+.admin-home-layout .directory-tool-content > div { max-width: none; margin-left: 0; margin-right: 0; }
+.directory-tool-crumb { display: flex; align-items: center; gap: 8px; min-height: 28px; margin-bottom: 18px; color: #6b8097; font-size: 12px; }
+.directory-tool-crumb button { padding: 0; border: 0; background: transparent; color: #0877ad; font-size: inherit; font-weight: 650; cursor: pointer; }
+.directory-tool-crumb button:hover { text-decoration: underline; }
+.directory-tool-crumb span { color: #415c75; }
+.admin-home-layout .directory-tool-content :is(.ls-hero,.bs-hero,.admin-hero,.work-hero,.notification-hero,.ls-form-card,.ls-panel,.ls-card,.bs-results-section,.bs-result-card,.library-card,.work-panel,.work-table-panel,.work-assistant,.admin-card,.admin-panel,.admin-table-panel,.admin-stat-card,.settings-card,.notification-inbox,.csv-panel,.history-panel,.analyst-workspace,.expense-panel,.expense-ledger) { border-color: #cbd9e6; border-radius: 5px; background-color: #fff; box-shadow: none; }
+.admin-home-layout .directory-tool-content :is(.ls-hero,.bs-hero,.admin-hero,.work-hero,.notification-hero) { padding: 21px; }
+.admin-home-layout .directory-tool-content :is(.ls-hero,.bs-hero,.admin-hero,.work-hero,.notification-hero) h1 { color: #15283e; font-size: clamp(23px, 2.2vw, 30px); letter-spacing: -.5px; }
+.admin-home-layout .directory-tool-content :is(.ls-search-btn,.ls-submit-btn,.bs-search-btn,.library-upload,.library-query button,.library-download-results,.library-load-more,.bo-generate-btn,.bo-dark-btn,.work-primary-btn,.work-save-btn,.admin-primary-btn,.admin-submit,.admin-save-btn,.expense-primary) { border-radius: 4px; background: #0877ad; border-color: #0877ad; color: #fff; box-shadow: none; }
+.admin-home-layout .directory-tool-content :is(input,select,textarea) { border-color: #cbd9e6; border-radius: 4px; }
+.admin-home-layout .directory-tool-content :is(table th,.work-table th) { background: #f3f7fa; color: #38516b; }
+.directory-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding-bottom: 16px; border-bottom: 1px solid #d4dfe9; }
+.directory-heading h1 { margin: 0 0 2px; color: #15283e; font-size: clamp(22px, 2vw, 27px); line-height: 1.2; font-weight: 750; letter-spacing: -.55px; }
+.directory-heading p { margin: 0; color: #46617b; font-size: 13px; }
+.directory-heading > span { flex: 0 0 auto; color: #678099; font-size: 12px; }
+.directory-section { margin-top: 31px; }
+.directory-section-head { display: flex; align-items: center; gap: 9px; margin-bottom: 16px; padding-bottom: 9px; border-bottom: 1px solid #dce5ed; }
+.directory-section-head h2 { margin: 0; color: #075780; font-size: 13px; font-weight: 800; letter-spacing: .035em; text-transform: uppercase; }
+.directory-section-head span { display: grid; place-items: center; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 50%; background: #e0e8f0; color: #4f6983; font-size: 11px; }
+.directory-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.directory-card { display: flex; flex-direction: column; min-width: 0; min-height: 205px; overflow: hidden; border: 1px solid #c9d7e5; border-radius: 4px; background: #fff; box-shadow: 0 1px 2px #18395008; }
+.directory-card-title { display: flex; align-items: center; gap: 10px; min-height: 45px; padding: 10px 15px; border-bottom: 1px solid #d2deea; background: #f3f7fa; }
+.directory-card-title svg { flex: 0 0 auto; color: #0877ad; stroke-width: 1.8; }
+.directory-card-title h3 { min-width: 0; margin: 0; color: #142b44; font-size: 13px; font-weight: 750; line-height: 1.25; }
+.directory-card-body { flex: 1; padding: 14px 16px 12px; }
+.directory-card-body span { color: #06669a; font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.directory-card-body p { margin: 9px 0 0; color: #38516b; font-size: 13px; line-height: 1.5; }
+.directory-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 16px; padding: 10px 0 14px; border-top: 1px solid #dce5ed; }
+.directory-card-footer > span { color: #6b8097; font-size: 11px; }
+.directory-card-footer button, .directory-empty button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 31px; padding: 5px 11px; border: 1px solid #b7dcf1; border-radius: 4px; background: #eef8fe; color: #00689e; font-size: 12px; font-weight: 650; cursor: pointer; }
+.directory-card-footer button:hover, .directory-empty button:hover { border-color: #68b3dd; background: #e0f1fb; }
+.directory-empty { display: grid; justify-items: center; gap: 9px; margin: 50px auto; padding: 30px; color: #58728a; text-align: center; }
+.directory-empty h2, .directory-empty p { margin: 0; }
+.directory-empty h2 { color: #18344f; font-size: 18px; }
+.directory-empty p { font-size: 13px; }
+.directory-empty button { margin-top: 8px; }
+
+@media (max-width: 1180px) { .directory-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) {
+  .admin-home-layout, .admin-home-layout .app-main { min-height: 100dvh; }
+  .directory-topbar { flex-wrap: wrap; gap: 7px 12px; min-height: 0; padding: calc(9px + var(--sat)) calc(14px + var(--sar)) 9px calc(14px + var(--sal)); }
+  .directory-brand-name { font-size: 14px; }
+  .directory-brand-name small { font-size: 11px; }
+  .directory-topbar-actions { display: contents; }
+  .directory-search { order: 3; width: 100%; height: 39px; margin-top: 3px; }
+  .directory-search input { font-size: 16px; }
+  .directory-notifications { margin-left: auto; }
+  .directory-profile-trigger span { width: 32px; height: 32px; }
+  .directory-frame { display: block; min-height: calc(100dvh - 98px); }
+  .directory-categories { position: relative; display: flex; flex-direction: row; gap: 6px; overflow-x: auto; padding: 10px calc(14px + var(--sar)) 10px calc(14px + var(--sal)); border-right: 0; border-bottom: 1px solid #d6dfe8; scrollbar-width: none; }
+  .directory-categories::-webkit-scrollbar { display: none; }
+  .directory-categories p, .directory-categories button small { display: none; }
+  .directory-categories button { flex: 0 0 auto; gap: 6px; min-height: 36px; padding: 7px 11px; border: 1px solid #d5e0e9; border-radius: 5px; background: #fff; font-size: 12px; white-space: nowrap; }
+  .directory-categories button.active { border-color: #8ac5e5; background: #eaf4fb; }
+  .directory-categories button svg { width: 15px; height: 15px; }
+  .directory-main { padding: 20px calc(16px + var(--sar)) calc(34px + var(--sab)) calc(16px + var(--sal)); }
+  .directory-main-tool { padding: 14px calc(12px + var(--sar)) calc(28px + var(--sab)) calc(12px + var(--sal)); }
+  .directory-tool-crumb { margin: 0 4px 12px; }
+  .admin-home-layout .directory-tool-content :is(.ls-hero,.bs-hero,.admin-hero,.work-hero,.notification-hero) { padding: 16px; }
+  .directory-heading { align-items: flex-start; }
+  .directory-heading h1 { font-size: 22px; }
+  .directory-heading p { font-size: 12px; }
+  .directory-heading > span { margin-top: 5px; font-size: 11px; }
+  .directory-section { margin-top: 25px; }
+  .directory-cards { gap: 12px; }
+}
+@media (max-width: 600px) {
+  .directory-cards { grid-template-columns: 1fr; }
+  .directory-card { min-height: 185px; }
+  .directory-heading > span { display: none; }
+}
