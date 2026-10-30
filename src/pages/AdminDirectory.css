@@ -37,6 +37,7 @@
 .directory-categories button:hover { background: #f3f8fc; }
 .directory-categories button.active { border-left-color: #0877ad; background: #eaf4fb; color: #075780; font-weight: 700; }
 .directory-categories button.active svg { color: #0877ad; }
+.directory-category-divider { height: 1px; margin: 14px 20px; background: #dce5ec; }
 .directory-main { width: 100%; min-width: 0; padding: 34px clamp(22px, 4.8vw, 78px) 64px; }
 .directory-main-tool { padding: 22px clamp(18px, 3vw, 42px) 56px; }
 .admin-home-layout .directory-tool-content { min-width: 0; padding: 0; overflow: visible; background: transparent; }
@@ -92,6 +93,7 @@
   .directory-categories { position: relative; display: flex; flex-direction: row; gap: 6px; overflow-x: auto; padding: 10px calc(14px + var(--sar)) 10px calc(14px + var(--sal)); border-right: 0; border-bottom: 1px solid #d6dfe8; scrollbar-width: none; }
   .directory-categories::-webkit-scrollbar { display: none; }
   .directory-categories p, .directory-categories button small { display: none; }
+  .directory-category-divider { display: none; }
   .directory-categories button { flex: 0 0 auto; gap: 6px; min-height: 36px; padding: 7px 11px; border: 1px solid #d5e0e9; border-radius: 5px; background: #fff; font-size: 12px; white-space: nowrap; }
   .directory-categories button.active { border-color: #8ac5e5; background: #eaf4fb; }
   .directory-categories button svg { width: 15px; height: 15px; }

@@ -19,6 +19,10 @@ const categories = [
       { name: 'Work Assignments', description: 'Create assignments and track team progress.', path: '/work-assignments', icon: ClipboardList },
       { name: 'Employee Work', description: 'Review work submitted by employees.', path: '/team-work', icon: Users },
       { name: 'Voice Agent', description: 'Assign work and update progress by voice.', path: '/voice-agent', icon: Mic },
+    ],
+  },
+  {
+    name: 'Finance', icon: Wallet, apps: [
       { name: 'Expense Tracker', description: 'Review claims, advances, and reimbursements.', path: '/expense-tracker', icon: Wallet },
     ],
   },
@@ -86,7 +90,9 @@ export default function AdminDirectory({ user, onLogout, toolPage = false, child
       <nav className="directory-categories" aria-label="Application categories">
         <p>Categories</p>
         <button type="button" className={selectedCategory === 'All Applications' ? 'active' : ''} aria-current={selectedCategory === 'All Applications' ? 'page' : undefined} onClick={() => chooseCategory('All Applications')}><LayoutGrid size={17} /><span>All Applications</span><small>{totalApps}</small></button>
-        {categories.map((category) => <button type="button" key={category.name} className={selectedCategory === category.name ? 'active' : ''} aria-current={selectedCategory === category.name ? 'page' : undefined} onClick={() => chooseCategory(category.name)}><category.icon size={17} /><span>{category.name}</span><small>{category.apps.length}</small></button>)}
+        {categories.filter((category) => category.name !== 'Finance').map((category) => <button type="button" key={category.name} className={selectedCategory === category.name ? 'active' : ''} aria-current={selectedCategory === category.name ? 'page' : undefined} onClick={() => chooseCategory(category.name)}><category.icon size={17} /><span>{category.name}</span><small>{category.apps.length}</small></button>)}
+        <div className="directory-category-divider" aria-hidden="true" />
+        <button type="button" className={pathname === '/expense-tracker' ? 'active' : ''} aria-current={pathname === '/expense-tracker' ? 'page' : undefined} onClick={() => navigate('/expense-tracker')}><Wallet size={17} /><span>Expense Tracker</span></button>
       </nav>
       <main className={`directory-main ${toolPage ? 'directory-main-tool' : ''}`}>
         {toolPage ? <div className="app-content directory-tool-content"><div className="directory-tool-crumb"><button type="button" onClick={() => chooseCategory(currentCategory?.name || 'All Applications')}>Applications</button><ArrowRight size={14} /><span>{currentApp?.name || (pathname === '/notifications' ? 'Notifications' : 'Workspace')}</span></div>{children}</div> : <>

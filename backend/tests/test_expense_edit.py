@@ -183,16 +183,69 @@ class ExpenseEditTests(unittest.TestCase):
 
     def test_issue_requires_note_and_saves_it(self):
         cursor = MagicMock()
-        cursor.fetchone.return_value = {'status': 'Pending'}
+        cursor.fetchone.return_value = {'user_id': 8, 'status': 'Pending', 'expense_type': 'Reimbursement'}
         connection = MagicMock()
         connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
-        with patch.object(main, '_require_user', return_value={'id': 1, 'is_nexg_admin': True}), \
+        with patch.object(main, '_require_user', return_value={'id': 1, 'name': 'Admin', 'is_nexg_admin': True}), \
              patch.object(main, 'db_connection', return_value=connection):
             with self.assertRaises(HTTPException) as error:
                 main.update_expense_status(7, main.ExpenseStatusRequest(status='Issue Raised'), 'token')
             self.assertEqual(error.exception.status_code, 400)
             main.update_expense_status(7, main.ExpenseStatusRequest(status='Issue Raised', issue_note=' Missing invoice '), 'token')
-        self.assertEqual(cursor.execute.call_args_list[-1].args[1], ('Issue Raised', 'Missing invoice', 7))
+        self.assertEqual(cursor.execute.call_args_list[-2].args[1], ('Issue Raised', 'Missing invoice', 7))
+        self.assertEqual(cursor.execute.call_args_list[-1].args[1][:4], (7, 8, 1, 'expense_issue_raised'))
+        self.assertIn('Missing invoice', cursor.execute.call_args_list[-1].args[1][-1])
+
+    def test_employee_issue_reply_notifies_admin_and_rejects_other_users(self):
+        cursor = MagicMock()
+        cursor.lastrowid = 42
+        cursor.fetchone.side_effect = [
+            {'user_id': 8, 'status': 'Issue Raised', 'expense_type': 'Advance'},
+            {'id': 1},
+        ]
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_user', return_value={'id': 8, 'name': 'Employee', 'is_nexg_admin': False}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            result = main.create_expense_issue_reply(7, main.ExpenseIssueReplyRequest(message=' Receipt attached '), 'token')
+        self.assertEqual(result, {'id': 42})
+        self.assertEqual(cursor.execute.call_args_list[1].args[1], (7, 8, 'Receipt attached'))
+        self.assertEqual(cursor.execute.call_args_list[-1].args[1][:4], (7, 1, 8, 'expense_issue_reply'))
+        self.assertIn('Receipt attached', cursor.execute.call_args_list[-1].args[1][-1])
+
+        cursor.reset_mock()
+        cursor.fetchone.side_effect = None
+        cursor.fetchone.return_value = {'user_id': 9, 'status': 'Issue Raised', 'expense_type': 'Advance'}
+        with patch.object(main, '_require_user', return_value={'id': 8, 'name': 'Employee', 'is_nexg_admin': False}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            with self.assertRaises(HTTPException) as error:
+                main.create_expense_issue_reply(7, main.ExpenseIssueReplyRequest(message='Hello'), 'token')
+        self.assertEqual(error.exception.status_code, 404)
+        self.assertEqual(cursor.execute.call_count, 1)
+
+    def test_employee_cannot_reply_after_issue_is_closed(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {'user_id': 8, 'status': 'Reimbursed', 'expense_type': 'Advance'}
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_user', return_value={'id': 8, 'name': 'Employee', 'is_nexg_admin': False}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            with self.assertRaises(HTTPException) as error:
+                main.create_expense_issue_reply(7, main.ExpenseIssueReplyRequest(message='Updated'), 'token')
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertEqual(cursor.execute.call_count, 1)
+
+    def test_other_employee_cannot_read_issue_replies(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {'user_id': 9}
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_user', return_value={'id': 8, 'is_nexg_admin': False}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            with self.assertRaises(HTTPException) as error:
+                main.list_expense_issue_replies(7, 'token')
+        self.assertEqual(error.exception.status_code, 404)
+        self.assertEqual(cursor.execute.call_count, 1)
 
 
 if __name__ == '__main__':

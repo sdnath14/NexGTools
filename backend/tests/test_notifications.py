@@ -36,6 +36,16 @@ class NotificationTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             main.NotificationReadRequest(ids=[])
 
+    def test_expense_notification_links_to_expense_instead_of_task(self):
+        self.cursor.fetchall.return_value = [{"id": 31, "task_id": None, "expense_id": 7,
+            "event_type": "expense_issue_raised", "message": "Missing receipt",
+            "created_timestamp": 1791288000, "read_at": None}]
+        self.cursor.fetchone.return_value = {"unread_count": 1}
+        with patch.object(main, "_require_user", return_value=self.user), patch.object(main, "db_connection", return_value=self.connection):
+            result = main.work_task_notifications(authorization="Bearer test", before_id=None)
+        self.assertEqual(result["notifications"][0]["expenseId"], 7)
+        self.assertIsNone(result["notifications"][0]["taskId"])
+
     def test_employee_progress_and_done_notify_admin_and_creator_once(self):
         for status in ["In Progress", "Done"]:
             with self.subTest(status=status):

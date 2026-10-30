@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, HandCoins, MapPin, ReceiptText, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Download, Eye, FileText, Pencil, PieChart, Plus, Search, SlidersHorizontal, TrendingUp, UploadCloud, UsersRound, Wallet, X } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './ExpenseTracker.css';
@@ -48,6 +48,8 @@ function ExpenseAttachment({ item, onDownload }) {
 
 export default function ExpenseTracker({ user }) {
   const navigate = useNavigate();
+  const { search } = useLocation();
+  const openedExpenseId = useRef(null);
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
@@ -194,20 +196,32 @@ export default function ExpenseTracker({ user }) {
     const { top, bottom, right } = event.currentTarget.getBoundingClientRect();
     setActiveMenu({ id, top, bottom, right });
   };
-  const viewDetails = async (group) => {
+  const viewDetails = useCallback(async (group) => {
     setActiveMenu(null);
     setError('');
     setDetails({ loading: true, items: [] });
     try {
       const items = await Promise.all(group.items.map(async (item) => {
-        const response = await fetch(`${API_BASE_URL}/api/expenses/${item.id}`, { headers: authHeaders() });
+        const [response, repliesResponse] = await Promise.all([
+          fetch(`${API_BASE_URL}/api/expenses/${item.id}`, { headers: authHeaders() }),
+          fetch(`${API_BASE_URL}/api/expenses/${item.id}/issue-replies`, { headers: authHeaders() }),
+        ]);
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || 'Could not load expense details.');
-        return data.expense;
+        const replyData = await repliesResponse.json();
+        if (!repliesResponse.ok) throw new Error(replyData.detail || 'Could not load issue comments.');
+        return { ...data.expense, issue_replies: replyData.replies || [] };
       }));
       setDetails((current) => current ? { loading: false, items } : null);
     } catch (err) { setDetails(null); setError(err.message); }
-  };
+  }, []);
+  useEffect(() => {
+    const expenseId = Number(new URLSearchParams(search).get('expenseId'));
+    if (!expenseId || loading || openedExpenseId.current === expenseId) return;
+    const group = expenseGroups.find((entry) => entry.items.some((item) => item.id === expenseId));
+    if (group) { openedExpenseId.current = expenseId; viewDetails(group); }
+    else { openedExpenseId.current = expenseId; setError('Request not found.'); }
+  }, [search, loading, expenseGroups, viewDetails]);
   useEffect(() => {
     if (!details) return undefined;
     const close = (event) => { if (event.key === 'Escape') setDetails(null); };
@@ -449,6 +463,7 @@ export default function ExpenseTracker({ user }) {
               ['Receipt', item.attachment_name || 'No receipt attached'],
             ].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || '—'}</dd></div>)}</dl>
             {item.attachment_name && <ExpenseAttachment item={item} onDownload={download} />}
+            {!!item.issue_replies?.length && <div className="expense-issue-replies"><h4>Employee comments</h4>{item.issue_replies.map((reply) => <div key={reply.id}><strong>{reply.author}</strong><time dateTime={new Date(reply.createdAt).toISOString()}>{new Date(reply.createdAt).toLocaleString()}</time><p>{reply.message}</p></div>)}</div>}
           </article>)}
         </>}
       </section>

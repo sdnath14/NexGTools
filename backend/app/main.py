@@ -256,7 +256,8 @@ def ensure_work_assignment_tables() -> None:
                 """
                 CREATE TABLE IF NOT EXISTS work_task_notifications (
                     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                    task_id BIGINT UNSIGNED NOT NULL,
+                    task_id BIGINT UNSIGNED NULL,
+                    expense_id BIGINT UNSIGNED NULL,
                     recipient_user_id BIGINT UNSIGNED NOT NULL,
                     actor_user_id BIGINT UNSIGNED NOT NULL,
                     event_type VARCHAR(64) NOT NULL,
@@ -264,12 +265,35 @@ def ensure_work_assignment_tables() -> None:
                     read_at TIMESTAMP NULL,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     INDEX idx_work_notifications_recipient (recipient_user_id, read_at, created_at),
+                    INDEX idx_work_notifications_expense (expense_id),
                     CONSTRAINT fk_work_notification_task FOREIGN KEY (task_id) REFERENCES work_tasks(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_work_notification_expense FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE CASCADE,
                     CONSTRAINT fk_work_notification_recipient FOREIGN KEY (recipient_user_id) REFERENCES users(id) ON DELETE CASCADE,
                     CONSTRAINT fk_work_notification_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
+            cursor.execute("SHOW COLUMNS FROM work_task_notifications LIKE 'task_id'")
+            if cursor.fetchone()["Null"] == "NO":
+                cursor.execute("ALTER TABLE work_task_notifications MODIFY task_id BIGINT UNSIGNED NULL")
+            cursor.execute("SHOW COLUMNS FROM work_task_notifications LIKE 'expense_id'")
+            if not cursor.fetchone():
+                cursor.execute("""ALTER TABLE work_task_notifications
+                    ADD COLUMN expense_id BIGINT UNSIGNED NULL AFTER task_id,
+                    ADD INDEX idx_work_notifications_expense (expense_id),
+                    ADD CONSTRAINT fk_work_notification_expense FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE CASCADE""")
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS expense_issue_replies (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    expense_id BIGINT UNSIGNED NOT NULL,
+                    author_user_id BIGINT UNSIGNED NOT NULL,
+                    message VARCHAR(1000) NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_expense_issue_replies_expense (expense_id, created_at),
+                    CONSTRAINT fk_expense_issue_reply_expense FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_expense_issue_reply_author FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS work_task_reports (
                     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -649,6 +673,10 @@ class ExpenseBatchRequest(BaseModel):
 class ExpenseStatusRequest(BaseModel):
     status: str
     issue_note: str = Field(default='', max_length=500)
+
+
+class ExpenseIssueReplyRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=1000)
 
 
 class UserRoleRequest(BaseModel):
@@ -1061,7 +1089,7 @@ def update_expense_status(expense_id: int, payload: ExpenseStatusRequest, author
         raise HTTPException(status_code=400, detail='Explain why this expense is rejected.')
     with db_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute('SELECT status FROM expenses WHERE id = %s FOR UPDATE', (expense_id,))
+            cursor.execute('SELECT user_id, status, expense_type FROM expenses WHERE id = %s FOR UPDATE', (expense_id,))
             current = cursor.fetchone()
             if not current:
                 raise HTTPException(status_code=404, detail='Expense not found.')
@@ -1072,7 +1100,61 @@ def update_expense_status(expense_id: int, payload: ExpenseStatusRequest, author
                                (payload.status, payload.issue_note.strip(), expense_id))
             else:
                 cursor.execute('UPDATE expenses SET status = %s WHERE id = %s', (payload.status, expense_id))
+            if payload.status == 'Issue Raised':
+                cursor.execute('''INSERT INTO work_task_notifications
+                    (task_id, expense_id, recipient_user_id, actor_user_id, event_type, message)
+                    VALUES (NULL, %s, %s, %s, %s, %s)''',
+                    (expense_id, current['user_id'], user['id'], 'expense_issue_raised',
+                     f"{user['name']} raised an issue on your {current['expense_type'].lower()} request: {payload.issue_note.strip()}"))
     return {'status': payload.status}
+
+
+@app.get('/api/expenses/{expense_id}/issue-replies')
+def list_expense_issue_replies(expense_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT user_id FROM expenses WHERE id = %s', (expense_id,))
+            expense = cursor.fetchone()
+            if not expense or (not user.get('is_nexg_admin') and expense['user_id'] != user['id']):
+                raise HTTPException(status_code=404, detail='Expense not found.')
+            cursor.execute('''SELECT r.id, r.message, u.name AS author,
+                              UNIX_TIMESTAMP(r.created_at) AS created_timestamp
+                              FROM expense_issue_replies r JOIN users u ON u.id = r.author_user_id
+                              WHERE r.expense_id = %s ORDER BY r.id''', (expense_id,))
+            replies = cursor.fetchall()
+    return {'replies': [{'id': row['id'], 'author': row['author'], 'message': row['message'],
+                         'createdAt': float(row['created_timestamp']) * 1000} for row in replies]}
+
+
+@app.post('/api/expenses/{expense_id}/issue-replies')
+def create_expense_issue_reply(expense_id: int, payload: ExpenseIssueReplyRequest,
+                               authorization: str | None = Header(default=None)) -> dict[str, int]:
+    user = _require_user(authorization)
+    if user.get('is_nexg_admin'):
+        raise HTTPException(status_code=403, detail='Only the request owner can reply to an issue.')
+    message = payload.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail='Write a comment before sending.')
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT user_id, status, expense_type FROM expenses WHERE id = %s FOR UPDATE', (expense_id,))
+            expense = cursor.fetchone()
+            if not expense or expense['user_id'] != user['id']:
+                raise HTTPException(status_code=404, detail='Expense not found.')
+            if expense['status'] != 'Issue Raised':
+                raise HTTPException(status_code=409, detail='You can reply only while an issue is raised.')
+            cursor.execute('''INSERT INTO expense_issue_replies (expense_id, author_user_id, message)
+                              VALUES (%s, %s, %s)''', (expense_id, user['id'], message))
+            reply_id = cursor.lastrowid
+            admin_id = _default_admin_user_id(cursor)
+            if admin_id:
+                cursor.execute('''INSERT INTO work_task_notifications
+                    (task_id, expense_id, recipient_user_id, actor_user_id, event_type, message)
+                    VALUES (NULL, %s, %s, %s, %s, %s)''',
+                    (expense_id, admin_id, user['id'], 'expense_issue_reply',
+                     f"{user['name']} replied to the issue on {expense['expense_type'].lower()} request: {message}"))
+    return {'id': reply_id}
 
 
 @app.get('/api/expenses/{expense_id}/attachment')
@@ -2590,7 +2672,7 @@ def work_task_notifications(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, task_id, event_type, message, created_at, read_at,
+                SELECT id, task_id, expense_id, event_type, message, created_at, read_at,
                        UNIX_TIMESTAMP(created_at) AS created_timestamp
                 FROM work_task_notifications
                 WHERE recipient_user_id = %s AND (%s IS NULL OR id < %s)
@@ -2611,7 +2693,8 @@ def work_task_notifications(
         "notifications": [
             {
                 "id": row["id"],
-                "taskId": str(row["task_id"]),
+                "taskId": str(row["task_id"]) if row.get("task_id") else None,
+                "expenseId": row.get("expense_id"),
                 "eventType": row["event_type"],
                 "message": row["message"],
                 "createdAt": float(row["created_timestamp"]) * 1000,
