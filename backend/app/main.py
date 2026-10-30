@@ -295,6 +295,18 @@ def ensure_work_assignment_tables() -> None:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
             cursor.execute("""
+                CREATE TABLE IF NOT EXISTS expense_edit_history (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    expense_id BIGINT UNSIGNED NOT NULL,
+                    actor_user_id BIGINT UNSIGNED NOT NULL,
+                    changes_json JSON NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_expense_edit_history_expense (expense_id, id),
+                    CONSTRAINT fk_expense_edit_history_expense FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_expense_edit_history_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS work_task_reports (
                     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
                     task_id BIGINT UNSIGNED NOT NULL,
@@ -1051,7 +1063,9 @@ def edit_expense(expense_id: int, payload: ExpenseRequest,
             raise HTTPException(status_code=400, detail='Attachment must be at most 5 MB.')
     with db_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute('SELECT user_id, status, expense_type FROM expenses WHERE id = %s FOR UPDATE', (expense_id,))
+            cursor.execute('''SELECT user_id, status, expense_type, category, particulars, amount,
+                              payment_method, upi_id, account_number, ifsc_code, client_name,
+                              location, attachment_name FROM expenses WHERE id = %s FOR UPDATE''', (expense_id,))
             current = cursor.fetchone()
             if not current or (not user.get('is_nexg_admin') and current['user_id'] != user['id']):
                 raise HTTPException(status_code=404, detail='Expense not found.')
@@ -1076,6 +1090,23 @@ def edit_expense(expense_id: int, payload: ExpenseRequest,
                 values.extend((payload.attachment_name, payload.attachment_type, attachment))
             cursor.execute(f'UPDATE expenses SET {fields} WHERE id = %s', (*values, expense_id))
             if not user.get('is_nexg_admin'):
+                tracked_fields = (
+                    ('category', 'Category'), ('particulars', 'Particulars'), ('amount', 'Amount'),
+                    ('expense_type', 'Type'), ('payment_method', 'Payment method'),
+                    ('upi_id', 'UPI ID'), ('account_number', 'Account number'),
+                    ('ifsc_code', 'IFSC code'), ('client_name', 'Client name'), ('location', 'Location'),
+                )
+                changes = [
+                    {'field': label, 'previous': str(current.get(key) or ''), 'updated': str(value or '')}
+                    for (key, label), value in zip(tracked_fields, values)
+                    if str(current.get(key) or '') != str(value or '')
+                ]
+                if attachment is not None:
+                    changes.append({'field': 'Receipt', 'previous': current.get('attachment_name') or '',
+                                    'updated': payload.attachment_name or ''})
+                if changes:
+                    cursor.execute('''INSERT INTO expense_edit_history (expense_id, actor_user_id, changes_json)
+                                      VALUES (%s, %s, %s)''', (expense_id, user['id'], json.dumps(changes)))
                 admin_id = _default_admin_user_id(cursor)
                 if admin_id:
                     cursor.execute('''INSERT INTO work_task_notifications
@@ -1084,6 +1115,26 @@ def edit_expense(expense_id: int, payload: ExpenseRequest,
                         (expense_id, admin_id, user['id'], 'expense_request_updated',
                          f"{user['name']} updated a {current['expense_type'].lower()} request: {payload.particulars.strip()}"))
     return {'id': expense_id}
+
+
+@app.get('/api/expenses/{expense_id}/edit-history')
+def list_expense_edit_history(expense_id: int, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _require_user(authorization)
+    if not user.get('is_nexg_admin'):
+        raise HTTPException(status_code=403, detail='Only admins can view request updates.')
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT id FROM expenses WHERE id = %s', (expense_id,))
+            if not cursor.fetchone():
+                raise HTTPException(status_code=404, detail='Expense not found.')
+            cursor.execute('''SELECT h.id, u.name AS actor, h.changes_json,
+                              UNIX_TIMESTAMP(h.created_at) AS created_timestamp
+                              FROM expense_edit_history h JOIN users u ON u.id = h.actor_user_id
+                              WHERE h.expense_id = %s ORDER BY h.id DESC''', (expense_id,))
+            rows = cursor.fetchall()
+    return {'updates': [{'id': row['id'], 'actor': row['actor'],
+                        'changes': json.loads(row['changes_json']) if isinstance(row['changes_json'], str) else row['changes_json'],
+                        'createdAt': int(row['created_timestamp'] * 1000)} for row in rows]}
 
 
 @app.delete('/api/expenses/{expense_id}')

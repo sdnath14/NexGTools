@@ -205,19 +205,22 @@ export default function ExpenseTracker({ user }) {
     setDetails({ loading: true, items: [], group });
     try {
       const items = await Promise.all(group.items.map(async (item) => {
-        const [response, repliesResponse] = await Promise.all([
+        const [response, repliesResponse, historyResponse] = await Promise.all([
           fetch(`${API_BASE_URL}/api/expenses/${item.id}`, { headers: authHeaders() }),
           fetch(`${API_BASE_URL}/api/expenses/${item.id}/issue-replies`, { headers: authHeaders() }),
+          user?.is_nexg_admin ? fetch(`${API_BASE_URL}/api/expenses/${item.id}/edit-history`, { headers: authHeaders() }) : null,
         ]);
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || 'Could not load expense details.');
         const replyData = await repliesResponse.json();
         if (!repliesResponse.ok) throw new Error(replyData.detail || 'Could not load issue comments.');
-        return { ...data.expense, issue_replies: replyData.replies || [] };
+        const historyData = historyResponse ? await historyResponse.json() : null;
+        if (historyResponse && !historyResponse.ok) throw new Error(historyData.detail || 'Could not load request updates.');
+        return { ...data.expense, issue_replies: replyData.replies || [], edit_history: historyData?.updates || [] };
       }));
       setDetails((current) => current ? { loading: false, items, group } : null);
     } catch (err) { setDetails(null); setError(err.message); }
-  }, []);
+  }, [user?.is_nexg_admin]);
   useEffect(() => {
     const expenseId = Number(new URLSearchParams(search).get('expenseId'));
     if (!expenseId || loading || openedExpenseId.current === expenseId) return;
@@ -483,6 +486,7 @@ export default function ExpenseTracker({ user }) {
             ].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || '—'}</dd></div>)}</dl>
             {item.attachment_name && <ExpenseAttachment item={item} onDownload={download} />}
             {!!item.issue_replies?.length && <div className="expense-issue-replies"><h4>Employee comments</h4>{item.issue_replies.map((reply) => <div key={reply.id}><strong>{reply.author}</strong><time dateTime={new Date(reply.createdAt).toISOString()}>{new Date(reply.createdAt).toLocaleString()}</time><p>{reply.message}</p></div>)}</div>}
+            {user?.is_nexg_admin && !!item.edit_history?.length && <section className="expense-edit-history" aria-label="Employee update history"><h4>Employee updates</h4>{item.edit_history.map((update) => <div className="expense-edit-entry" key={update.id}><div className="expense-edit-heading"><strong>{update.actor}</strong><time dateTime={new Date(update.createdAt).toISOString()}>{new Date(update.createdAt).toLocaleString()}</time></div><div className="expense-edit-table" role="table" aria-label="Previous and updated values"><div className="expense-edit-row expense-edit-header" role="row"><span role="columnheader">Field</span><span role="columnheader">Previous value</span><span role="columnheader">Updated value</span></div>{update.changes.map((change, index) => <div className="expense-edit-row" role="row" key={`${change.field}-${index}`}><strong role="cell">{change.field}</strong><span role="cell">{change.previous || '—'}</span><span role="cell">{change.updated || '—'}</span></div>)}</div></div>)}</section>}
             {!user?.is_nexg_admin && ['Pending', 'Issue Raised'].includes(item.status) && <div className="request-details-actions"><button type="button" onClick={() => openEditor(item.id)}><Pencil size={15} /> Edit this item</button></div>}
           </article>)}
           {!user?.is_nexg_admin && details.group?.items.every((item) => ['Pending', 'Issue Raised'].includes(item.status)) && <div className="request-details-delete"><button type="button" onClick={() => confirmDelete(details.group)}><Trash2 size={15} /> Delete {details.group.items.length > 1 ? 'entire request' : 'request'}</button></div>}

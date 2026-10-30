@@ -268,6 +268,20 @@
 .expense-issue-replies strong { color: #203d4a; font-size: 12px; }
 .expense-issue-replies time { margin-left: 9px; color: #69838e; font-size: 11px; }
 .expense-issue-dialog .expense-issue-replies p { margin: 7px 0 0; color: #24424e; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.expense-edit-history { margin-top: 18px; padding-top: 17px; border-top: 1px solid #d7eaf2; }
+.expense-edit-history h4 { margin: 0 0 12px; color: #087e9f; font-size: 14px; }
+.expense-edit-entry { margin-top: 10px; padding: 14px; border: 1px solid #cde6f0; border-radius: 10px; background: #f4fafd; }
+.expense-edit-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin-bottom: 11px; color: #254756; font-size: 12px; }
+.expense-edit-heading time { color: #617d89; }
+.expense-edit-table { overflow: hidden; border: 1px solid #d7e9f0; border-radius: 7px; background: #fff; }
+.expense-edit-row { display: grid; grid-template-columns: minmax(90px, .8fr) repeat(2, minmax(0, 1.2fr)); }
+.expense-edit-row + .expense-edit-row { border-top: 1px solid #e4f0f5; }
+.expense-edit-row > * { min-width: 0; padding: 9px 10px; color: #24424e; font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.expense-edit-row > * + * { border-left: 1px solid #e4f0f5; }
+.expense-edit-row > :last-child { background: #eaf8fd; color: #087e9f; font-weight: 700; }
+.expense-edit-header { background: #e7f4fa; }
+.expense-edit-header > * { color: #496b7b; font-size: 11px; font-weight: 700; }
+.expense-edit-header > :last-child { background: #d9f0f9; }
 .expense-attachment-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .expense-attachment img { display: block; width: 100%; max-height: 480px; object-fit: contain; margin-top: 12px; border: 1px solid var(--expense-border); border-radius: 6px; }
 .expense-attachment iframe { display: block; width: 100%; height: 480px; margin-top: 12px; border: 1px solid var(--expense-border); border-radius: 6px; }
@@ -323,6 +337,14 @@
 }
 
 @media (max-width: 700px) {
+  .expense-edit-entry { padding: 10px; }
+  .expense-edit-header { display: none; }
+  .expense-edit-row:not(.expense-edit-header) { grid-template-columns: 1fr 1fr; }
+  .expense-edit-row:not(.expense-edit-header) > strong { grid-column: 1 / -1; padding-bottom: 4px; color: #496b7b; }
+  .expense-edit-row:not(.expense-edit-header) > span::before { display: block; margin-bottom: 4px; color: #6b8793; font-size: 10px; font-weight: 700; }
+  .expense-edit-row:not(.expense-edit-header) > span:nth-child(2)::before { content: 'Previous'; }
+  .expense-edit-row:not(.expense-edit-header) > span:nth-child(3)::before { content: 'Updated'; }
+  .expense-edit-row:not(.expense-edit-header) > span:nth-child(2) { border-left: 0; }
   .request-details-dialog .expense-issue-heading { padding: 22px; }
   .request-details-dialog .expense-issue-heading h2 { font-size: 23px; }
   .request-details-total { margin: 18px 18px 8px; }

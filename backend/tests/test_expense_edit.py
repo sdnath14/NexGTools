@@ -1,4 +1,5 @@
 import unittest
+import json
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
@@ -144,7 +145,10 @@ class ExpenseEditTests(unittest.TestCase):
     def test_employee_can_update_own_open_request_and_notify_admin(self):
         cursor = MagicMock()
         cursor.fetchone.side_effect = [
-            {'user_id': 8, 'status': 'Issue Raised', 'expense_type': 'Reimbursement'},
+            {'user_id': 8, 'status': 'Issue Raised', 'expense_type': 'Reimbursement',
+             'category': 'Travel', 'particulars': 'Old lunch', 'amount': Decimal('200.00'),
+             'payment_method': 'UPI', 'upi_id': 'team@bank', 'account_number': '',
+             'ifsc_code': '', 'client_name': '', 'location': '', 'attachment_name': None},
             {'id': 1},
         ]
         connection = MagicMock()
@@ -155,7 +159,40 @@ class ExpenseEditTests(unittest.TestCase):
         self.assertEqual(result, {'id': 7})
         self.assertIn('UPDATE expenses SET', cursor.execute.call_args_list[1].args[0])
         self.assertNotIn('user_id =', cursor.execute.call_args_list[1].args[0])
+        history_sql, history_values = cursor.execute.call_args_list[2].args
+        self.assertIn('INSERT INTO expense_edit_history', history_sql)
+        self.assertEqual(history_values[:2], (7, 8))
+        self.assertEqual(json.loads(history_values[2]), [
+            {'field': 'Category', 'previous': 'Travel', 'updated': 'Food'},
+            {'field': 'Particulars', 'previous': 'Old lunch', 'updated': 'Team lunch'},
+            {'field': 'Amount', 'previous': '200.00', 'updated': '215.50'},
+        ])
         self.assertEqual(cursor.execute.call_args_list[-1].args[1][:4], (7, 1, 8, 'expense_request_updated'))
+
+    def test_only_admin_can_read_update_history(self):
+        with patch.object(main, '_require_user', return_value={'id': 8, 'is_nexg_admin': False}), \
+             patch.object(main, 'db_connection') as connection:
+            with self.assertRaises(HTTPException) as error:
+                main.list_expense_edit_history(7, 'token')
+        self.assertEqual(error.exception.status_code, 403)
+        connection.assert_not_called()
+
+    def test_admin_reads_previous_and_updated_values(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {'id': 7}
+        cursor.fetchall.return_value = [{
+            'id': 12, 'actor': 'Employee', 'changes_json': json.dumps([
+                {'field': 'Amount', 'previous': '200.00', 'updated': '215.50'}]),
+            'created_timestamp': 1000,
+        }]
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_user', return_value={'id': 1, 'is_nexg_admin': True}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            result = main.list_expense_edit_history(7, 'token')
+        self.assertEqual(result['updates'][0]['changes'][0],
+                         {'field': 'Amount', 'previous': '200.00', 'updated': '215.50'})
+        self.assertEqual(result['updates'][0]['createdAt'], 1000000)
 
     def test_employee_cannot_update_another_request_or_change_type(self):
         cursor = MagicMock()
