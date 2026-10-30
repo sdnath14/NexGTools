@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, HandCoins, MapPin, ReceiptText, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Download, Eye, FileText, Pencil, PieChart, Plus, Search, SlidersHorizontal, TrendingUp, UploadCloud, UsersRound, Wallet, X } from 'lucide-react';
+import { ArrowLeft, HandCoins, MapPin, ReceiptText, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Download, Eye, FileText, Pencil, PieChart, Plus, Search, SlidersHorizontal, Trash2, TrendingUp, UploadCloud, UsersRound, Wallet, X } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './ExpenseTracker.css';
 import { expenseSummary } from '../expenseSummary';
@@ -58,6 +58,9 @@ export default function ExpenseTracker({ user }) {
   const [savedMessage, setSavedMessage] = useState('');
   const [editingExpense, setEditingExpense] = useState(null);
   const [details, setDetails] = useState(null);
+  const [deleteGroup, setDeleteGroup] = useState(null);
+  const [deleteError, setDeleteError] = useState('');
+  const [deleting, setDeleting] = useState(false);
   const [form, setForm] = useState(blank);
   const [advanceReason, setAdvanceReason] = useState('client');
   const [extraItems, setExtraItems] = useState([]);
@@ -199,7 +202,7 @@ export default function ExpenseTracker({ user }) {
   const viewDetails = useCallback(async (group) => {
     setActiveMenu(null);
     setError('');
-    setDetails({ loading: true, items: [] });
+    setDetails({ loading: true, items: [], group });
     try {
       const items = await Promise.all(group.items.map(async (item) => {
         const [response, repliesResponse] = await Promise.all([
@@ -212,7 +215,7 @@ export default function ExpenseTracker({ user }) {
         if (!repliesResponse.ok) throw new Error(replyData.detail || 'Could not load issue comments.');
         return { ...data.expense, issue_replies: replyData.replies || [] };
       }));
-      setDetails((current) => current ? { loading: false, items } : null);
+      setDetails((current) => current ? { loading: false, items, group } : null);
     } catch (err) { setDetails(null); setError(err.message); }
   }, []);
   useEffect(() => {
@@ -240,12 +243,13 @@ export default function ExpenseTracker({ user }) {
       setActiveItem(0);
       setReviewOpen(false);
       setEditingExpense(data.expense);
+      setDetails(null);
       setFormOpen(true);
     } catch (err) { setError(err.message); }
   };
   const submit = async (event) => {
     event.preventDefault();
-    if (editingExpense ? !user?.is_nexg_admin : user?.is_nexg_admin) return;
+    if (user?.is_nexg_admin && !editingExpense) return;
     if (form.expense_type === 'Advance' && (!form.particulars.trim() || !form.location.trim() || (advanceReason === 'client' && !form.client_name.trim()))) { setError(advanceReason === 'client' ? 'Enter the client name, job and location.' : 'Enter the purpose and location.'); return; }
     setSaving(true); setError('');
     try {
@@ -273,7 +277,7 @@ export default function ExpenseTracker({ user }) {
       const response = await fetch(`${API_BASE_URL}/api/expenses${editingExpense ? `/${editingExpense.id}` : extraItems.length ? '/batch' : ''}`, { method: editingExpense ? 'PUT' : 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not save expense.');
-      setSavedMessage(`${form.expense_type} request saved.`); setForm(blank); setExtraItems([]); setActiveItem(0); setReviewOpen(false); setEditingExpense(null); setFormOpen(false); await load();
+      setSavedMessage(`${form.expense_type} request ${editingExpense ? 'updated' : 'saved'}.`); setForm(blank); setExtraItems([]); setActiveItem(0); setReviewOpen(false); setEditingExpense(null); setFormOpen(false); await load();
     } catch (err) { setError(err.message); }
     finally { setSaving(false); }
   };
@@ -290,6 +294,18 @@ export default function ExpenseTracker({ user }) {
   const openIssue = (item, action = 'Issue Raised') => {
     setNoteAction(action);
     setActiveMenu(null); setError(''); setIssueExpense(item); setIssueNote(action === 'Rejected' ? '' : item.issue_note || '');
+  };
+  const confirmDelete = (group) => { setDetails(null); setDeleteError(''); setDeleteGroup(group); };
+  const deleteRequest = async () => {
+    if (!deleteGroup) return;
+    setDeleting(true); setDeleteError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/expenses/${deleteGroup.items[0].id}`, { method: 'DELETE', headers: authHeaders() });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not delete request.');
+      setDeleteGroup(null); setDetails(null); setSavedMessage('Request deleted.'); await load();
+    } catch (err) { setDeleteError(err.message); }
+    finally { setDeleting(false); }
   };
   const download = async (item) => {
     try {
@@ -346,7 +362,8 @@ export default function ExpenseTracker({ user }) {
             const statuses = [...new Set(group.items.map((item) => item.status))];
             const status = statuses.length === 1 ? statuses[0] : 'Mixed';
             const amount = group.items.reduce((sum, item) => sum + Number(item.amount), 0);
-            return <article className="request-latest-card" key={group.id}><div className="request-latest-top"><span className={`request-latest-type ${first.expense_type.toLowerCase()}`}>{first.expense_type}</span><span className={`expense-status ${status.toLowerCase().replace(/\s+/g, '-')}`}>{status === 'Reimbursed' ? 'Paid' : status}</span></div><h3>{group.items.length === 1 ? first.particulars : `${first.particulars} + ${group.items.length - 1} more`}</h3><div className="request-latest-meta"><span>{dateLabel(first.created_at)}</span><strong>{money(amount)}</strong></div><button type="button" onClick={() => viewDetails(group)}>View details <ChevronRight size={15} /></button></article>;
+            const canManage = group.items.every((item) => ['Pending', 'Issue Raised'].includes(item.status));
+            return <article className="request-latest-card" key={group.id}><div className="request-latest-top"><span className={`request-latest-type ${first.expense_type.toLowerCase()}`}>{first.expense_type}</span><span className={`expense-status ${status.toLowerCase().replace(/\s+/g, '-')}`}>{status === 'Reimbursed' ? 'Paid' : status}</span></div><h3>{group.items.length === 1 ? first.particulars : `${first.particulars} + ${group.items.length - 1} more`}</h3><div className="request-latest-meta"><span>{dateLabel(first.created_at)}</span><strong>{money(amount)}</strong></div><div className="request-manage-actions"><button type="button" onClick={() => viewDetails(group)}>View details <ChevronRight size={15} /></button>{canManage && <><button type="button" onClick={() => group.items.length === 1 ? openEditor(first.id) : viewDetails(group)}><Pencil size={14} /> Edit</button><button type="button" className="request-delete" onClick={() => confirmDelete(group)}><Trash2 size={14} /> Delete</button></>}</div></article>;
           })}</div> : <p className="request-latest-empty">Your latest advance or reimbursement will appear here.</p>}
         </section>
       </div>
@@ -354,13 +371,15 @@ export default function ExpenseTracker({ user }) {
     {!user?.is_nexg_admin && historyOpen && !formOpen && <section className="request-history" aria-labelledby="request-history-title">
       <button className="request-back" type="button" onClick={() => { setHistoryOpen(false); setError(''); }}><ArrowLeft size={20} /> Requests</button>
       <div className="request-history-heading"><h1 id="request-history-title">History Records</h1><p>Review your past advance requests and reimbursement claims.</p></div>
+      {savedMessage && <div className="request-success" role="status"><Check size={18} />{savedMessage}</div>}
       {error && <div className="expense-error" role="alert">{error}</div>}
       <fieldset className="request-history-choices"><legend className="request-history-sr-only">History type</legend>{['Advance', 'Reimbursement'].map((type) => <label className={`request-history-choice ${historyType === type ? 'selected' : ''}`} key={type}><input type="radio" name="request-history-type" value={type} checked={historyType === type} onChange={() => setHistoryType(type)} /><span>{type}</span></label>)}</fieldset>
       <div className="request-history-details" aria-live="polite"><h2>{historyType} History</h2>{loading ? <p className="request-history-empty">Loading requests…</p> : requestHistory[historyType].length ? <div className="request-history-table-wrap"><table className="request-history-table"><thead><tr><th>Date</th><th>Request ID</th><th>{historyType === 'Advance' ? 'Reason' : 'Particulars'}</th><th>Amount</th><th>Status</th><th>Details</th></tr></thead><tbody>{requestHistory[historyType].map((group) => {
         const first = group.items[0];
         const statuses = [...new Set(group.items.map((item) => item.status))];
         const amount = group.items.reduce((sum, item) => sum + Number(item.amount), 0);
-        return <tr key={group.id}><td data-label="Date">{dateLabel(first.created_at)}</td><td data-label="Request ID" className="request-history-id">{historyType === 'Advance' ? 'ADV' : 'RMB'}-{String(first.id).padStart(5, '0')}</td><td data-label={historyType === 'Advance' ? 'Reason' : 'Particulars'} className="request-history-reason">{group.items.length === 1 ? first.particulars : `${first.particulars} + ${group.items.length - 1} more`}</td><td data-label="Amount" className="request-history-amount">{money(amount)}</td><td data-label="Status"><span className={`expense-status ${statuses.length === 1 ? statuses[0].toLowerCase().replace(/\s+/g, '-') : 'mixed'}`}>{statuses.length === 1 ? (statuses[0] === 'Reimbursed' ? 'Paid' : statuses[0]) : 'Mixed'}</span></td><td className="request-history-action"><button type="button" className="request-history-view" onClick={() => viewDetails(group)}>View details <ChevronRight size={15} /></button></td></tr>;
+        const canManage = group.items.every((item) => ['Pending', 'Issue Raised'].includes(item.status));
+        return <tr key={group.id}><td data-label="Date">{dateLabel(first.created_at)}</td><td data-label="Request ID" className="request-history-id">{historyType === 'Advance' ? 'ADV' : 'RMB'}-{String(first.id).padStart(5, '0')}</td><td data-label={historyType === 'Advance' ? 'Reason' : 'Particulars'} className="request-history-reason">{group.items.length === 1 ? first.particulars : `${first.particulars} + ${group.items.length - 1} more`}</td><td data-label="Amount" className="request-history-amount">{money(amount)}</td><td data-label="Status"><span className={`expense-status ${statuses.length === 1 ? statuses[0].toLowerCase().replace(/\s+/g, '-') : 'mixed'}`}>{statuses.length === 1 ? (statuses[0] === 'Reimbursed' ? 'Paid' : statuses[0]) : 'Mixed'}</span></td><td className="request-history-action"><div className="request-manage-actions"><button type="button" className="request-history-view" onClick={() => viewDetails(group)}>View details <ChevronRight size={15} /></button>{canManage && <><button type="button" onClick={() => group.items.length === 1 ? openEditor(first.id) : viewDetails(group)}><Pencil size={14} /> Edit</button><button type="button" className="request-delete" onClick={() => confirmDelete(group)}><Trash2 size={14} /> Delete</button></>}</div></td></tr>;
       })}</tbody></table></div> : <p className="request-history-empty">No {historyType.toLowerCase()} requests yet.</p>}</div>
     </section>}
     {user?.is_nexg_admin && <>
@@ -464,10 +483,13 @@ export default function ExpenseTracker({ user }) {
             ].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || '—'}</dd></div>)}</dl>
             {item.attachment_name && <ExpenseAttachment item={item} onDownload={download} />}
             {!!item.issue_replies?.length && <div className="expense-issue-replies"><h4>Employee comments</h4>{item.issue_replies.map((reply) => <div key={reply.id}><strong>{reply.author}</strong><time dateTime={new Date(reply.createdAt).toISOString()}>{new Date(reply.createdAt).toLocaleString()}</time><p>{reply.message}</p></div>)}</div>}
+            {!user?.is_nexg_admin && ['Pending', 'Issue Raised'].includes(item.status) && <div className="request-details-actions"><button type="button" onClick={() => openEditor(item.id)}><Pencil size={15} /> Edit this item</button></div>}
           </article>)}
+          {!user?.is_nexg_admin && details.group?.items.every((item) => ['Pending', 'Issue Raised'].includes(item.status)) && <div className="request-details-delete"><button type="button" onClick={() => confirmDelete(details.group)}><Trash2 size={15} /> Delete {details.group.items.length > 1 ? 'entire request' : 'request'}</button></div>}
         </>}
       </section>
     </div>}
+    {deleteGroup && <div className="expense-issue-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget && !deleting) setDeleteGroup(null); }}><section className="expense-issue-dialog request-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="request-delete-title" aria-describedby="request-delete-description"><div className="expense-issue-heading"><h2 id="request-delete-title">Delete request?</h2><button type="button" aria-label="Cancel deletion" disabled={deleting} onClick={() => setDeleteGroup(null)}><X size={20} /></button></div><p id="request-delete-description">{deleteGroup.items.length > 1 ? `This will permanently delete all ${deleteGroup.items.length} items in this request.` : 'This request will be permanently deleted.'}</p>{deleteError && <div className="expense-error" role="alert">{deleteError}</div>}<div className="expense-issue-actions"><button type="button" disabled={deleting} onClick={() => setDeleteGroup(null)}>Cancel</button><button type="button" className="request-delete-confirm" disabled={deleting} onClick={deleteRequest}>{deleting ? 'Deleting…' : 'Delete request'}</button></div></section></div>}
     {issueExpense && <div className="expense-issue-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setIssueExpense(null); }}>
       <form className="expense-issue-dialog" onSubmit={(event) => { event.preventDefault(); setStatus(issueExpense.id, noteAction, issueNote); }}>
         <div className="expense-issue-heading"><div><span className="expense-section-kicker">ADMIN ACTION</span><h2>{noteAction === 'Rejected' ? 'Reject expense' : issueExpense.status === 'Issue Raised' ? 'Edit issue' : 'Raise an issue'}</h2></div><button type="button" aria-label="Close issue form" onClick={() => setIssueExpense(null)}><X size={18} /></button></div>

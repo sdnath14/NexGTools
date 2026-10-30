@@ -13,13 +13,11 @@ class ExpenseEditTests(unittest.TestCase):
             category='Food', particulars='Team lunch', amount=Decimal('215.50'),
             expense_type='Reimbursement', payment_method='UPI', upi_id='team@bank')
 
-    def test_only_admin_can_edit_or_change_status(self):
+    def test_only_admin_can_change_status(self):
         with patch.object(main, '_require_user', return_value={'id': 2, 'is_nexg_admin': False}):
-            for action in (lambda: main.edit_expense(7, self.payload, 'token'),
-                           lambda: main.update_expense_status(7, main.ExpenseStatusRequest(status='Approved'), 'token')):
-                with self.assertRaises(HTTPException) as error:
-                    action()
-                self.assertEqual(error.exception.status_code, 403)
+            with self.assertRaises(HTTPException) as error:
+                main.update_expense_status(7, main.ExpenseStatusRequest(status='Approved'), 'token')
+            self.assertEqual(error.exception.status_code, 403)
 
     def test_employee_details_are_scoped_to_owner_and_include_particulars_and_receipt(self):
         cursor = MagicMock()
@@ -142,6 +140,81 @@ class ExpenseEditTests(unittest.TestCase):
         self.assertNotIn('status =', sql)
         self.assertEqual(values[2], Decimal('215.50'))
         self.assertEqual(values[-1], 7)
+
+    def test_employee_can_update_own_open_request_and_notify_admin(self):
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [
+            {'user_id': 8, 'status': 'Issue Raised', 'expense_type': 'Reimbursement'},
+            {'id': 1},
+        ]
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_user', return_value={'id': 8, 'name': 'Employee', 'is_nexg_admin': False}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            result = main.edit_expense(7, self.payload, 'token')
+        self.assertEqual(result, {'id': 7})
+        self.assertIn('UPDATE expenses SET', cursor.execute.call_args_list[1].args[0])
+        self.assertNotIn('user_id =', cursor.execute.call_args_list[1].args[0])
+        self.assertEqual(cursor.execute.call_args_list[-1].args[1][:4], (7, 1, 8, 'expense_request_updated'))
+
+    def test_employee_cannot_update_another_request_or_change_type(self):
+        cursor = MagicMock()
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_user', return_value={'id': 8, 'name': 'Employee', 'is_nexg_admin': False}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            cursor.fetchone.return_value = {'user_id': 9, 'status': 'Pending', 'expense_type': 'Reimbursement'}
+            with self.assertRaises(HTTPException) as error:
+                main.edit_expense(7, self.payload, 'token')
+            self.assertEqual(error.exception.status_code, 404)
+            cursor.fetchone.return_value = {'user_id': 8, 'status': 'Pending', 'expense_type': 'Advance'}
+            with self.assertRaises(HTTPException) as error:
+                main.edit_expense(7, self.payload, 'token')
+            self.assertEqual(error.exception.status_code, 400)
+            cursor.fetchone.return_value = {'user_id': 8, 'status': 'Reimbursed', 'expense_type': 'Reimbursement'}
+            with self.assertRaises(HTTPException) as error:
+                main.edit_expense(7, self.payload, 'token')
+            self.assertEqual(error.exception.status_code, 409)
+
+    def test_employee_can_delete_own_open_batch_but_not_final_batch(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {'user_id': 8, 'status': 'Pending', 'batch_id': 'batch-1'}
+        cursor.fetchall.return_value = [{'id': 7, 'status': 'Pending'}, {'id': 8, 'status': 'Issue Raised'}]
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_user', return_value={'id': 8, 'is_nexg_admin': False}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            self.assertEqual(main.delete_own_expense(7, 'token'), {'deleted': 2})
+            self.assertIn('DELETE FROM expenses', cursor.execute.call_args_list[-1].args[0])
+            self.assertEqual(cursor.execute.call_args_list[-1].args[1], ('batch-1', 8))
+            cursor.reset_mock()
+            cursor.fetchall.return_value = [{'id': 7, 'status': 'Pending'}, {'id': 8, 'status': 'Reimbursed'}]
+            with self.assertRaises(HTTPException) as error:
+                main.delete_own_expense(7, 'token')
+            self.assertEqual(error.exception.status_code, 409)
+            self.assertFalse(any('DELETE FROM expenses' in call.args[0] for call in cursor.execute.call_args_list))
+
+    def test_employee_cannot_delete_another_users_request(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {'user_id': 9, 'status': 'Pending', 'batch_id': None}
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_user', return_value={'id': 8, 'is_nexg_admin': False}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            with self.assertRaises(HTTPException) as error:
+                main.delete_own_expense(7, 'token')
+        self.assertEqual(error.exception.status_code, 404)
+        self.assertEqual(cursor.execute.call_count, 1)
+
+    def test_employee_can_delete_own_single_pending_request(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {'user_id': 8, 'status': 'Pending', 'batch_id': None}
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_user', return_value={'id': 8, 'is_nexg_admin': False}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            self.assertEqual(main.delete_own_expense(7, 'token'), {'deleted': 1})
+        self.assertEqual(cursor.execute.call_args_list[-1].args[1], (7, 8))
 
     def test_missing_expense_returns_404(self):
         cursor = MagicMock()

@@ -1027,8 +1027,6 @@ def get_expense_for_edit(expense_id: int, authorization: str | None = Header(def
 def edit_expense(expense_id: int, payload: ExpenseRequest,
                  authorization: str | None = Header(default=None)) -> dict[str, Any]:
     user = _require_user(authorization)
-    if not user.get('is_nexg_admin'):
-        raise HTTPException(status_code=403, detail='Only an administrator can edit expenses.')
     if not payload.category.strip() or not payload.particulars.strip():
         raise HTTPException(status_code=400, detail='Category and particulars are required.')
     if payload.expense_type not in ('Advance', 'Reimbursement') or payload.payment_method not in ('UPI', 'NEFT'):
@@ -1053,12 +1051,16 @@ def edit_expense(expense_id: int, payload: ExpenseRequest,
             raise HTTPException(status_code=400, detail='Attachment must be at most 5 MB.')
     with db_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute('SELECT status FROM expenses WHERE id = %s FOR UPDATE', (expense_id,))
+            cursor.execute('SELECT user_id, status, expense_type FROM expenses WHERE id = %s FOR UPDATE', (expense_id,))
             current = cursor.fetchone()
-            if not current:
+            if not current or (not user.get('is_nexg_admin') and current['user_id'] != user['id']):
                 raise HTTPException(status_code=404, detail='Expense not found.')
-            if current['status'] in ('Rejected', 'Reimbursed'):
+            if user.get('is_nexg_admin') and current['status'] in ('Rejected', 'Reimbursed'):
                 raise HTTPException(status_code=409, detail='Rejected and paid expenses cannot be edited.')
+            if not user.get('is_nexg_admin') and current['status'] not in ('Pending', 'Issue Raised'):
+                raise HTTPException(status_code=409, detail='Only pending requests or requests with an open issue can be edited.')
+            if not user.get('is_nexg_admin') and payload.expense_type != current['expense_type']:
+                raise HTTPException(status_code=400, detail='Request type cannot be changed.')
             fields = '''category = %s, particulars = %s, amount = %s, expense_type = %s,
                         payment_method = %s, upi_id = %s, account_number = %s, ifsc_code = %s, client_name = %s, location = %s'''
             values = [payload.category.strip(), payload.particulars.strip(),
@@ -1073,7 +1075,42 @@ def edit_expense(expense_id: int, payload: ExpenseRequest,
                 fields += ', attachment_name = %s, attachment_type = %s, attachment_data = %s'
                 values.extend((payload.attachment_name, payload.attachment_type, attachment))
             cursor.execute(f'UPDATE expenses SET {fields} WHERE id = %s', (*values, expense_id))
+            if not user.get('is_nexg_admin'):
+                admin_id = _default_admin_user_id(cursor)
+                if admin_id:
+                    cursor.execute('''INSERT INTO work_task_notifications
+                        (task_id, expense_id, recipient_user_id, actor_user_id, event_type, message)
+                        VALUES (NULL, %s, %s, %s, %s, %s)''',
+                        (expense_id, admin_id, user['id'], 'expense_request_updated',
+                         f"{user['name']} updated a {current['expense_type'].lower()} request: {payload.particulars.strip()}"))
     return {'id': expense_id}
+
+
+@app.delete('/api/expenses/{expense_id}')
+def delete_own_expense(expense_id: int, authorization: str | None = Header(default=None)) -> dict[str, int]:
+    user = _require_user(authorization)
+    if user.get('is_nexg_admin'):
+        raise HTTPException(status_code=403, detail='Only the request owner can delete it.')
+    with db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT user_id, status, batch_id FROM expenses WHERE id = %s FOR UPDATE', (expense_id,))
+            expense = cursor.fetchone()
+            if not expense or expense['user_id'] != user['id']:
+                raise HTTPException(status_code=404, detail='Expense not found.')
+            if expense['batch_id']:
+                cursor.execute('SELECT id, status FROM expenses WHERE batch_id = %s AND user_id = %s FOR UPDATE',
+                               (expense['batch_id'], user['id']))
+                items = cursor.fetchall()
+            else:
+                items = [expense]
+            if any(item['status'] not in ('Pending', 'Issue Raised') for item in items):
+                raise HTTPException(status_code=409, detail='Only pending requests or requests with an open issue can be deleted.')
+            if expense['batch_id']:
+                cursor.execute('DELETE FROM expenses WHERE batch_id = %s AND user_id = %s',
+                               (expense['batch_id'], user['id']))
+            else:
+                cursor.execute('DELETE FROM expenses WHERE id = %s AND user_id = %s', (expense_id, user['id']))
+    return {'deleted': len(items)}
 
 
 @app.patch('/api/expenses/{expense_id}/status')
