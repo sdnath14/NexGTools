@@ -55,13 +55,14 @@ function WorkspaceLayout({ user, mobileMenuOpen, setMobileMenuOpen, logout, chil
     <AdminDirectory user={user} onLogout={logout} toolPage={pathname !== '/'}>{children}</AdminDirectory>
   </div>;
   const employeeScreen = employee && (pathname === '/' || pathname === '/my-tasks' || pathname.startsWith('/my-tasks/') || pathname === '/notifications');
-  return <div className={`app-layout employee-layout ${employeeScreen ? 'employee-screen' : 'employee-tool-screen'}`}>
+  const expenseScreen = employee && pathname === '/expense-tracker';
+  return <div className={`app-layout employee-layout ${employeeScreen ? 'employee-screen' : 'employee-tool-screen'} ${expenseScreen ? 'employee-expense-screen' : ''}`}>
     <PushNotificationBridge user={user} />
     <div className="app-main">
-      {!employeeScreen && <Topbar user={user} onLogout={logout} mobileMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />}
+      {!employeeScreen && !expenseScreen && <Topbar user={user} onLogout={logout} mobileMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />}
       <main className="app-content">{children}</main>
     </div>
-    <MobileNav user={user} mobileMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />
+    {!expenseScreen && <MobileNav user={user} mobileMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />}
   </div>;
 }
 

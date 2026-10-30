@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, HandCoins, MapPin, ReceiptText, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Download, Eye, FileText, Pencil, PieChart, Plus, Search, SlidersHorizontal, TrendingUp, UploadCloud, UsersRound, Wallet, X } from 'lucide-react';
 import { API_BASE_URL, authHeaders } from '../auth';
 import './ExpenseTracker.css';
@@ -46,10 +47,12 @@ function ExpenseAttachment({ item, onDownload }) {
 }
 
 export default function ExpenseTracker({ user }) {
+  const navigate = useNavigate();
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyType, setHistoryType] = useState('Advance');
   const [savedMessage, setSavedMessage] = useState('');
   const [editingExpense, setEditingExpense] = useState(null);
   const [details, setDetails] = useState(null);
@@ -140,6 +143,7 @@ export default function ExpenseTracker({ user }) {
     });
     return groups;
   }, [expenses]);
+  const requestHistory = useMemo(() => Object.fromEntries(['Advance', 'Reimbursement'].map((type) => [type, expenseGroups.filter((group) => group.items[0].expense_type === type).sort((a, b) => new Date(b.items[0].created_at) - new Date(a.items[0].created_at))])), [expenseGroups]);
   const scopedGroups = useMemo(() => expenseGroups.filter((group) => {
     const first = group.items[0];
     const query = searchTerm.trim().toLowerCase();
@@ -313,7 +317,7 @@ export default function ExpenseTracker({ user }) {
 
   return <div className={`expense-page ${!user?.is_nexg_admin ? 'expense-request-page' : ''}`}>
     {!user?.is_nexg_admin && !formOpen && !historyOpen && <section className="request-home" aria-labelledby="requests-title">
-      <header className="request-home-header"><h1 id="requests-title">Requests</h1><button type="button" onClick={() => { setError(''); setHistoryOpen(true); }}>Request history <ChevronRight size={15} /></button></header>
+      <header className="request-home-header"><button className="request-home-back" type="button" onClick={() => navigate('/')}><ArrowLeft size={20} /> Back</button><h1 id="requests-title">Requests</h1><button type="button" onClick={() => { setError(''); setHistoryType('Advance'); setHistoryOpen(true); }}>Request history <ChevronRight size={15} /></button></header>
       {savedMessage && <div className="request-success" role="status"><Check size={18} />{savedMessage}</div>}
       {error && <div className="expense-error" role="alert">{error}</div>}
       <div className="request-choices">
@@ -321,8 +325,19 @@ export default function ExpenseTracker({ user }) {
         <button className="request-choice advance" type="button" onClick={() => startRequest('Advance')}><HandCoins size={40} strokeWidth={1.35} /><span>Advance</span></button>
       </div>
     </section>}
-    {(user?.is_nexg_admin || (historyOpen && !formOpen)) && <>
-    {!user?.is_nexg_admin && <button className="request-back" type="button" onClick={() => { setHistoryOpen(false); setError(''); }}><ArrowLeft size={20} /> Requests</button>}
+    {!user?.is_nexg_admin && historyOpen && !formOpen && <section className="request-history" aria-labelledby="request-history-title">
+      <button className="request-back" type="button" onClick={() => { setHistoryOpen(false); setError(''); }}><ArrowLeft size={20} /> Requests</button>
+      <div className="request-history-heading"><h1 id="request-history-title">History Records</h1><p>Review your past advance requests and reimbursement claims.</p></div>
+      {error && <div className="expense-error" role="alert">{error}</div>}
+      <fieldset className="request-history-choices"><legend className="request-history-sr-only">History type</legend>{['Advance', 'Reimbursement'].map((type) => <label className={`request-history-choice ${historyType === type ? 'selected' : ''}`} key={type}><input type="radio" name="request-history-type" value={type} checked={historyType === type} onChange={() => setHistoryType(type)} /><span>{type}</span></label>)}</fieldset>
+      <div className="request-history-details" aria-live="polite"><h2>{historyType} History</h2>{loading ? <p className="request-history-empty">Loading requests…</p> : requestHistory[historyType].length ? <div className="request-history-table-wrap"><table className="request-history-table"><thead><tr><th>Date</th><th>Request ID</th><th>{historyType === 'Advance' ? 'Reason' : 'Particulars'}</th><th>Amount</th><th>Status</th><th>Details</th></tr></thead><tbody>{requestHistory[historyType].map((group) => {
+        const first = group.items[0];
+        const statuses = [...new Set(group.items.map((item) => item.status))];
+        const amount = group.items.reduce((sum, item) => sum + Number(item.amount), 0);
+        return <tr key={group.id}><td data-label="Date">{dateLabel(first.created_at)}</td><td data-label="Request ID" className="request-history-id">{historyType === 'Advance' ? 'ADV' : 'RMB'}-{String(first.id).padStart(5, '0')}</td><td data-label={historyType === 'Advance' ? 'Reason' : 'Particulars'} className="request-history-reason">{group.items.length === 1 ? first.particulars : `${first.particulars} + ${group.items.length - 1} more`}</td><td data-label="Amount" className="request-history-amount">{money(amount)}</td><td data-label="Status"><span className={`expense-status ${statuses.length === 1 ? statuses[0].toLowerCase().replace(/\s+/g, '-') : 'mixed'}`}>{statuses.length === 1 ? (statuses[0] === 'Reimbursed' ? 'Paid' : statuses[0]) : 'Mixed'}</span></td><td className="request-history-action"><button type="button" className="request-history-view" onClick={() => viewDetails(group)}>View details <ChevronRight size={15} /></button></td></tr>;
+      })}</tbody></table></div> : <p className="request-history-empty">No {historyType.toLowerCase()} requests yet.</p>}</div>
+    </section>}
+    {user?.is_nexg_admin && <>
     <header className="expense-hero">
       <div className="expense-hero-copy">
         <p className="expense-eyebrow"><span /> NEXG PETROLUBE / FINANCE</p>
@@ -406,12 +421,12 @@ export default function ExpenseTracker({ user }) {
     <div className="expense-charts"><section className="expense-panel expense-chart-card"><div className="expense-chart-heading"><span className="expense-chart-heading-icon"><PieChart size={18} /></span><div><span className="expense-section-kicker">BREAKDOWN</span><h2>By category</h2></div></div><div className="expense-category-chart"><div className="expense-donut" style={{ background: `conic-gradient(${donut})` }}><div><strong>{money(total)}</strong><small>Total spent</small></div></div><div className="expense-legend">{categoryTotals.map((item) => <div key={item.category}><span className="expense-legend-dot" style={{ background: item.color }} /> <span>{item.category}</span><strong>{total ? Math.round(item.total / total * 100) : 0}%</strong></div>)}</div></div></section><section className="expense-panel expense-chart-card"><div className="expense-chart-heading"><span className="expense-chart-heading-icon green"><TrendingUp size={18} /></span><div><span className="expense-section-kicker">OVERVIEW</span><h2>Monthly trend</h2></div><span className="expense-chart-period">Last 6 months</span></div><div className="expense-month-chart">{monthData.map((item) => <div className="expense-month" key={item.label}><div className="expense-bar-track"><span title={`${item.label}: ${money(item.total)}`} style={{ height: `${item.total ? Math.max(5, item.total / maxMonth * 100) : 2}%` }} /></div><small>{item.label}</small></div>)}</div></section></div>
     </>}
     {details && <div className="expense-issue-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetails(null); }}>
-      <section className="expense-issue-dialog expense-details-dialog" role="dialog" aria-modal="true" aria-labelledby="expense-details-title" aria-busy={details.loading}>
-        <div className="expense-issue-heading"><h2 id="expense-details-title">Expense details</h2><button type="button" autoFocus aria-label="Close expense details" onClick={() => setDetails(null)}><X size={20} /></button></div>
+      <section className={`expense-issue-dialog expense-details-dialog ${!user?.is_nexg_admin ? 'request-details-dialog' : ''}`} role="dialog" aria-modal="true" aria-labelledby="expense-details-title" aria-busy={details.loading}>
+        <div className="expense-issue-heading"><div><h2 id="expense-details-title">{user?.is_nexg_admin ? 'Expense details' : `${details.items[0]?.expense_type || 'Request'} details`}</h2>{!user?.is_nexg_admin && !details.loading && <small>{details.items.length} {details.items.length === 1 ? 'entry' : 'entries'} in this request</small>}</div><button type="button" autoFocus aria-label="Close expense details" onClick={() => setDetails(null)}><X size={20} /></button></div>
         {details.loading ? <p role="status">Loading expense details…</p> : <>
-          <p>{details.items.length} {details.items.length === 1 ? 'entry' : 'entries'} · Total {money(details.items.reduce((sum, item) => sum + Number(item.amount), 0))}</p>
+          {user?.is_nexg_admin ? <p>{details.items.length} {details.items.length === 1 ? 'entry' : 'entries'} · Total {money(details.items.reduce((sum, item) => sum + Number(item.amount), 0))}</p> : <div className="request-details-total"><span>Total requested</span><strong>{money(details.items.reduce((sum, item) => sum + Number(item.amount), 0))}</strong><span className={`expense-status ${details.items.every((item) => item.status === details.items[0].status) ? details.items[0].status.toLowerCase().replace(/\s+/g, '-') : 'mixed'}`}>{details.items.every((item) => item.status === details.items[0].status) ? (details.items[0].status === 'Reimbursed' ? 'Paid' : details.items[0].status) : 'Mixed'}</span></div>}
           {details.items.map((item) => <article className="expense-details-item" key={item.id}>
-            <h3>EXP-{String(item.id).padStart(5, '0')} · {item.particulars}</h3>
+            <h3>{!user?.is_nexg_admin && <span className="request-details-item-id">{item.expense_type === 'Advance' ? 'ADV' : 'RMB'}-{String(item.id).padStart(5, '0')}</span>}{user?.is_nexg_admin && <>EXP-{String(item.id).padStart(5, '0')} · </>}{item.particulars}</h3>
             <dl>{[
               ['Submitted by', item.submitted_by], ['Date', dateLabel(item.created_at)],
               ...(item.expense_type === 'Advance' ? [...(item.client_name ? [['Client name', item.client_name]] : []), ['Location', item.location]] : []),

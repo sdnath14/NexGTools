@@ -297,6 +297,21 @@
   padding: 20px clamp(18px, 3vw, 40px) 40px;
 }
 
+.employee-layout.employee-expense-screen .app-content {
+  display: flex;
+  min-height: 100dvh;
+  padding: 0;
+  background: #edf2f6;
+}
+
+.employee-expense-screen .app-content > .expense-page {
+  width: 100%;
+  max-width: none;
+  min-height: 100dvh;
+  margin: 0;
+  padding: 0;
+}
+
 @media (max-width: 600px) {
   .employee-layout .employee-dashboard-top {
     margin-bottom: 28px;
