@@ -144,6 +144,7 @@ export default function ExpenseTracker({ user }) {
     return groups;
   }, [expenses]);
   const requestHistory = useMemo(() => Object.fromEntries(['Advance', 'Reimbursement'].map((type) => [type, expenseGroups.filter((group) => group.items[0].expense_type === type).sort((a, b) => new Date(b.items[0].created_at) - new Date(a.items[0].created_at))])), [expenseGroups]);
+  const latestRequests = useMemo(() => [requestHistory.Advance[0], requestHistory.Reimbursement[0]].filter(Boolean).sort((a, b) => new Date(b.items[0].created_at) - new Date(a.items[0].created_at)), [requestHistory]);
   const scopedGroups = useMemo(() => expenseGroups.filter((group) => {
     const first = group.items[0];
     const query = searchTerm.trim().toLowerCase();
@@ -320,9 +321,20 @@ export default function ExpenseTracker({ user }) {
       <header className="request-home-header"><button className="request-home-back" type="button" onClick={() => navigate('/')}><ArrowLeft size={20} /> Back</button><h1 id="requests-title">Requests</h1><button type="button" onClick={() => { setError(''); setHistoryType('Advance'); setHistoryOpen(true); }}>Request history <ChevronRight size={15} /></button></header>
       {savedMessage && <div className="request-success" role="status"><Check size={18} />{savedMessage}</div>}
       {error && <div className="expense-error" role="alert">{error}</div>}
-      <div className="request-choices">
-        <button className="request-choice reimbursement" type="button" onClick={() => startRequest('Reimbursement')}><ReceiptText size={38} strokeWidth={1.35} /><span>Reimbursement</span></button>
-        <button className="request-choice advance" type="button" onClick={() => startRequest('Advance')}><HandCoins size={40} strokeWidth={1.35} /><span>Advance</span></button>
+      <div className="request-home-content">
+        <div className="request-choices">
+          <button className="request-choice reimbursement" type="button" onClick={() => startRequest('Reimbursement')}><ReceiptText size={38} strokeWidth={1.35} /><span>Reimbursement</span></button>
+          <button className="request-choice advance" type="button" onClick={() => startRequest('Advance')}><HandCoins size={40} strokeWidth={1.35} /><span>Advance</span></button>
+        </div>
+        <section className="request-latest" aria-labelledby="request-latest-title"><h2 id="request-latest-title">Latest requests</h2>
+          {loading ? <p className="request-latest-empty">Loading your recent requests…</p> : latestRequests.length ? <div className="request-latest-list">{latestRequests.map((group) => {
+            const first = group.items[0];
+            const statuses = [...new Set(group.items.map((item) => item.status))];
+            const status = statuses.length === 1 ? statuses[0] : 'Mixed';
+            const amount = group.items.reduce((sum, item) => sum + Number(item.amount), 0);
+            return <article className="request-latest-card" key={group.id}><div className="request-latest-top"><span className={`request-latest-type ${first.expense_type.toLowerCase()}`}>{first.expense_type}</span><span className={`expense-status ${status.toLowerCase().replace(/\s+/g, '-')}`}>{status === 'Reimbursed' ? 'Paid' : status}</span></div><h3>{group.items.length === 1 ? first.particulars : `${first.particulars} + ${group.items.length - 1} more`}</h3><div className="request-latest-meta"><span>{dateLabel(first.created_at)}</span><strong>{money(amount)}</strong></div><button type="button" onClick={() => viewDetails(group)}>View details <ChevronRight size={15} /></button></article>;
+          })}</div> : <p className="request-latest-empty">Your latest advance or reimbursement will appear here.</p>}
+        </section>
       </div>
     </section>}
     {!user?.is_nexg_admin && historyOpen && !formOpen && <section className="request-history" aria-labelledby="request-history-title">

@@ -387,13 +387,28 @@
 .request-home-header h1 { margin: 0; color: #343942; font-size: 14px; font-weight: 500; text-transform: uppercase; letter-spacing: .12em; }
 .request-home-header button { display: inline-flex; align-items: center; gap: 4px; padding: 8px 0; border: 0; background: transparent; color: #58616d; font: inherit; font-size: 12px; cursor: pointer; }
 .request-home-header .request-home-back { color: #173e73; font-weight: 650; }
-.request-choices { display: grid; align-content: center; flex: 1; gap: 24px; width: min(100%, 430px); margin: 0 auto; padding: 30px 24px 60px; }
+.request-home-content { display: grid; align-content: center; flex: 1; gap: 34px; width: 100%; padding: 42px 24px 60px; }
+.request-choices { display: grid; gap: 24px; width: min(100%, 390px); margin: 0 auto; }
 .request-choice { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 20px; min-height: 174px; padding: 26px 20px; border: 1px solid #d7dade; border-radius: 8px; background: #fff; color: #3d454e; box-shadow: 0 5px 12px #23344512; font: inherit; cursor: pointer; transition: transform .18s, box-shadow .18s; }
 .request-choice span { padding: 8px 19px; border-radius: 30px; background: #3c434b; color: #fff; font-size: 14px; font-weight: 550; text-transform: uppercase; letter-spacing: .025em; }
 .request-choice.advance { color: #086f91; }
 .request-choice.advance span { background: #087b9e; }
 .request-choice:hover { transform: translateY(-3px); box-shadow: 0 9px 20px #2334451c; }
 .request-choice:focus-visible, .request-home-header button:focus-visible, .request-back:focus-visible { outline: 3px solid #0084c8; outline-offset: 4px; }
+.request-latest { width: min(100%, 820px); margin: 0 auto; }
+.request-latest h2 { margin: 0 0 14px; color: #243844; font-size: 17px; font-weight: 700; }
+.request-latest-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.request-latest-card { display: grid; gap: 13px; min-width: 0; padding: 18px 20px; border: 1px solid #d6e2e8; border-radius: 12px; background: #fff; box-shadow: 0 5px 16px #2334450c; }
+.request-latest-top, .request-latest-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.request-latest-type { color: #087e9f; font-size: 12px; font-weight: 750; }
+.request-latest-type.reimbursement { color: #3c434b; }
+.request-latest-card h3 { margin: 0; color: #20333f; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
+.request-latest-meta { color: #71808a; font-size: 12px; }
+.request-latest-meta strong { color: #087e9f; font-size: 17px; white-space: nowrap; }
+.request-latest-card > button { display: inline-flex; align-items: center; gap: 3px; justify-self: start; padding: 0; border: 0; background: transparent; color: #0085d0; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.request-latest-card > button:hover { text-decoration: underline; }
+.request-latest-card > button:focus-visible { outline: 3px solid #0084c8; outline-offset: 4px; }
+.request-latest-empty { margin: 0; padding: 20px; border: 1px solid #d6e2e8; border-radius: 10px; background: #fff; color: #6b7884; font-size: 12px; }
 .request-success { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 20px 24px 0; padding: 12px; border-radius: 6px; background: #e3f3ec; color: #236a50; font-size: 13px; }
 .request-history { min-height: 100dvh; padding: 24px 28px 60px; border-radius: 0; background: #edf2f6; }
 .request-history > .request-back { margin: 0; }
@@ -473,9 +488,12 @@
   .request-home-header { min-height: 64px; padding: calc(14px + var(--sat, 0px)) 16px 14px; }
   .request-home-header h1 { font-size: 12px; }
   .request-home-header button { font-size: 11px; }
-  .request-choices { width: min(100%, 350px); gap: 22px; padding: 35px 26px calc(35px + var(--sab, 0px)); }
+  .request-home-content { gap: 30px; padding: 35px 20px calc(35px + var(--sab, 0px)); }
+  .request-choices { width: min(100%, 350px); gap: 22px; }
   .request-choice { min-height: 146px; gap: 17px; }
   .request-choice span { font-size: 13px; }
+  .request-latest-list { grid-template-columns: 1fr; gap: 12px; }
+  .request-latest h2 { font-size: 16px; }
   .request-form-page.expense-overlay { padding: 0; border-radius: 0; background: #fff; }
   .request-form-page .expense-drawer { min-height: 100dvh; width: 100%; border-radius: 0; box-shadow: none; }
   .request-form-page .expense-drawer-head { padding: 20px 22px 4px; }
