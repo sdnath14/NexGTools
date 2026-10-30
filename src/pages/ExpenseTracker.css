@@ -155,19 +155,6 @@
 .expense-category::before { width: 6px; height: 6px; }
 .expense-table td.expense-particulars { width: 260px; max-width: 330px; }
 .expense-table td .expense-updated-label { display: inline-block; margin-top: 8px; padding: 4px 7px; border-radius: 5px; background: #dff3fb; color: #087e9f; font-size: 10px; font-weight: 750; }
-.expense-table tr.expense-update-row:hover { background: transparent; }
-.expense-table tr.expense-update-row td { padding: 0 12px 15px; border-top: 0; white-space: normal; }
-.expense-update-summary { padding: 13px 15px; border: 1px solid #cde6f0; border-radius: 9px; background: #f4fafd; }
-.expense-update-summary-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 13px; margin-bottom: 11px; }
-.expense-update-summary-heading strong { color: #087e9f; font-size: 12px; }
-.expense-update-summary-heading time { color: #69838e; font-size: 10px; }
-.expense-update-summary-heading button { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; padding: 0; border: 0; background: transparent; color: #087e9f; font: inherit; font-size: 11px; font-weight: 750; cursor: pointer; }
-.expense-update-fields { display: flex; flex-wrap: wrap; gap: 8px; }
-.expense-update-field { display: grid; grid-template-columns: minmax(80px, .7fr) repeat(2, minmax(100px, 1fr)); flex: 1 1 280px; overflow: hidden; border: 1px solid #d7e9f0; border-radius: 7px; background: #fff; }
-.expense-update-field > * { min-width: 0; padding: 9px; overflow-wrap: anywhere; color: #24424e; font-size: 11px; }
-.expense-update-field > * + * { border-left: 1px solid #e4f0f5; }
-.expense-update-field > span:last-child { background: #eaf8fd; color: #087e9f; font-weight: 700; }
-.expense-update-field small { display: block; margin: 0 0 4px; color: #69838e; font-size: 9px; font-weight: 700; }
 .expense-particular-list { gap: 0; padding: 6px 12px; border: 1px solid #eef1f6; border-radius: 11px; background: #f7f9fc; }
 .expense-particular-list > div { padding: 5px 0; }
 .expense-particular-list > div + div { padding-top: 8px; }
