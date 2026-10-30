@@ -34,6 +34,21 @@ class ExpenseEditTests(unittest.TestCase):
         self.assertEqual(result['expense']['particulars'], 'Team lunch')
         self.assertEqual(result['expense']['attachment_name'], 'receipt.png')
 
+    def test_admin_expense_list_includes_latest_employee_change(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [{
+            'id': 7, 'amount': Decimal('200.00'),
+            'latest_edit_changes': json.dumps([{'field': 'Amount', 'previous': '300.00', 'updated': '200.00'}]),
+            'latest_edit_at': None,
+        }]
+        connection = MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(main, '_require_user', return_value={'id': 1, 'is_nexg_admin': True}), \
+             patch.object(main, 'db_connection', return_value=connection):
+            result = main.list_expenses('token')
+        self.assertIn('LEFT JOIN expense_edit_history', cursor.execute.call_args.args[0])
+        self.assertEqual(result['expenses'][0]['latest_edit_changes'][0]['previous'], '300.00')
+
     def test_other_employees_expense_details_return_not_found(self):
         cursor = MagicMock()
         cursor.fetchone.return_value = None

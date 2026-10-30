@@ -880,7 +880,8 @@ def _require_permission(authorization: str | None, permission: str) -> dict[str,
 
 
 def _expense_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {key: (float(value) if key == 'amount' else value.isoformat() if key == 'created_at' else value)
+    return {key: (float(value) if key == 'amount' else value.isoformat() if key in ('created_at', 'latest_edit_at') and value else
+                  json.loads(value) if key == 'latest_edit_changes' and isinstance(value, str) else value)
             for key, value in row.items()}
 
 
@@ -892,10 +893,13 @@ def list_expenses(authorization: str | None = Header(default=None)) -> dict[str,
             cursor.execute('''SELECT e.id, e.user_id, u.name AS submitted_by,
                               COALESCE(NULLIF(p.job_title, ''), NULLIF(NULLIF(r.name, 'Member'), ''), 'Employee') AS `rank`,
                               e.category, e.particulars, e.amount, e.expense_type, e.payment_method,
-                              e.status, e.issue_note, e.attachment_name, e.batch_id, e.created_at
+                              e.status, e.issue_note, e.attachment_name, e.batch_id, e.created_at,
+                              h.changes_json AS latest_edit_changes, h.created_at AS latest_edit_at
                               FROM expenses e JOIN users u ON u.id = e.user_id
                               LEFT JOIN employee_profiles p ON p.user_id = u.id
                               LEFT JOIN roles r ON r.id = u.role_id
+                              LEFT JOIN expense_edit_history h ON h.id = (
+                                  SELECT id FROM expense_edit_history WHERE expense_id = e.id ORDER BY id DESC LIMIT 1)
                               WHERE (%s = 1 OR e.user_id = %s)
                               ORDER BY e.created_at DESC, e.id DESC''',
                            (int(bool(user.get('is_nexg_admin'))), user['id']))
